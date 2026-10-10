@@ -1,0 +1,553 @@
+//! Loopwerk project model: the project as pure data, with no audio or UI dependencies.
+//!
+//! The model is DAW-neutral (see `docs/decisions/0001-daw-neutral-model.md`): tracks and mixer
+//! channels are separate, clip contents live in a pool and are placed by clips, and data a format
+//! importer cannot map is kept verbatim in [`Extensions`].
+
+use std::collections::HashSet;
+use std::fmt;
+
+/// Identifies a [`Track`] within a project.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct TrackId(pub u32);
+
+/// Identifies a [`Channel`] within a project.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ChannelId(pub u32);
+
+/// Identifies a [`ClipContent`] within a project.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ContentId(pub u32);
+
+/// A Loopwerk project.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Project {
+    pub transport: Transport,
+    pub tracks: Vec<Track>,
+    pub channels: Vec<Channel>,
+    /// Shared pool of clip contents; clips refer to these by id.
+    pub contents: Vec<ClipContent>,
+    pub arrangement: Arrangement,
+    pub launcher: Launcher,
+    pub extensions: Extensions,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Transport {
+    pub tempo_bpm: f64,
+    pub time_signature: TimeSignature,
+}
+
+impl Default for Transport {
+    fn default() -> Self {
+        Self { tempo_bpm: 120.0, time_signature: TimeSignature { numerator: 4, denominator: 4 } }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TimeSignature {
+    pub numerator: u8,
+    pub denominator: u8,
+}
+
+/// What a track can play.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ContentKinds {
+    pub notes: bool,
+    pub audio: bool,
+}
+
+/// A node in the project structure: an instrument or audio track, a group, or a return.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Track {
+    pub id: TrackId,
+    pub name: String,
+    pub color: Option<Rgb>,
+    pub content: ContentKinds,
+    /// The mixer strip this track plays through, if any.
+    pub channel: Option<ChannelId>,
+    /// The group track this track belongs to, if any.
+    pub parent: Option<TrackId>,
+    pub extensions: Extensions,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Rgb(pub u8, pub u8, pub u8);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ChannelRole {
+    #[default]
+    Regular,
+    Master,
+    /// A return/effect channel fed by sends.
+    Effect,
+    Submix,
+}
+
+/// A mixer strip.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Channel {
+    pub id: ChannelId,
+    pub name: String,
+    pub role: ChannelRole,
+    /// Linear gain; 1.0 is unity.
+    pub volume: f64,
+    /// -1.0 is hard left, 0.0 centre, 1.0 hard right.
+    pub pan: f64,
+    pub mute: bool,
+    pub solo: bool,
+    /// Where the channel's output goes; `None` means the audio output (the master).
+    pub output: Option<ChannelId>,
+    pub sends: Vec<Send>,
+    pub devices: Vec<Device>,
+    pub extensions: Extensions,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Send {
+    pub target: ChannelId,
+    /// Linear gain; 1.0 is unity.
+    pub level: f64,
+    pub pre_fader: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum DeviceKind {
+    /// A Loopwerk device, by its stable id.
+    Builtin(String),
+    Clap {
+        id: String,
+    },
+    Vst3 {
+        id: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Device {
+    pub name: String,
+    pub kind: DeviceKind,
+    pub enabled: bool,
+    /// Plug-in state, handed back to the plug-in unchanged.
+    pub state: Option<Vec<u8>>,
+    pub extensions: Extensions,
+}
+
+/// Reusable musical content: an Ableton clip's notes, an FL pattern, an audio region.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClipContent {
+    pub id: ContentId,
+    pub name: String,
+    /// Length in beats.
+    pub length: f64,
+    pub lanes: Vec<ContentLane>,
+    pub extensions: Extensions,
+}
+
+/// One lane of a clip content. `target` is `None` when the lane plays on whichever track the
+/// clip is placed on (an Ableton clip); it names a track when one content drives several tracks
+/// (an FL pattern).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ContentLane {
+    pub target: Option<TrackId>,
+    pub data: LaneData,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum LaneData {
+    Notes(Vec<Note>),
+    Audio(AudioRegion),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Note {
+    /// Start in beats from the start of the content.
+    pub time: f64,
+    /// Length in beats.
+    pub duration: f64,
+    /// MIDI key, 0–127.
+    pub key: u8,
+    /// 0.0–1.0.
+    pub velocity: f32,
+    /// 0.0–1.0.
+    pub release_velocity: f32,
+    /// MIDI channel, 0–15.
+    pub channel: u8,
+}
+
+/// An audio file mapped onto musical time.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AudioRegion {
+    /// Path relative to the project, as stored in the source file.
+    pub file: String,
+    pub sample_rate: u32,
+    pub channels: u16,
+    /// Empty when the audio plays at its original speed from the content start.
+    pub warp_markers: Vec<WarpMarker>,
+}
+
+/// Pins a position in the audio file to a position in the content.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WarpMarker {
+    /// Beats from the start of the content.
+    pub time: f64,
+    /// Seconds into the audio file.
+    pub audio_time: f64,
+}
+
+/// Places a clip content on the arrangement or in a launcher slot.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Clip {
+    pub content: ContentId,
+    /// Start in beats on the arrangement; 0.0 in a launcher slot.
+    pub start: f64,
+    /// Length in beats.
+    pub length: f64,
+    /// Where playback starts inside the content, in beats.
+    pub offset: f64,
+    pub loop_range: Option<LoopRange>,
+    pub enabled: bool,
+    pub extensions: Extensions,
+}
+
+/// Loop start and end inside the content, in beats.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LoopRange {
+    pub start: f64,
+    pub end: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Arrangement {
+    pub lanes: Vec<ArrangementLane>,
+}
+
+/// A row of the arrangement. Bound to a track (Ableton), or free (an FL playlist track, whose
+/// clips carry their own targets).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ArrangementLane {
+    pub name: String,
+    pub track: Option<TrackId>,
+    pub clips: Vec<Clip>,
+}
+
+/// Clip launching: scenes are rows, columns belong to tracks.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Launcher {
+    pub scenes: Vec<Scene>,
+    pub columns: Vec<LauncherColumn>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Scene {
+    pub name: String,
+    /// Tempo the scene switches to when launched, if any.
+    pub tempo_bpm: Option<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LauncherColumn {
+    pub track: TrackId,
+    /// One slot per scene, in scene order.
+    pub slots: Vec<Slot>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Slot {
+    pub clip: Option<Clip>,
+    /// An empty slot with a stop button stops the track when its scene launches.
+    pub has_stop: bool,
+}
+
+/// Data a format importer could not map onto the core model, kept verbatim so the same format's
+/// exporter can write it back.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Extensions(pub Vec<Extension>);
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Extension {
+    /// The format that wrote it, such as `"als"` or `"flp"`.
+    pub format: String,
+    /// What it is within that format, such as an XML element name.
+    pub key: String,
+    pub data: Vec<u8>,
+}
+
+/// A reference in the project that does not resolve, or an id used twice.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ValidationError {
+    DuplicateTrack(TrackId),
+    DuplicateChannel(ChannelId),
+    DuplicateContent(ContentId),
+    MissingTrack(TrackId),
+    MissingChannel(ChannelId),
+    MissingContent(ContentId),
+}
+
+impl fmt::Display for ValidationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DuplicateTrack(id) => write!(f, "track id {} is used twice", id.0),
+            Self::DuplicateChannel(id) => write!(f, "channel id {} is used twice", id.0),
+            Self::DuplicateContent(id) => write!(f, "clip content id {} is used twice", id.0),
+            Self::MissingTrack(id) => write!(f, "track {} does not exist", id.0),
+            Self::MissingChannel(id) => write!(f, "channel {} does not exist", id.0),
+            Self::MissingContent(id) => write!(f, "clip content {} does not exist", id.0),
+        }
+    }
+}
+
+impl std::error::Error for ValidationError {}
+
+impl Project {
+    /// Checks that ids are unique and every reference resolves. Importers call this so a
+    /// malformed file becomes an error instead of a crash later.
+    pub fn validate(&self) -> Result<(), Vec<ValidationError>> {
+        let mut errors = Vec::new();
+
+        let tracks = unique(self.tracks.iter().map(|t| t.id), ValidationError::DuplicateTrack, &mut errors);
+        let channels = unique(self.channels.iter().map(|c| c.id), ValidationError::DuplicateChannel, &mut errors);
+        let contents = unique(self.contents.iter().map(|c| c.id), ValidationError::DuplicateContent, &mut errors);
+
+        let track_ref = |id: TrackId, errors: &mut Vec<ValidationError>| {
+            if !tracks.contains(&id) {
+                errors.push(ValidationError::MissingTrack(id));
+            }
+        };
+        let channel_ref = |id: ChannelId, errors: &mut Vec<ValidationError>| {
+            if !channels.contains(&id) {
+                errors.push(ValidationError::MissingChannel(id));
+            }
+        };
+        let content_ref = |id: ContentId, errors: &mut Vec<ValidationError>| {
+            if !contents.contains(&id) {
+                errors.push(ValidationError::MissingContent(id));
+            }
+        };
+
+        for track in &self.tracks {
+            if let Some(channel) = track.channel {
+                channel_ref(channel, &mut errors);
+            }
+            if let Some(parent) = track.parent {
+                track_ref(parent, &mut errors);
+            }
+        }
+        for channel in &self.channels {
+            if let Some(output) = channel.output {
+                channel_ref(output, &mut errors);
+            }
+            for send in &channel.sends {
+                channel_ref(send.target, &mut errors);
+            }
+        }
+        for content in &self.contents {
+            for lane in &content.lanes {
+                if let Some(target) = lane.target {
+                    track_ref(target, &mut errors);
+                }
+            }
+        }
+        for lane in &self.arrangement.lanes {
+            if let Some(track) = lane.track {
+                track_ref(track, &mut errors);
+            }
+            for clip in &lane.clips {
+                content_ref(clip.content, &mut errors);
+            }
+        }
+        for column in &self.launcher.columns {
+            track_ref(column.track, &mut errors);
+            for clip in column.slots.iter().filter_map(|s| s.clip.as_ref()) {
+                content_ref(clip.content, &mut errors);
+            }
+        }
+
+        if errors.is_empty() { Ok(()) } else { Err(errors) }
+    }
+
+    pub fn content(&self, id: ContentId) -> Option<&ClipContent> {
+        self.contents.iter().find(|c| c.id == id)
+    }
+}
+
+fn unique<T: Copy + Eq + std::hash::Hash>(
+    ids: impl Iterator<Item = T>,
+    duplicate: impl Fn(T) -> ValidationError,
+    errors: &mut Vec<ValidationError>,
+) -> HashSet<T> {
+    let mut seen = HashSet::new();
+    for id in ids {
+        if !seen.insert(id) {
+            errors.push(duplicate(id));
+        }
+    }
+    seen
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn note(time: f64, key: u8) -> Note {
+        Note { time, duration: 0.25, key, velocity: 0.8, release_velocity: 0.5, channel: 0 }
+    }
+
+    fn track(id: u32, channel: u32) -> Track {
+        Track {
+            id: TrackId(id),
+            name: format!("Track {id}"),
+            color: None,
+            content: ContentKinds { notes: true, audio: false },
+            channel: Some(ChannelId(channel)),
+            parent: None,
+            extensions: Extensions::default(),
+        }
+    }
+
+    fn channel(id: u32) -> Channel {
+        Channel {
+            id: ChannelId(id),
+            name: format!("Channel {id}"),
+            role: ChannelRole::Regular,
+            volume: 1.0,
+            pan: 0.0,
+            mute: false,
+            solo: false,
+            output: None,
+            sends: Vec::new(),
+            devices: Vec::new(),
+            extensions: Extensions::default(),
+        }
+    }
+
+    fn clip(content: u32, start: f64) -> Clip {
+        Clip {
+            content: ContentId(content),
+            start,
+            length: 4.0,
+            offset: 0.0,
+            loop_range: None,
+            enabled: true,
+            extensions: Extensions::default(),
+        }
+    }
+
+    #[test]
+    fn default_transport_is_120_bpm_in_four_four() {
+        let t = Project::default().transport;
+        assert_eq!(t.tempo_bpm, 120.0);
+        assert_eq!(t.time_signature, TimeSignature { numerator: 4, denominator: 4 });
+    }
+
+    /// Ableton shape: each clip has its own content with one untargeted lane, arrangement lanes
+    /// are bound to tracks, and the same track has a launcher column.
+    #[test]
+    fn ableton_shaped_project_validates() {
+        let project = Project {
+            tracks: vec![track(1, 1)],
+            channels: vec![channel(1)],
+            contents: vec![
+                ClipContent {
+                    id: ContentId(1),
+                    name: "Bass A".into(),
+                    length: 4.0,
+                    lanes: vec![ContentLane { target: None, data: LaneData::Notes(vec![note(0.0, 36)]) }],
+                    extensions: Extensions::default(),
+                },
+                ClipContent {
+                    id: ContentId(2),
+                    name: "Bass B".into(),
+                    length: 4.0,
+                    lanes: vec![ContentLane { target: None, data: LaneData::Notes(vec![note(1.0, 38)]) }],
+                    extensions: Extensions::default(),
+                },
+            ],
+            arrangement: Arrangement {
+                lanes: vec![ArrangementLane {
+                    name: "Bass".into(),
+                    track: Some(TrackId(1)),
+                    clips: vec![clip(1, 0.0)],
+                }],
+            },
+            launcher: Launcher {
+                scenes: vec![Scene::default(), Scene::default()],
+                columns: vec![LauncherColumn {
+                    track: TrackId(1),
+                    slots: vec![
+                        Slot { clip: Some(clip(1, 0.0)), has_stop: true },
+                        Slot { clip: Some(clip(2, 0.0)), has_stop: true },
+                    ],
+                }],
+            },
+            ..Project::default()
+        };
+        assert_eq!(project.validate(), Ok(()));
+    }
+
+    /// FL shape: one pattern drives two channels' tracks and is placed twice on a free playlist
+    /// lane; both placements share the same content.
+    #[test]
+    fn fl_shaped_project_validates_and_shares_content() {
+        let pattern = ClipContent {
+            id: ContentId(1),
+            name: "Pattern 1".into(),
+            length: 4.0,
+            lanes: vec![
+                ContentLane { target: Some(TrackId(1)), data: LaneData::Notes(vec![note(0.0, 36), note(2.0, 36)]) },
+                ContentLane { target: Some(TrackId(2)), data: LaneData::Notes(vec![note(1.0, 38), note(3.0, 38)]) },
+            ],
+            extensions: Extensions::default(),
+        };
+        let project = Project {
+            tracks: vec![track(1, 1), track(2, 2)],
+            channels: vec![channel(1), channel(2)],
+            contents: vec![pattern],
+            arrangement: Arrangement {
+                lanes: vec![ArrangementLane {
+                    name: "Track 1".into(),
+                    track: None,
+                    clips: vec![clip(1, 0.0), clip(1, 4.0)],
+                }],
+            },
+            ..Project::default()
+        };
+        assert_eq!(project.validate(), Ok(()));
+
+        let placements = &project.arrangement.lanes[0].clips;
+        assert_eq!(placements[0].content, placements[1].content);
+        assert_eq!(project.content(ContentId(1)).map(|c| c.lanes.len()), Some(2));
+    }
+
+    #[test]
+    fn dangling_references_are_reported() {
+        let mut ch = channel(1);
+        ch.output = Some(ChannelId(9));
+        ch.sends.push(Send { target: ChannelId(8), level: 0.5, pre_fader: false });
+        let project = Project {
+            tracks: vec![track(1, 7)],
+            channels: vec![ch],
+            arrangement: Arrangement {
+                lanes: vec![ArrangementLane {
+                    name: String::new(),
+                    track: Some(TrackId(5)),
+                    clips: vec![clip(3, 0.0)],
+                }],
+            },
+            ..Project::default()
+        };
+        let errors = project.validate().unwrap_err();
+        assert!(errors.contains(&ValidationError::MissingChannel(ChannelId(7))));
+        assert!(errors.contains(&ValidationError::MissingChannel(ChannelId(9))));
+        assert!(errors.contains(&ValidationError::MissingChannel(ChannelId(8))));
+        assert!(errors.contains(&ValidationError::MissingTrack(TrackId(5))));
+        assert!(errors.contains(&ValidationError::MissingContent(ContentId(3))));
+    }
+
+    #[test]
+    fn duplicate_ids_are_reported() {
+        let project =
+            Project { tracks: vec![track(1, 1), track(1, 1)], channels: vec![channel(1)], ..Project::default() };
+        assert_eq!(project.validate(), Err(vec![ValidationError::DuplicateTrack(TrackId(1))]));
+    }
+}

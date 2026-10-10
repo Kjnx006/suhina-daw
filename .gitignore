@@ -1,0 +1,13 @@
+/target
+target/
+/corpus
+/research
+/log
+*.log
+# Live project folders and files; test projects go to corpus/ (gitignored) until we publish them deliberately
+*.als
+*.alc
+*.adg
+*.adv
+*.asd
+Backup/
