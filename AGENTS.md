@@ -41,7 +41,7 @@ then [`CONTRIBUTING.md`](CONTRIBUTING.md).
 crates/
   model    L0 DAW-neutral project as pure data (tracks, channels, clip contents, clips, launcher)
   engine   L1 audio graph and offline/real-time rendering
-  formats/ (planned) one crate per file format (als, dawproject, flp), converting to and from model
+  als      L1 Live Set (.als) reader into model; later one crate per format (dawproject, flp)
 apps/
   loopwerk-cli   headless CLI (render, later mcp)
 docs/

@@ -1,0 +1,22 @@
+[package]
+name = "loopwerk-als"
+description = "Reads Live Sets (.als) into the Loopwerk project model"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[features]
+# Runs the tests against the local, uncommitted corpus in corpus/als (see docs/spec/als-corpus.md).
+corpus = []
+
+[dependencies]
+loopwerk-model.workspace = true
+flate2.workspace = true
+roxmltree.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+flate2.workspace = true

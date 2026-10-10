@@ -1,0 +1,200 @@
+//! Tests against small Live Set XML documents written by hand from `docs/spec/als-format.md`.
+
+use std::io::Write;
+
+use loopwerk_als::{AlsError, read_gzip, read_xml};
+use loopwerk_model::{ChannelRole, LaneData};
+
+fn mixer(volume: &str, pan: &str, on: &str, sends: &[&str]) -> String {
+    let sends: String = sends
+        .iter()
+        .enumerate()
+        .map(|(i, v)| format!(r#"<TrackSendHolder Id="{i}"><Send><Manual Value="{v}"/></Send></TrackSendHolder>"#))
+        .collect();
+    format!(
+        r#"<Mixer><Sends>{sends}</Sends><Speaker><Manual Value="{on}"/></Speaker>
+           <Pan><Manual Value="{pan}"/></Pan><Volume><Manual Value="{volume}"/></Volume></Mixer>"#
+    )
+}
+
+fn midi_clip(time: &str, start: &str, end: &str, loop_on: &str, loop_end: &str, notes: &str) -> String {
+    format!(
+        r#"<MidiClip Id="0" Time="{time}">
+             <CurrentStart Value="{start}"/><CurrentEnd Value="{end}"/>
+             <Loop><LoopStart Value="0"/><LoopEnd Value="{loop_end}"/><StartRelative Value="0"/>
+                   <LoopOn Value="{loop_on}"/><OutMarker Value="{loop_end}"/></Loop>
+             <Name Value="Clip"/><Disabled Value="false"/>
+             <Notes><KeyTracks>{notes}</KeyTracks></Notes>
+           </MidiClip>"#
+    )
+}
+
+fn key_track(key: u8, events: &str) -> String {
+    format!(r#"<KeyTrack Id="0"><Notes>{events}</Notes><MidiKey Value="{key}"/></KeyTrack>"#)
+}
+
+/// Two MIDI tracks, one audio track, one return; two scenes.
+fn live_set() -> String {
+    let note = |t: &str, d: &str, v: &str| {
+        format!(r#"<MidiNoteEvent Time="{t}" Duration="{d}" Velocity="{v}" OffVelocity="64" NoteId="1"/>"#)
+    };
+    let arrangement_clip = midi_clip("8", "8", "12", "false", "4", &key_track(64, &note("1", "2", "63.5")));
+    let session_clip = midi_clip("0", "0", "8", "true", "8", &key_track(60, &note("0", "1", "127")));
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<Ableton MajorVersion="5" MinorVersion="12.0_12402" Creator="Ableton Live 12.4.6">
+  <LiveSet>
+    <Tracks>
+      <MidiTrack Id="12">
+        <Name><EffectiveName Value="1-MIDI"/></Name><TrackGroupId Value="-1"/>
+        <DeviceChain>
+          <AudioOutputRouting><Target Value="AudioOut/Main"/></AudioOutputRouting>
+          {mixer_midi}
+          <MainSequencer>
+            <ClipSlotList>
+              <ClipSlot Id="0"><ClipSlot><Value>{session_clip}</Value></ClipSlot><HasStop Value="true"/></ClipSlot>
+              <ClipSlot Id="1"><ClipSlot><Value/></ClipSlot><HasStop Value="false"/></ClipSlot>
+            </ClipSlotList>
+            <ClipTimeable><ArrangerAutomation><Events>{arrangement_clip}</Events></ArrangerAutomation></ClipTimeable>
+          </MainSequencer>
+          <DeviceChain><Devices/></DeviceChain>
+        </DeviceChain>
+      </MidiTrack>
+      <AudioTrack Id="8">
+        <Name><EffectiveName Value="3-Audio"/></Name><TrackGroupId Value="-1"/>
+        <DeviceChain>
+          {mixer_audio}
+          <MainSequencer>
+            <ClipSlotList>
+              <ClipSlot Id="0"><ClipSlot><Value><AudioClip Id="0" Time="0"/></Value></ClipSlot><HasStop Value="true"/></ClipSlot>
+              <ClipSlot Id="1"><ClipSlot><Value/></ClipSlot><HasStop Value="true"/></ClipSlot>
+            </ClipSlotList>
+          </MainSequencer>
+        </DeviceChain>
+      </AudioTrack>
+      <ReturnTrack Id="2">
+        <Name><EffectiveName Value="A-Reverb"/></Name><TrackGroupId Value="-1"/>
+        <DeviceChain>{mixer_return}<DeviceChain><Devices><Reverb Id="0"/></Devices></DeviceChain></DeviceChain>
+      </ReturnTrack>
+    </Tracks>
+    <MainTrack>
+      <DeviceChain><Mixer>
+        <Speaker><Manual Value="true"/></Speaker><Pan><Manual Value="0"/></Pan><Volume><Manual Value="1"/></Volume>
+        <Tempo><Manual Value="128"/></Tempo><TimeSignature><Manual Value="201"/></TimeSignature>
+      </Mixer></DeviceChain>
+    </MainTrack>
+    <Scenes>
+      <Scene Id="0"><Name Value="Intro"/><Tempo Value="90"/><IsTempoEnabled Value="true"/></Scene>
+      <Scene Id="5"><Name Value=""/><Tempo Value="120"/><IsTempoEnabled Value="false"/></Scene>
+    </Scenes>
+  </LiveSet>
+</Ableton>"#,
+        mixer_midi = mixer("1", "0", "true", &["0.0003162277571"]),
+        mixer_audio = mixer("0.5011872053", "-1", "false", &["0.2511887252"]),
+        mixer_return = mixer("1", "0", "true", &["0.0003162277571"]),
+    )
+}
+
+#[test]
+fn reads_transport_tracks_and_mixer() {
+    let import = read_xml(&live_set()).unwrap();
+    let p = &import.project;
+    assert_eq!(p.transport.tempo_bpm, 128.0);
+    assert_eq!(p.tracks.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), ["1-MIDI", "3-Audio", "A-Reverb"]);
+
+    let main = p.channels.iter().find(|c| c.role == ChannelRole::Master).unwrap();
+    assert_eq!(main.volume, 1.0);
+
+    let audio = p.channels.iter().find(|c| c.name == "3-Audio").unwrap();
+    assert!((audio.volume - 0.501).abs() < 1e-3);
+    assert_eq!(audio.pan, -1.0);
+    assert!(audio.mute);
+    let ret = p.channels.iter().find(|c| c.name == "A-Reverb").unwrap();
+    assert_eq!(ret.role, ChannelRole::Effect);
+    assert_eq!(audio.sends.len(), 1);
+    assert_eq!(audio.sends[0].target, ret.id);
+    assert!((audio.sends[0].level - 0.251).abs() < 1e-3);
+
+    // A send at -70 dB ("-inf" in Live) is no send.
+    let midi = p.channels.iter().find(|c| c.name == "1-MIDI").unwrap();
+    assert!(midi.sends.is_empty());
+    assert!(!midi.mute);
+}
+
+#[test]
+fn reads_arrangement_clip_and_notes() {
+    let p = read_xml(&live_set()).unwrap().project;
+    let lane = p.arrangement.lanes.iter().find(|l| l.name == "1-MIDI").unwrap();
+    let clip = &lane.clips[0];
+    assert_eq!((clip.start, clip.length, clip.offset), (8.0, 4.0, 0.0));
+    assert_eq!(clip.loop_range, None);
+
+    let content = p.content(clip.content).unwrap();
+    let LaneData::Notes(notes) = &content.lanes[0].data else { panic!("expected notes") };
+    assert_eq!(notes.len(), 1);
+    assert_eq!((notes[0].key, notes[0].time, notes[0].duration), (64, 1.0, 2.0));
+    assert!((notes[0].velocity - 0.5).abs() < 1e-6);
+}
+
+#[test]
+fn reads_scenes_and_session_slots() {
+    let p = read_xml(&live_set()).unwrap().project;
+    assert_eq!(p.launcher.scenes.len(), 2);
+    assert_eq!(p.launcher.scenes[0].name, "Intro");
+    assert_eq!(p.launcher.scenes[0].tempo_bpm, Some(90.0));
+    assert_eq!(p.launcher.scenes[1].tempo_bpm, None);
+
+    // Columns only for MIDI and audio tracks, one slot per scene.
+    assert_eq!(p.launcher.columns.len(), 2);
+    let midi = &p.launcher.columns[0];
+    assert_eq!(midi.slots.len(), 2);
+    let clip = midi.slots[0].clip.as_ref().unwrap();
+    assert_eq!(clip.loop_range.map(|r| (r.start, r.end)), Some((0.0, 8.0)));
+    assert_eq!(clip.length, 8.0);
+    assert!(midi.slots[0].has_stop);
+    assert!(midi.slots[1].clip.is_none());
+    assert!(!midi.slots[1].has_stop);
+}
+
+#[test]
+fn unsupported_content_becomes_warnings() {
+    let import = read_xml(&live_set()).unwrap();
+    assert!(import.warnings.iter().any(|w| w.contains("AudioClip")), "{:?}", import.warnings);
+    assert!(import.warnings.iter().any(|w| w.contains("Reverb")), "{:?}", import.warnings);
+    assert!(import.project.launcher.columns[1].slots[0].clip.is_none());
+}
+
+#[test]
+fn reads_gzip() {
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder.write_all(live_set().as_bytes()).unwrap();
+    let bytes = encoder.finish().unwrap();
+    let import = read_gzip(bytes.as_slice()).unwrap();
+    assert_eq!(import.project.transport.tempo_bpm, 128.0);
+}
+
+#[test]
+fn rejects_files_that_are_not_live_sets() {
+    assert!(matches!(read_gzip(&b"not gzip at all"[..]), Err(AlsError::Io(_))));
+    assert!(matches!(read_xml("<not xml"), Err(AlsError::Xml(_))));
+    assert!(matches!(read_xml("<Other/>"), Err(AlsError::NotALiveSet)));
+    assert!(matches!(read_xml("<Ableton/>"), Err(AlsError::NotALiveSet)));
+}
+
+#[test]
+fn hostile_values_do_not_panic() {
+    let xml = live_set()
+        .replace(r#"<Tempo><Manual Value="128"/>"#, r#"<Tempo><Manual Value="NaN"/>"#)
+        .replace(r#"Velocity="63.5""#, r#"Velocity="1e400""#)
+        .replace(r#"<MidiKey Value="64"/>"#, r#"<MidiKey Value="300"/>"#)
+        .replace(r#"<TimeSignature><Manual Value="201"/>"#, r#"<TimeSignature><Manual Value="999"/>"#)
+        .replace(r#"<CurrentEnd Value="12"/>"#, r#"<CurrentEnd Value="-5"/>"#);
+    let import = read_xml(&xml).unwrap();
+    assert_eq!(import.project.transport.tempo_bpm, 120.0);
+    assert!(import.warnings.iter().any(|w| w.contains("tempo")));
+    assert!(import.warnings.iter().any(|w| w.contains("time signature")));
+    assert!(import.warnings.iter().any(|w| w.contains("no length")));
+
+    let empty = read_xml(r#"<Ableton><LiveSet/></Ableton>"#).unwrap();
+    assert!(empty.project.tracks.is_empty());
+}

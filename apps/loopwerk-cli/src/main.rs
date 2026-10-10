@@ -7,18 +7,29 @@ use loopwerk_engine::model::*;
 use loopwerk_engine::render_offline;
 
 const USAGE: &str = "\
-usage: loopwerk-cli render --demo -o <out.wav> [--sample-rate <hz>]
+usage: loopwerk-cli render (<project.als> | --demo) -o <out.wav> [--scene <n>] [--sample-rate <hz>]
 
 commands:
-  render    render a project's arrangement offline to a 32-bit float stereo WAV file
+  render    render a project offline to a 32-bit float stereo WAV file
 
 options:
-  --demo             render the built-in demo project (project files are not supported yet)
+  <project.als>      a Live Set to import
+  --demo             render the built-in demo project instead
   -o, --output       output WAV path
+  --scene <n>        render scene n (1-based) of the clip launcher instead of the arrangement
   --sample-rate      sample rate in Hz (default 48000)";
 
+#[derive(Debug)]
+enum Source {
+    Demo,
+    Als(PathBuf),
+}
+
+#[derive(Debug)]
 struct RenderArgs {
+    source: Source,
     output: PathBuf,
+    scene: Option<usize>,
     sample_rate: u32,
 }
 
@@ -50,27 +61,59 @@ fn main() -> ExitCode {
 fn parse_render(args: &[String]) -> Result<RenderArgs, String> {
     let mut output = None;
     let mut sample_rate = 48_000;
-    let mut demo = false;
+    let mut scene = None;
+    let mut source = None;
     let mut it = args.iter();
     while let Some(arg) = it.next() {
-        match arg.as_str() {
-            "--demo" => demo = true,
-            "-o" | "--output" => output = Some(PathBuf::from(it.next().ok_or("--output needs a path")?)),
+        let next = match arg.as_str() {
+            "--demo" => Some(Source::Demo),
+            "-o" | "--output" => {
+                output = Some(PathBuf::from(it.next().ok_or("--output needs a path")?));
+                None
+            }
             "--sample-rate" => {
                 let value = it.next().ok_or("--sample-rate needs a value")?;
                 sample_rate = value.parse().map_err(|_| format!("invalid sample rate: {value}"))?;
+                None
             }
-            other => return Err(format!("unknown argument: {other}\n\n{USAGE}")),
+            "--scene" => {
+                let value = it.next().ok_or("--scene needs a number")?;
+                let n: usize = value.parse().map_err(|_| format!("invalid scene number: {value}"))?;
+                scene = Some(n.checked_sub(1).ok_or("scenes are numbered from 1")?);
+                None
+            }
+            other if other.starts_with('-') => return Err(format!("unknown argument: {other}\n\n{USAGE}")),
+            path => Some(Source::Als(PathBuf::from(path))),
+        };
+        if let Some(next) = next {
+            if source.is_some() {
+                return Err(format!("give one project, either a file or --demo\n\n{USAGE}"));
+            }
+            source = Some(next);
         }
     }
-    if !demo {
-        return Err(format!("only --demo is supported until project import lands\n\n{USAGE}"));
-    }
-    Ok(RenderArgs { output: output.ok_or(format!("missing --output\n\n{USAGE}"))?, sample_rate })
+    Ok(RenderArgs {
+        source: source.ok_or(format!("missing project: give a .als file or --demo\n\n{USAGE}"))?,
+        output: output.ok_or(format!("missing --output\n\n{USAGE}"))?,
+        scene,
+        sample_rate,
+    })
 }
 
 fn render(args: &RenderArgs) -> Result<(), String> {
-    let project = demo_project();
+    let mut project = match &args.source {
+        Source::Demo => demo_project(),
+        Source::Als(path) => {
+            let import = loopwerk_als::read_file(path).map_err(|e| format!("{}: {e}", path.display()))?;
+            for warning in &import.warnings {
+                eprintln!("warning: {warning}");
+            }
+            import.project
+        }
+    };
+    if let Some(scene) = args.scene {
+        project = scene_as_arrangement(&project, scene)?;
+    }
     let samples = render_offline(&project, args.sample_rate, 512).map_err(|e| e.to_string())?;
 
     let spec = hound::WavSpec {
@@ -89,6 +132,28 @@ fn render(args: &RenderArgs) -> Result<(), String> {
     let seconds = samples.len() as f64 / 2.0 / f64::from(args.sample_rate);
     println!("wrote {} ({seconds:.2} s, {} Hz)", path.display(), args.sample_rate);
     Ok(())
+}
+
+/// Replaces the arrangement with the clips of one launcher scene, each played once from the start,
+/// as if the scene were launched at time zero.
+fn scene_as_arrangement(project: &Project, scene: usize) -> Result<Project, String> {
+    let count = project.launcher.scenes.len();
+    if scene >= count {
+        return Err(format!("scene {} does not exist; the project has {count} scenes", scene.saturating_add(1)));
+    }
+    let lanes = project
+        .launcher
+        .columns
+        .iter()
+        .map(|column| ArrangementLane {
+            name: String::new(),
+            track: Some(column.track),
+            clips: column.slots.get(scene).and_then(|s| s.clip.clone()).into_iter().collect(),
+        })
+        .collect();
+    let mut project = project.clone();
+    project.arrangement = Arrangement { lanes };
+    Ok(project)
 }
 
 /// Two bars at 120 bpm: a bass line and a chord pattern on separate tracks, each placed twice.
@@ -181,13 +246,36 @@ mod tests {
     }
 
     #[test]
-    fn render_args_require_demo_and_output() {
+    fn render_args_need_one_project_and_an_output() {
         let args = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         assert!(parse_render(&args(&["-o", "x.wav"])).is_err());
         assert!(parse_render(&args(&["--demo"])).is_err());
         assert!(parse_render(&args(&["--demo", "-o"])).is_err());
+        assert!(parse_render(&args(&["--demo", "a.als", "-o", "x.wav"])).is_err());
         assert!(parse_render(&args(&["--demo", "-o", "x.wav", "--sample-rate", "abc"])).is_err());
-        let ok = parse_render(&args(&["--demo", "-o", "x.wav", "--sample-rate", "44100"])).unwrap();
+        assert!(parse_render(&args(&["--demo", "-o", "x.wav", "--scene", "0"])).is_err());
+        assert!(parse_render(&args(&["--demo", "-o", "x.wav", "--bogus"])).is_err());
+        let ok = parse_render(&args(&["a.als", "-o", "x.wav", "--sample-rate", "44100", "--scene", "2"])).unwrap();
         assert_eq!(ok.sample_rate, 44_100);
+        assert_eq!(ok.scene, Some(1));
+        assert!(matches!(ok.source, Source::Als(_)));
+    }
+
+    #[test]
+    fn scene_replaces_the_arrangement_with_its_clips() {
+        let mut project = demo_project();
+        let clip = project.arrangement.lanes[0].clips[0].clone();
+        project.launcher = Launcher {
+            scenes: vec![Scene::default(), Scene::default()],
+            columns: vec![LauncherColumn {
+                track: TrackId(1),
+                slots: vec![Slot::default(), Slot { clip: Some(clip), has_stop: true }],
+            }],
+        };
+        let scene_2 = scene_as_arrangement(&project, 1).unwrap();
+        assert_eq!(scene_2.arrangement.lanes.len(), 1);
+        assert_eq!(scene_2.arrangement.lanes[0].clips.len(), 1);
+        assert!(scene_as_arrangement(&project, 0).unwrap().arrangement.lanes[0].clips.is_empty());
+        assert!(scene_as_arrangement(&project, 2).is_err());
     }
 }

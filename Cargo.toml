@@ -12,9 +12,12 @@ rust-version = "1.95"
 # internal
 loopwerk-model = { path = "crates/model" }
 loopwerk-engine = { path = "crates/engine" }
+loopwerk-als = { path = "crates/als" }
 
 # external (licences must be GPLv3-compatible)
 hound = "3.5"  # Apache-2.0
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }  # MIT OR Apache-2.0
+roxmltree = "0.21"  # MIT OR Apache-2.0
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

@@ -56,7 +56,7 @@ Its key ideas:
 2. **Per-format extensions.** Every object carries an `Extensions` list where an importer keeps
    data the core does not model, keyed by format, verbatim. The exporter for the same format
    writes it back, so `.als` → Loopwerk → `.als` loses nothing the core does not understand yet.
-3. **Formats live in their own crates** (`crates/formats/als`, later `flp`, `dawproject`) and
+3. **Formats live in their own crates** (`crates/als`, later `crates/flp`, `crates/dawproject`) and
    convert to and from the core. Adding a format never requires changing another format.
 
 Objects refer to each other by typed ids (`TrackId`, `ChannelId`, `ContentId`), not by pointers.
