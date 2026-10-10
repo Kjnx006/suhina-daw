@@ -31,7 +31,13 @@ then [`CONTRIBUTING.md`](CONTRIBUTING.md).
    params and tests. The UI, CLI and MCP all dispatch the same commands.
 7. **Tests are the gate.** Every change comes with tests: round-trip and malformed-input tests for
    formats, golden-file renders for DSP and engine behaviour.
-8. **GPL-compatible dependencies only.** Loopwerk is GPL-3.0-or-later. Dependencies must be
+8. **Other DAWs are named only where a format is handled.** Product names such as Ableton,
+   Live or FL Studio may appear in format crates (`crates/als`), their tests, `docs/spec/` and
+   `docs/decisions/`, to say which file format the code reads. The model, engine, CLI core and
+   UI describe concepts neutrally ("a clip that belongs to one track", "a shared pattern").
+   User-facing text may name a file format when it imports or exports it ("a Live Set to
+   import"), never as Loopwerk's own branding.
+9. **GPL-compatible dependencies only.** Loopwerk is GPL-3.0-or-later. Dependencies must be
    compatible with GPLv3: MIT, Apache-2.0, BSD, ISC, Zlib, MPL-2.0, LGPL, GPL-3.0. Not GPL-2.0-only,
    not proprietary or "non-commercial" licences.
 

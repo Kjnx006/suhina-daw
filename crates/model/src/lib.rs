@@ -118,7 +118,18 @@ pub enum DeviceKind {
     Clap {
         id: String,
     },
+    /// `id` is the 16-byte class id as 32 hex digits.
     Vst3 {
+        id: String,
+    },
+    /// `id` is the plug-in's 32-bit unique id.
+    Vst2 {
+        id: u32,
+    },
+    /// A device native to another DAW that Loopwerk cannot run, kept as a placeholder so the
+    /// chain keeps its shape. `format` names the source format (`"als"`), `id` the device type.
+    Foreign {
+        format: String,
         id: String,
     },
 }
@@ -133,7 +144,8 @@ pub struct Device {
     pub extensions: Extensions,
 }
 
-/// Reusable musical content: an Ableton clip's notes, an FL pattern, an audio region.
+/// Reusable musical content: the notes of a clip, a pattern shared by several tracks, an audio
+/// region. How each source format maps onto it is in `docs/decisions/0001-daw-neutral-model.md`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClipContent {
     pub id: ContentId,
@@ -145,8 +157,8 @@ pub struct ClipContent {
 }
 
 /// One lane of a clip content. `target` is `None` when the lane plays on whichever track the
-/// clip is placed on (an Ableton clip); it names a track when one content drives several tracks
-/// (an FL pattern).
+/// clip is placed on (a clip that belongs to one track); it names a track when one content drives
+/// several tracks (a shared pattern).
 #[derive(Debug, Clone, PartialEq)]
 pub struct ContentLane {
     pub target: Option<TrackId>,
@@ -234,8 +246,8 @@ pub struct Arrangement {
     pub lanes: Vec<ArrangementLane>,
 }
 
-/// A row of the arrangement. Bound to a track (Ableton), or free (an FL playlist track, whose
-/// clips carry their own targets).
+/// A row of the arrangement. Bound to a track, or free (a row of a pattern playlist, whose clips
+/// carry their own targets).
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct ArrangementLane {
     pub name: String,
@@ -452,10 +464,10 @@ mod tests {
         assert_eq!(t.time_signature, TimeSignature { numerator: 4, denominator: 4 });
     }
 
-    /// Ableton shape: each clip has its own content with one untargeted lane, arrangement lanes
-    /// are bound to tracks, and the same track has a launcher column.
+    /// Per-track clips: each clip has its own content with one untargeted lane, arrangement
+    /// lanes are bound to tracks, and the same track has a launcher column.
     #[test]
-    fn ableton_shaped_project_validates() {
+    fn per_track_clip_project_validates() {
         let project = Project {
             tracks: vec![track(1, 1)],
             channels: vec![channel(1)],
@@ -497,10 +509,10 @@ mod tests {
         assert_eq!(project.validate(), Ok(()));
     }
 
-    /// FL shape: one pattern drives two channels' tracks and is placed twice on a free playlist
+    /// Shared pattern: one content drives two tracks and is placed twice on a free arrangement
     /// lane; both placements share the same content.
     #[test]
-    fn fl_shaped_project_validates_and_shares_content() {
+    fn shared_pattern_project_validates_and_shares_content() {
         let pattern = ClipContent {
             id: ContentId(1),
             name: "Pattern 1".into(),

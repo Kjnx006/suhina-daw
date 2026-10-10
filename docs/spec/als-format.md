@@ -5,7 +5,7 @@ What we have learned about the Live Set format, from Live Sets we authored ourse
 
 - **Observed with:** Live 12.4.6 (`Creator="Ableton Live 12.4.6"`, `MinorVersion="12.0_12402"`,
   `MajorVersion="5"`), Windows.
-- **Corpus:** series 1, files `00`–`20` (MIDI clips, scenes, mixer); series 2, files `30`–`35` (audio clips).
+- **Corpus:** series 1, files `00`–`20` (MIDI clips, scenes, mixer); series 2, files `30`–`36` (audio clips); series 3, files `40`–`44` (devices, plug-ins).
 - Every statement marked **(hypothesis)** still needs a corpus file that proves it.
 
 ## Container
@@ -126,7 +126,7 @@ clips are under `DeviceChain/MainSequencer/Sample/ArrangerAutomation/Events`**, 
 | Warp on/off | `IsWarped@Value` | |
 | Warp mode | `WarpMode@Value` | `4` for this file by default; meaning of the codes unknown **(needs corpus)**. |
 | Warp markers | `WarpMarkers/WarpMarker@SecTime`, `@BeatTime` | Pairs of (seconds in the file, beats in the clip). |
-| Clip gain | `SampleVolume@Value` | Linear, `1` = 0 dB **(hypothesis: not changed in corpus)**. |
+| Clip gain | `SampleVolume@Value` | Linear, `1` = 0 dB; −6 dB is `0.5011872053` (file `36`). |
 | Transpose | `PitchCoarse@Value`, `PitchFine@Value` | Semitones, and cents **(fine: hypothesis)**. |
 
 **Warp markers.** A newly added file got markers at (0 s, beat 0) and (4 s, beat 8): Live assumed
@@ -141,6 +141,36 @@ with warp off, the loop region is in **seconds** **(hypothesis: confirm with a m
 
 Adding the first clip to an empty track renamed the track after the clip (`4-Audio` →
 `4-loopwerk-demo`), stored in `Name/EffectiveName` and `Name/MemorizedFirstClipName`.
+
+## Devices
+
+Corpus: series 3, files `40`–`44` (Simpler, EQ Eight, and the commercial plug-ins ShaperBox 3
+and Sylenth1 as VST2 and VST3; the plug-in files stay local, see below).
+
+A track's device chain is `DeviceChain/DeviceChain/Devices`, devices in chain order. The main
+track has the same structure. Adding an instrument to a track named after its first clip renamed
+it after the device (`1-MIDI` → `1-Simpler`, later `1-Sylenth1`).
+
+Every device has `On/Manual@Value` (the device on/off switch; turning EQ Eight off changed it
+from `true` to `false`) and `UserName@Value` (empty unless renamed).
+
+**Live's own devices** are elements named after the device type: `OriginalSimpler`, `Eq8`,
+`Reverb`, `Delay`. Their parameters are nested elements with the usual `Manual` values; band 3
+gain of EQ Eight is `Bands.2/ParameterA/Gain/Manual` (+3 dB stored as `3`). `LastPresetRef`
+points at the default preset the device was loaded from.
+
+**Plug-ins** are `PluginDevice` elements whose `PluginDesc` holds one of:
+
+| | `VstPluginInfo` (VST2) | `Vst3PluginInfo` (VST3) |
+|---|---|---|
+| Name | `PlugName@Value` | `Name@Value` |
+| Identity | `UniqueId@Value`: the 32-bit plug-in id as a decimal | `Uid/Fields.0`…`Fields.3`: the 16-byte class id as four signed 32-bit decimals |
+| State | `Preset/VstPreset/Buffer`: hex text | `Preset/Vst3Preset/ProcessorState` and `ControllerState`: hex text |
+| Location | `Path@Value`: absolute path of the `.dll` on the saving machine (**personal data**) | none |
+| Other | `Version`, `NumberOfParameters`, `Category`, window position | `DeviceType` (`1` for the instrument, `2` for the effect **(hypothesis)**), window position |
+
+Plug-in state is the plug-in vendor's own format. Loopwerk keeps it verbatim and hands it back
+to the plug-in. **Never commit a corpus file that contains a commercial plug-in's state.**
 
 ## Noise: ignore when importing or diffing
 
@@ -160,5 +190,5 @@ These change without any musical edit:
 - Start marker, end marker and loop start moved away from 0, with loop on and off.
 - Group tracks, return tracks added or removed, track output to another track.
 - Disabled clips and disabled notes; note probability and velocity deviation.
-- Clip gain (`33` changed the track volume instead), warp modes, a moved loop on an unwarped clip.
-- Devices and plug-ins (series 3).
+- Warp modes, a moved loop on an unwarped clip.
+- CLAP plug-ins, Audio Units, racks, Max for Live devices.

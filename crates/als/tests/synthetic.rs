@@ -198,3 +198,45 @@ fn hostile_values_do_not_panic() {
     let empty = read_xml(r#"<Ableton><LiveSet/></Ableton>"#).unwrap();
     assert!(empty.project.tracks.is_empty());
 }
+
+#[test]
+fn reads_plugins_and_placeholders() {
+    use loopwerk_model::DeviceKind;
+    let devices = r#"
+        <PluginDevice Id="0"><On><Manual Value="true"/></On><UserName Value=""/>
+          <PluginDesc><VstPluginInfo Id="0">
+            <Path Value="C:/Plugins/Thing.dll"/><PlugName Value="Thing"/><UniqueId Value="-2"/>
+            <Preset><VstPreset Id="0"><Buffer>0A0b
+              FF</Buffer></VstPreset></Preset>
+          </VstPluginInfo></PluginDesc>
+        </PluginDevice>
+        <PluginDevice Id="1"><On><Manual Value="false"/></On><UserName Value="My Synth"/>
+          <PluginDesc><Vst3PluginInfo Id="0">
+            <Preset><Vst3Preset Id="0"><ProcessorState>0102</ProcessorState><ControllerState>zz</ControllerState></Vst3Preset></Preset>
+            <Name Value="Synth"/>
+            <Uid><Fields.0 Value="1448301683"/><Fields.1 Value="-1"/><Fields.2 Value="0"/><Fields.3 Value="16"/></Uid>
+          </Vst3PluginInfo></PluginDesc>
+        </PluginDevice>
+        <Eq8 Id="2"><On><Manual Value="false"/></On><UserName Value=""/></Eq8>"#;
+    let xml = format!(
+        r#"<Ableton><LiveSet><Tracks><MidiTrack Id="1"><Name><EffectiveName Value="M"/></Name>
+           <DeviceChain><DeviceChain><Devices>{devices}</Devices></DeviceChain></DeviceChain></MidiTrack></Tracks></LiveSet></Ableton>"#
+    );
+    let import = read_xml(&xml).unwrap();
+    let channel = import.project.channels.iter().find(|c| c.name == "M").unwrap();
+    let [vst2, vst3, eq] = channel.devices.as_slice() else { panic!("expected three devices: {:?}", channel.devices) };
+
+    assert_eq!(vst2.kind, DeviceKind::Vst2 { id: u32::MAX - 1 });
+    assert_eq!(vst2.name, "Thing");
+    assert_eq!(vst2.state.as_deref(), Some(&[0x0a, 0x0b, 0xff][..]));
+    assert!(vst2.extensions.0.iter().any(|e| e.key == "VstPath" && e.data == b"C:/Plugins/Thing.dll"));
+
+    assert_eq!(vst3.kind, DeviceKind::Vst3 { id: "56535473FFFFFFFF0000000000000010".into() });
+    assert_eq!(vst3.name, "My Synth");
+    assert!(!vst3.enabled);
+    assert_eq!(vst3.state.as_deref(), Some(&[1, 2][..]));
+    assert!(import.warnings.iter().any(|w| w.contains("ControllerState is not valid hex")));
+
+    assert_eq!(eq.kind, DeviceKind::Foreign { format: "als".into(), id: "Eq8".into() });
+    assert!(!eq.enabled);
+}

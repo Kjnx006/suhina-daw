@@ -429,7 +429,7 @@ mod tests {
         assert_onsets(&out, &[0, beat, 2 * beat, 3 * beat]);
     }
 
-    /// An FL-style pattern drives two tracks and is placed twice on a free lane.
+    /// A shared pattern drives two tracks and is placed twice on a free lane.
     #[test]
     fn shared_pattern_plays_every_placement_on_its_target_tracks() {
         let lanes = vec![

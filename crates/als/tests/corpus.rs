@@ -164,3 +164,36 @@ fn audio_clip_in_arrangement() {
     assert_eq!((clip.start, clip.length), (0.0, 8.0));
     assert_eq!(audio.file, "../loopwerk-demo.wav");
 }
+
+fn devices(name: &str, track: &str) -> Vec<loopwerk_model::Device> {
+    let p = open(name).project;
+    p.channels.into_iter().find(|c| c.name == track).unwrap().devices
+}
+
+#[test]
+fn live_devices_become_placeholders() {
+    use loopwerk_model::DeviceKind;
+    let foreign = |id: &str| DeviceKind::Foreign { format: "als".into(), id: id.into() };
+    let d = devices("40-midi-track-instrument", "1-Simpler");
+    assert_eq!(d.iter().map(|d| d.kind.clone()).collect::<Vec<_>>(), [foreign("OriginalSimpler")]);
+    let d = devices("42-device-param", "1-Simpler");
+    assert_eq!(d.iter().map(|d| d.kind.clone()).collect::<Vec<_>>(), [foreign("OriginalSimpler"), foreign("Eq8")]);
+    assert!(d[1].enabled);
+    assert!(!devices("43-device-off", "1-Simpler")[1].enabled);
+}
+
+#[test]
+fn plugins_keep_id_and_state() {
+    use loopwerk_model::DeviceKind;
+    let d = devices("44-plugin-add-sylenth1-vst3", "1-Sylenth1");
+    let names: Vec<&str> = d.iter().map(|d| d.name.as_str()).collect();
+    assert_eq!(names, ["Sylenth1", "Eq8", "ShaperBox 3", "ShaperBox 3"]);
+
+    let DeviceKind::Vst3 { id } = &d[0].kind else { panic!("Sylenth1 should be VST3: {:?}", d[0].kind) };
+    assert_eq!(id.len(), 32);
+    assert!(d[0].state.as_ref().is_some_and(|s| s.len() > 1000));
+
+    let vst2 = d.iter().find(|d| matches!(d.kind, DeviceKind::Vst2 { .. })).unwrap();
+    assert_eq!(vst2.kind, DeviceKind::Vst2 { id: 1_128_746_035 });
+    assert!(vst2.state.as_ref().is_some_and(|s| s.len() == 3348));
+}

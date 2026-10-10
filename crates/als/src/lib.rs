@@ -11,8 +11,8 @@ use std::path::Path;
 
 use loopwerk_model::{
     Arrangement, ArrangementLane, AudioRegion, Channel, ChannelId, ChannelRole, Clip, ClipContent, ContentId,
-    ContentKinds, ContentLane, Extensions, LaneData, Launcher, LauncherColumn, LoopRange, Note, Project, Scene, Send,
-    Slot, TimeSignature, Track, TrackId, Transport, ValidationError, WarpMarker,
+    ContentKinds, ContentLane, Device, DeviceKind, Extension, Extensions, LaneData, Launcher, LauncherColumn,
+    LoopRange, Note, Project, Scene, Send, Slot, TimeSignature, Track, TrackId, Transport, ValidationError, WarpMarker,
 };
 use roxmltree::Node;
 
@@ -166,7 +166,9 @@ impl Reader {
         let scenes = self.scenes(live_set);
 
         for entry in &entries {
-            channels.push(self.channel(entry, &returns));
+            let mut channel = self.channel(entry, &returns);
+            channel.devices = self.devices(entry.node, &entry.name);
+            channels.push(channel);
             tracks.push(Track {
                 id: entry.track,
                 name: entry.name.clone(),
@@ -176,7 +178,6 @@ impl Reader {
                 parent: self.parent(entry, &entries),
                 extensions: Extensions::default(),
             });
-            self.devices(entry);
             if entry.kind != TrackKind::Return {
                 lanes.push(ArrangementLane {
                     name: entry.name.clone(),
@@ -226,6 +227,9 @@ impl Reader {
         let mut channel = empty_channel(id, "Main", ChannelRole::Master);
         if let Some(mixer) = mixer {
             self.mixer(mixer, &mut channel, "Main");
+        }
+        if let Some(main) = child(live_set, "MainTrack").or_else(|| child(live_set, "MasterTrack")) {
+            channel.devices = self.devices(main, "Main");
         }
         channel
     }
@@ -287,11 +291,95 @@ impl Reader {
         found.map(|e| e.track)
     }
 
-    fn devices(&mut self, entry: &TrackEntry) {
-        let Some(devices) = path(entry.node, &["DeviceChain", "DeviceChain", "Devices"]) else { return };
-        for device in devices.children().filter(Node::is_element) {
-            self.warn(format!("track {}: device {} is not imported yet", entry.name, device.tag_name().name()));
+    /// Reads a track's device chain. Plug-ins keep their state verbatim; Live's own devices
+    /// become placeholders.
+    fn devices(&mut self, track: Node, track_name: &str) -> Vec<Device> {
+        let Some(devices) = path(track, &["DeviceChain", "DeviceChain", "Devices"]) else { return Vec::new() };
+        devices.children().filter(Node::is_element).filter_map(|node| self.device(node, track_name)).collect()
+    }
+
+    fn device(&mut self, node: Node, track_name: &str) -> Option<Device> {
+        let tag = node.tag_name().name();
+        let enabled = boolean(node, &["On", "Manual"]).unwrap_or(true);
+        let user_name = value(node, &["UserName"]).filter(|n| !n.is_empty());
+        let mut extensions = Extensions::default();
+
+        if !node.has_tag_name("PluginDevice") {
+            self.warn(format!("track {track_name}: Live device {tag} is imported as a placeholder"));
+            return Some(Device {
+                name: user_name.unwrap_or(tag).to_string(),
+                kind: DeviceKind::Foreign { format: "als".into(), id: tag.into() },
+                enabled,
+                state: None,
+                extensions,
+            });
         }
+
+        let info = path(node, &["PluginDesc"]).and_then(|d| d.children().find(Node::is_element));
+        let Some(info) = info else {
+            self.warn(format!("track {track_name}: plug-in without a description skipped"));
+            return None;
+        };
+        let (kind, plugin_name, state) = match info.tag_name().name() {
+            "Vst3PluginInfo" => {
+                let Some(id) = vst3_uid(info) else {
+                    self.warn(format!("track {track_name}: VST3 plug-in without a valid id skipped"));
+                    return None;
+                };
+                let preset = path(info, &["Preset", "Vst3Preset"]);
+                let state = preset.and_then(|p| self.hex_state(p, "ProcessorState", track_name));
+                if let Some(controller) = preset.and_then(|p| self.hex_state(p, "ControllerState", track_name)) {
+                    extensions.0.push(Extension {
+                        format: "als".into(),
+                        key: "Vst3ControllerState".into(),
+                        data: controller,
+                    });
+                }
+                (DeviceKind::Vst3 { id }, value(info, &["Name"]), state)
+            }
+            "VstPluginInfo" => {
+                let Some(id) = value(info, &["UniqueId"]).and_then(|v| v.parse::<i64>().ok()) else {
+                    self.warn(format!("track {track_name}: VST2 plug-in without an id skipped"));
+                    return None;
+                };
+                // Accept a signed or unsigned decimal and keep the 32 bits; only positive ids
+                // are in the corpus so far (docs/spec/als-format.md).
+                let id = id as u32;
+                let state = path(info, &["Preset", "VstPreset"]).and_then(|p| self.hex_state(p, "Buffer", track_name));
+                if let Some(plugin_path) = value(info, &["Path"]).filter(|p| !p.is_empty()) {
+                    extensions.0.push(Extension {
+                        format: "als".into(),
+                        key: "VstPath".into(),
+                        data: plugin_path.as_bytes().to_vec(),
+                    });
+                }
+                (DeviceKind::Vst2 { id }, value(info, &["PlugName"]), state)
+            }
+            other => {
+                self.warn(format!("track {track_name}: plug-in type {other} is not imported yet"));
+                return None;
+            }
+        };
+        Some(Device {
+            name: user_name.or(plugin_name).unwrap_or("Plug-in").to_string(),
+            kind,
+            enabled,
+            state,
+            extensions,
+        })
+    }
+
+    /// Decodes a hex-encoded state blob such as a plug-in's `Buffer` or `ProcessorState`.
+    fn hex_state(&mut self, preset: Node, element: &str, track_name: &str) -> Option<Vec<u8>> {
+        let text: String = child(preset, element)?.text()?.chars().filter(|c| !c.is_whitespace()).collect();
+        if text.is_empty() {
+            return None;
+        }
+        let decoded = decode_hex(&text);
+        if decoded.is_none() {
+            self.warn(format!("track {track_name}: plug-in {element} is not valid hex; state dropped"));
+        }
+        decoded
     }
 
     fn scenes(&mut self, live_set: Node) -> Vec<Scene> {
@@ -499,6 +587,29 @@ impl Reader {
         notes.sort_by(|a, b| a.time.total_cmp(&b.time).then(a.key.cmp(&b.key)));
         notes
     }
+}
+
+/// A VST3 class id from Live's four signed 32-bit `Fields`, as 32 upper-case hex digits.
+fn vst3_uid(info: Node) -> Option<String> {
+    let uid = child(info, "Uid")?;
+    let mut hex = String::with_capacity(32);
+    for i in 0..4 {
+        let field = value(uid, &[&format!("Fields.{i}")])?.parse::<i64>().ok()?;
+        hex.push_str(&format!("{:08X}", field as u32));
+    }
+    Some(hex)
+}
+
+fn decode_hex(text: &str) -> Option<Vec<u8>> {
+    let (pairs, rest) = text.as_bytes().as_chunks::<2>();
+    if !rest.is_empty() {
+        return None;
+    }
+    pairs.iter().map(|[hi, lo]| Some((hex_digit(*hi)? << 4) | hex_digit(*lo)?)).collect()
+}
+
+fn hex_digit(byte: u8) -> Option<u8> {
+    char::from(byte).to_digit(16).and_then(|d| u8::try_from(d).ok())
 }
 
 fn empty_channel(id: ChannelId, name: &str, role: ChannelRole) -> Channel {
