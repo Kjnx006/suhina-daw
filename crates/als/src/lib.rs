@@ -10,9 +10,9 @@ use std::io::Read;
 use std::path::Path;
 
 use loopwerk_model::{
-    Arrangement, ArrangementLane, Channel, ChannelId, ChannelRole, Clip, ClipContent, ContentId, ContentKinds,
-    ContentLane, Extensions, LaneData, Launcher, LauncherColumn, LoopRange, Note, Project, Scene, Send, Slot,
-    TimeSignature, Track, TrackId, Transport, ValidationError,
+    Arrangement, ArrangementLane, AudioRegion, Channel, ChannelId, ChannelRole, Clip, ClipContent, ContentId,
+    ContentKinds, ContentLane, Extensions, LaneData, Launcher, LauncherColumn, LoopRange, Note, Project, Scene, Send,
+    Slot, TimeSignature, Track, TrackId, Transport, ValidationError, WarpMarker,
 };
 use roxmltree::Node;
 
@@ -117,6 +117,8 @@ enum TrackKind {
 struct Reader {
     warnings: Vec<String>,
     contents: Vec<ClipContent>,
+    /// Project tempo, for converting unwarped audio clips from seconds to beats.
+    tempo_bpm: f64,
 }
 
 impl Reader {
@@ -126,6 +128,7 @@ impl Reader {
 
     fn live_set(&mut self, live_set: Node) -> Project {
         let transport = self.transport(live_set);
+        self.tempo_bpm = transport.tempo_bpm;
 
         // The main output gets channel 1; tracks are numbered from 1 and their channels from 2.
         let main_channel = ChannelId(1);
@@ -308,17 +311,21 @@ impl Reader {
     }
 
     fn arrangement_clips(&mut self, entry: &TrackEntry) -> Vec<Clip> {
-        let Some(events) =
-            path(entry.node, &["DeviceChain", "MainSequencer", "ClipTimeable", "ArrangerAutomation", "Events"])
-        else {
-            return Vec::new();
-        };
+        // MIDI tracks keep arrangement clips under ClipTimeable, audio tracks under Sample.
         let mut clips = Vec::new();
-        for node in events.children().filter(Node::is_element) {
-            if let Some(clip) = self.clip(node, true, &entry.name) {
-                clips.push(clip);
+        for timeable in ["ClipTimeable", "Sample"] {
+            let Some(events) =
+                path(entry.node, &["DeviceChain", "MainSequencer", timeable, "ArrangerAutomation", "Events"])
+            else {
+                continue;
+            };
+            for node in events.children().filter(Node::is_element) {
+                if let Some(clip) = self.clip(node, true, &entry.name) {
+                    clips.push(clip);
+                }
             }
         }
+        clips.sort_by(|a, b| a.start.total_cmp(&b.start));
         clips
     }
 
@@ -347,24 +354,31 @@ impl Reader {
 
     /// Reads one clip into the content pool and returns its placement.
     fn clip(&mut self, node: Node, arrangement: bool, track: &str) -> Option<Clip> {
-        if !node.has_tag_name("MidiClip") {
-            self.warn(format!("track {track}: {} is not imported yet", node.tag_name().name()));
-            return None;
-        }
         let name = value(node, &["Name"]).unwrap_or_default().to_string();
-        let loop_on = boolean(node, &["Loop", "LoopOn"]).unwrap_or(false);
-        let loop_start = number(node, &["Loop", "LoopStart"]).unwrap_or(0.0);
-        let loop_end = number(node, &["Loop", "LoopEnd"]).unwrap_or(loop_start);
-        let start_relative = number(node, &["Loop", "StartRelative"]).unwrap_or(0.0);
-        let out_marker = number(node, &["Loop", "OutMarker"]).unwrap_or(loop_end);
+        let data = match node.tag_name().name() {
+            "MidiClip" => LaneData::Notes(self.notes(node, &name, track)),
+            "AudioClip" => LaneData::Audio(self.audio(node, &name, track)?),
+            other => {
+                self.warn(format!("track {track}: {other} is not imported yet"));
+                return None;
+            }
+        };
+        // An unwarped audio clip keeps its loop region in seconds (docs/spec/als-format.md).
+        let unwarped = matches!(&data, LaneData::Audio(audio) if !audio.warped);
+        let beats_per_second = self.tempo_bpm / 60.0;
+        let loop_time = |names: &[&str]| number(node, names).map(|t| if unwarped { t * beats_per_second } else { t });
 
-        let notes = self.notes(node, &name, track);
+        let loop_on = boolean(node, &["Loop", "LoopOn"]).unwrap_or(false);
+        let loop_start = loop_time(&["Loop", "LoopStart"]).unwrap_or(0.0);
+        let loop_end = loop_time(&["Loop", "LoopEnd"]).unwrap_or(loop_start);
+        let start_relative = loop_time(&["Loop", "StartRelative"]).unwrap_or(0.0);
+        let out_marker = number(node, &["Loop", "OutMarker"]).unwrap_or(loop_end);
         let id = ContentId(u32::try_from(self.contents.len()).unwrap_or(u32::MAX).saturating_add(1));
         self.contents.push(ClipContent {
             id,
             name: name.clone(),
             length: loop_end.max(out_marker).max(0.0),
-            lanes: vec![ContentLane { target: None, data: LaneData::Notes(notes) }],
+            lanes: vec![ContentLane { target: None, data }],
             extensions: Extensions::default(),
         });
 
@@ -396,6 +410,53 @@ impl Reader {
             loop_range,
             enabled: boolean(node, &["Disabled"]) != Some(true),
             extensions: Extensions::default(),
+        })
+    }
+
+    fn audio(&mut self, clip: Node, clip_name: &str, track: &str) -> Option<AudioRegion> {
+        let file_ref = path(clip, &["SampleRef", "FileRef"]);
+        let relative = file_ref.and_then(|f| value(f, &["RelativePath"])).filter(|p| !p.is_empty());
+        let absolute = file_ref.and_then(|f| value(f, &["Path"])).filter(|p| !p.is_empty());
+        let Some(file) = relative.or(absolute) else {
+            self.warn(format!("track {track}: audio clip {clip_name:?} has no file; skipped"));
+            return None;
+        };
+        let sample_rate = value(clip, &["SampleRef", "DefaultSampleRate"])
+            .and_then(|r| r.parse::<u32>().ok())
+            .filter(|r| (1..=1_000_000).contains(r));
+        let frames = number(clip, &["SampleRef", "DefaultDuration"]).filter(|f| *f >= 0.0);
+        let duration_seconds = match (frames, sample_rate) {
+            (Some(frames), Some(rate)) => Some(frames / f64::from(rate)),
+            _ => None,
+        };
+
+        let mut warp_markers: Vec<WarpMarker> = path(clip, &["WarpMarkers"])
+            .map(|markers| {
+                markers
+                    .children()
+                    .filter(|n| n.has_tag_name("WarpMarker"))
+                    .filter_map(|m| {
+                        let time = m.attribute("BeatTime").and_then(parse_number)?;
+                        let audio_time = m.attribute("SecTime").and_then(parse_number)?;
+                        Some(WarpMarker { time, audio_time })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        warp_markers.sort_by(|a, b| a.time.total_cmp(&b.time));
+
+        let coarse = number(clip, &["PitchCoarse"]).unwrap_or(0.0);
+        let fine = number(clip, &["PitchFine"]).unwrap_or(0.0);
+        Some(AudioRegion {
+            file: file.to_string(),
+            absolute_file: absolute.map(str::to_string),
+            sample_rate,
+            channels: None,
+            duration_seconds,
+            warped: boolean(clip, &["IsWarped"]).unwrap_or(true),
+            warp_markers,
+            gain: number(clip, &["SampleVolume"]).filter(|g| *g >= 0.0).unwrap_or(1.0),
+            transpose: coarse + fine / 100.0,
         })
     }
 

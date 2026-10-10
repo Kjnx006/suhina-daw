@@ -5,7 +5,7 @@ What we have learned about the Live Set format, from Live Sets we authored ourse
 
 - **Observed with:** Live 12.4.6 (`Creator="Ableton Live 12.4.6"`, `MinorVersion="12.0_12402"`,
   `MajorVersion="5"`), Windows.
-- **Corpus:** series 1, files `00`–`20` (MIDI clips, scenes, mixer).
+- **Corpus:** series 1, files `00`–`20` (MIDI clips, scenes, mixer); series 2, files `30`–`35` (audio clips).
 - Every statement marked **(hypothesis)** still needs a corpus file that proves it.
 
 ## Container
@@ -107,6 +107,41 @@ number) and its notes in `Notes/MidiNoteEvent`:
 Live names MIDI note 60 "C3" (so 64 is E3, 67 is G3). Notes drawn without changing anything got
 velocity 100 in one clip and 98 in another.
 
+## Audio clips
+
+Corpus: series 2, files `30`–`35` (one 4-second, 48 kHz WAV rendered by Loopwerk).
+
+`AudioClip` shares `Time`, `CurrentStart`/`CurrentEnd`, `Loop`, `Name`, `Color` and `Disabled`
+with `MidiClip`. Session audio clips sit in clip slots like MIDI clips, but **arrangement audio
+clips are under `DeviceChain/MainSequencer/Sample/ArrangerAutomation/Events`**, not under
+`ClipTimeable` as on MIDI tracks.
+
+| What | Where | Notes |
+|---|---|---|
+| File | `SampleRef/FileRef/RelativePath@Value` | Relative to the Live Set's folder (`../loopwerk-demo.wav`). |
+| File, absolute | `SampleRef/FileRef/Path@Value` | The full path on the machine that saved the set. **Personal data**: strip before sharing a corpus. |
+| File size, checksum | `FileRef/OriginalFileSize`, `FileRef/OriginalCrc` | |
+| Length | `SampleRef/DefaultDuration@Value` | In sample frames (`192000`). |
+| Sample rate | `SampleRef/DefaultSampleRate@Value` | `48000` |
+| Warp on/off | `IsWarped@Value` | |
+| Warp mode | `WarpMode@Value` | `4` for this file by default; meaning of the codes unknown **(needs corpus)**. |
+| Warp markers | `WarpMarkers/WarpMarker@SecTime`, `@BeatTime` | Pairs of (seconds in the file, beats in the clip). |
+| Clip gain | `SampleVolume@Value` | Linear, `1` = 0 dB **(hypothesis: not changed in corpus)**. |
+| Transpose | `PitchCoarse@Value`, `PitchFine@Value` | Semitones, and cents **(fine: hypothesis)**. |
+
+**Warp markers.** A newly added file got markers at (0 s, beat 0) and (4 s, beat 8): Live assumed
+120 bpm. Each list ends with one more marker 1/32 beat after the last real one
+((4.015625 s, beat 8.03125)); it sets the playback rate after the last marker. Adding a marker on
+beat 2 and dragging it right replaced the list with (0, 0), (0.500146 s, beat 1.125) and its
+1/32-beat follower.
+
+**Unwarped clips.** Turning warp off changed `LoopEnd` from `8` to `4` while the file is 4 s long:
+with warp off, the loop region is in **seconds** **(hypothesis: confirm with a moved loop)**.
+`OutMarker` and `CurrentEnd` did not change.
+
+Adding the first clip to an empty track renamed the track after the clip (`4-Audio` →
+`4-loopwerk-demo`), stored in `Name/EffectiveName` and `Name/MemorizedFirstClipName`.
+
 ## Noise: ignore when importing or diffing
 
 These change without any musical edit:
@@ -125,4 +160,5 @@ These change without any musical edit:
 - Start marker, end marker and loop start moved away from 0, with loop on and off.
 - Group tracks, return tracks added or removed, track output to another track.
 - Disabled clips and disabled notes; note probability and velocity deviation.
-- Audio clips and warping (series 2), devices and plug-ins (series 3).
+- Clip gain (`33` changed the track volume instead), warp modes, a moved loop on an unwarped clip.
+- Devices and plug-ins (series 3).

@@ -57,25 +57,39 @@ Make the audio file with Loopwerk so its origin is clean:
 cargo run -p loopwerk-cli -- render --demo -o corpus/als/loopwerk-demo.wav
 ```
 
+Continue from the last file of series 1 and use an audio track that has no clips yet.
+
 | # | File name | Edit from the previous file |
 |---|---|---|
-| 20 | `20-audio-track.als` | From `00-base`: add one audio track. |
-| 21 | `21-audio-clip.als` | Drag `loopwerk-demo.wav` from your file manager into the first Session slot of the audio track. Leave warp settings as Live sets them. |
-| 22 | `22-audio-warp-off.als` | In Clip View, turn Warp off. |
-| 23 | `23-audio-warp-marker.als` | Turn Warp on again, add one warp marker on beat 2 and drag it a little to the right. |
-| 24 | `24-audio-gain-transpose.als` | Set clip gain to -6 dB and transpose to +3 st. |
+| 30 | `30-audio-clip.als` | In Session View, drag `loopwerk-demo.wav` from your file manager into the track's first clip slot. Leave warp settings as Live sets them. |
+| 31 | `31-audio-warp-off.als` | Open the clip (Clip View) and turn Warp off. |
+| 32 | `32-audio-warp-marker.als` | Turn Warp on again, add one warp marker on beat 2 and drag it a little to the right. |
+| 33 | `33-audio-gain.als` | Set the **clip's** Gain (Clip View, not the mixer) to -6 dB. |
+| 34 | `34-audio-transpose.als` | Set the clip's Transpose to +3 st. |
+| 35 | `35-audio-in-arrangement.als` | In Arrangement View, drag `loopwerk-demo.wav` to bar 1 of the same track. |
 
 ## Series 3: devices
 
 | # | File name | Edit from the previous file |
 |---|---|---|
-| 30 | `30-midi-track-instrument.als` | From `02-midi-track`: drag Live's built-in **Simpler** (empty, no sample) onto the track. Not a preset. |
-| 31 | `31-audio-effect.als` | Add a built-in **EQ Eight** after it, default settings. |
-| 32 | `32-device-param.als` | Change one EQ Eight parameter (band 1 gain to +3 dB). |
-| 33 | `33-device-off.als` | Turn EQ Eight off with its device activator. |
+| 40 | `40-midi-track-instrument.als` | Drag Live's built-in **Simpler** (empty, no sample) onto a MIDI track. Not a preset. |
+| 41 | `41-audio-effect.als` | Add a built-in **EQ Eight** after it, default settings. |
+| 42 | `42-device-param.als` | Change one EQ Eight parameter (band 1 gain to +3 dB). |
+| 43 | `43-device-off.als` | Turn EQ Eight off with its device activator. |
 
-If you have a CLAP or VST3 plug-in with a free licence, also save `34-plugin.als` with it on the
+If you have a CLAP or VST3 plug-in with a free licence, also save `44-plugin.als` with it on the
 track and note the plug-in's name and version.
+
+## Tips from the first run
+
+- Live's default new set already has two MIDI tracks, two audio tracks, two returns and eight
+  scenes. Edits that "add" one of these may not be needed; check the log of what was really done.
+- Clip View controls only appear for the clip you double-clicked. Mixer controls in the track
+  column change the **track**, not the clip.
+- Typing values into fields (`-6`, `50L`, `2`) gives exact numbers; dragging gives values like
+  `64.251297`.
+- Saving before or after closing a panel moves view-state changes between files. Harmless, but
+  log it.
 
 ## Extract and diff
 

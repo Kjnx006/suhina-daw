@@ -180,10 +180,22 @@ pub struct Note {
 pub struct AudioRegion {
     /// Path relative to the project, as stored in the source file.
     pub file: String,
-    pub sample_rate: u32,
-    pub channels: u16,
+    /// Absolute path as stored in the source file, used when the relative path does not resolve.
+    pub absolute_file: Option<String>,
+    /// Sample rate of the file, if the source file records it.
+    pub sample_rate: Option<u32>,
+    /// Channel count of the file, if the source file records it.
+    pub channels: Option<u16>,
+    /// Length of the file in seconds, if known.
+    pub duration_seconds: Option<f64>,
+    /// When false the audio plays at its original speed and `warp_markers` are kept but unused.
+    pub warped: bool,
     /// Empty when the audio plays at its original speed from the content start.
     pub warp_markers: Vec<WarpMarker>,
+    /// Linear gain; 1.0 is unity.
+    pub gain: f64,
+    /// Pitch shift in semitones (fractions are cents / 100).
+    pub transpose: f64,
 }
 
 /// Pins a position in the audio file to a position in the content.

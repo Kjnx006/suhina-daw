@@ -159,7 +159,7 @@ fn reads_scenes_and_session_slots() {
 #[test]
 fn unsupported_content_becomes_warnings() {
     let import = read_xml(&live_set()).unwrap();
-    assert!(import.warnings.iter().any(|w| w.contains("AudioClip")), "{:?}", import.warnings);
+    assert!(import.warnings.iter().any(|w| w.contains("has no file")), "{:?}", import.warnings);
     assert!(import.warnings.iter().any(|w| w.contains("Reverb")), "{:?}", import.warnings);
     assert!(import.project.launcher.columns[1].slots[0].clip.is_none());
 }

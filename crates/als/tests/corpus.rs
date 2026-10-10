@@ -1,7 +1,7 @@
 //! Tests against the local, uncommitted Live Set corpus (`corpus/als`, see
 //! `docs/spec/als-corpus.md`). Run with `cargo test -p loopwerk-als --features corpus`.
 #![cfg(feature = "corpus")]
-#![allow(clippy::panic)] // test helpers outside #[test] functions
+#![allow(clippy::panic, clippy::unwrap_used)] // test helpers outside #[test] functions
 
 use std::path::PathBuf;
 
@@ -104,4 +104,63 @@ fn session_clip_length_2_bars() {
     let clip = p.launcher.columns[0].slots[0].clip.as_ref().unwrap();
     assert_eq!(clip.loop_range.map(|r| r.end), Some(8.0));
     assert_eq!(clip.length, 8.0);
+}
+
+fn audio_clip(p: &loopwerk_model::Project, arrangement: bool) -> (loopwerk_model::Clip, loopwerk_model::AudioRegion) {
+    let track = p.tracks.iter().find(|t| t.name == "4-loopwerk-demo").unwrap().id;
+    let clip = if arrangement {
+        p.arrangement.lanes.iter().find(|l| l.track == Some(track)).unwrap().clips[0].clone()
+    } else {
+        p.launcher.columns.iter().find(|c| c.track == track).unwrap().slots[0].clip.clone().unwrap()
+    };
+    let LaneData::Audio(audio) = &p.content(clip.content).unwrap().lanes[0].data else { panic!("expected audio") };
+    (clip.clone(), audio.clone())
+}
+
+#[test]
+fn audio_series_files_import() {
+    for name in [
+        "30-audio-clip",
+        "31-audio-warp-off",
+        "32-audio-warp-marker",
+        "33-audio-gain",
+        "34-audio-transpose",
+        "35-audio-in-arrangement",
+    ] {
+        open(name);
+    }
+}
+
+#[test]
+fn audio_clip_file_and_default_warp() {
+    let (clip, audio) = audio_clip(&open("30-audio-clip").project, false);
+    assert_eq!(audio.file, "../loopwerk-demo.wav");
+    assert_eq!(audio.sample_rate, Some(48_000));
+    assert_eq!(audio.duration_seconds, Some(4.0));
+    assert!(audio.warped);
+    let markers: Vec<(f64, f64)> = audio.warp_markers.iter().map(|m| (m.time, m.audio_time)).collect();
+    assert_eq!(markers, [(0.0, 0.0), (8.0, 4.0), (8.03125, 4.015625)]);
+    assert_eq!(clip.loop_range.map(|r| r.end), Some(8.0));
+}
+
+#[test]
+fn unwarped_audio_loop_is_converted_from_seconds() {
+    let (_, audio) = audio_clip(&open("31-audio-warp-off").project, false);
+    assert!(!audio.warped);
+}
+
+#[test]
+fn moved_warp_marker_and_transpose() {
+    let (_, audio) = audio_clip(&open("32-audio-warp-marker").project, false);
+    assert!(audio.warp_markers.iter().any(|m| m.time == 1.125 && (m.audio_time - 0.500_146).abs() < 1e-6));
+    let (_, audio) = audio_clip(&open("34-audio-transpose").project, false);
+    assert_eq!(audio.transpose, 3.0);
+    assert_eq!(audio.gain, 1.0);
+}
+
+#[test]
+fn audio_clip_in_arrangement() {
+    let (clip, audio) = audio_clip(&open("35-audio-in-arrangement").project, true);
+    assert_eq!((clip.start, clip.length), (0.0, 8.0));
+    assert_eq!(audio.file, "../loopwerk-demo.wav");
 }
