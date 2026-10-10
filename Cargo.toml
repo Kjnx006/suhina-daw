@@ -13,6 +13,9 @@ rust-version = "1.95"
 loopwerk-model = { path = "crates/model" }
 loopwerk-engine = { path = "crates/engine" }
 
+# external (licences must be GPLv3-compatible)
+hound = "3.5"  # Apache-2.0
+
 [workspace.lints.rust]
 unsafe_code = "forbid"
 
