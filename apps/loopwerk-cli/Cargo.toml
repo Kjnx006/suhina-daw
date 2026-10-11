@@ -12,7 +12,9 @@ path = "src/main.rs"
 [dependencies]
 loopwerk-engine.workspace = true
 loopwerk-als.workspace = true
-hound.workspace = true
+loopwerk-session.workspace = true
+loopwerk-automation.workspace = true
+tokio = { version = "1", features = ["rt-multi-thread"] }  # MIT
 cpal.workspace = true
 
 [lints]

@@ -14,6 +14,7 @@ loopwerk-model = { path = "crates/model" }
 loopwerk-engine = { path = "crates/engine" }
 loopwerk-als = { path = "crates/als" }
 loopwerk-session = { path = "crates/session" }
+loopwerk-automation = { path = "crates/automation" }
 
 # external (licences must be GPLv3-compatible)
 hound = "3.5"  # Apache-2.0

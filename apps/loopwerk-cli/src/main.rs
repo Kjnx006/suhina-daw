@@ -5,16 +5,20 @@ mod play;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use loopwerk_automation::{LoopwerkMcp, Workspace, render_wav, scene_as_arrangement};
 use loopwerk_engine::model::*;
-use loopwerk_engine::render_offline;
+use loopwerk_session::Session;
 
 const USAGE: &str = "\
 usage: loopwerk-cli render (<project.als> | --demo) -o <out.wav> [--scene <n>] [--sample-rate <hz>]
        loopwerk-cli play (<project.als> | --demo) [--scene <n>]
+       loopwerk-cli mcp [--read-root <dir>] [--write-root <dir>]
 
 commands:
   render    render a project offline to a 32-bit float stereo WAV file
   play      play a project once on the default audio output
+  mcp       serve the Model Context Protocol on stdin/stdout for agents; files can be read only
+            below --read-root and written only below --write-root (no root, no access)
 
 options:
   <project.als>      a Live Set to import
@@ -60,6 +64,13 @@ fn main() -> ExitCode {
                 }
             }
         }
+        Some("mcp") => match mcp(args.get(1..).unwrap_or_default()) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(message) => {
+                eprintln!("error: {message}");
+                ExitCode::FAILURE
+            }
+        },
         Some("--version" | "-V") => {
             println!("loopwerk-cli {}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
@@ -143,45 +154,30 @@ fn load_project(args: &Args) -> Result<Project, String> {
 fn render(args: &Args) -> Result<(), String> {
     let path = args.output.as_ref().ok_or("missing --output")?;
     let project = load_project(args)?;
-    let samples = render_offline(&project, args.sample_rate, 512).map_err(|e| e.to_string())?;
-
-    let spec = hound::WavSpec {
-        channels: 2,
-        sample_rate: args.sample_rate,
-        bits_per_sample: 32,
-        sample_format: hound::SampleFormat::Float,
-    };
-    let mut writer = hound::WavWriter::create(path, spec).map_err(|e| format!("{}: {e}", path.display()))?;
-    for sample in &samples {
-        writer.write_sample(*sample).map_err(|e| format!("{}: {e}", path.display()))?;
-    }
-    writer.finalize().map_err(|e| format!("{}: {e}", path.display()))?;
-
-    let seconds = samples.len() as f64 / 2.0 / f64::from(args.sample_rate);
-    println!("wrote {} ({seconds:.2} s, {} Hz)", path.display(), args.sample_rate);
+    let summary = render_wav(&project, path, args.sample_rate)?;
+    println!("wrote {} ({:.2} s, {} Hz)", path.display(), summary.seconds, summary.sample_rate);
     Ok(())
 }
 
-/// Replaces the arrangement with the clips of one launcher scene, each played once from the start,
-/// as if the scene were launched at time zero.
-fn scene_as_arrangement(project: &Project, scene: usize) -> Result<Project, String> {
-    let count = project.launcher.scenes.len();
-    if scene >= count {
-        return Err(format!("scene {} does not exist; the project has {count} scenes", scene.saturating_add(1)));
+/// Serves MCP on stdin/stdout. Nothing else may be printed to stdout while it runs.
+fn mcp(args: &[String]) -> Result<(), String> {
+    let mut read_root = None;
+    let mut write_root = None;
+    let mut it = args.iter();
+    while let Some(arg) = it.next() {
+        match arg.as_str() {
+            "--read-root" => read_root = Some(PathBuf::from(it.next().ok_or("--read-root needs a folder")?)),
+            "--write-root" => write_root = Some(PathBuf::from(it.next().ok_or("--write-root needs a folder")?)),
+            other => return Err(format!("unknown argument: {other}\n\n{USAGE}")),
+        }
     }
-    let lanes = project
-        .launcher
-        .columns
-        .iter()
-        .map(|column| ArrangementLane {
-            name: String::new(),
-            track: Some(column.track),
-            clips: column.slots.get(scene).and_then(|s| s.clip.clone()).into_iter().collect(),
-        })
-        .collect();
-    let mut project = project.clone();
-    project.arrangement = Arrangement { lanes };
-    Ok(project)
+    let workspace = Workspace::new(read_root.as_deref(), write_root.as_deref())?;
+    let server = LoopwerkMcp::new(Session::new(Project::default()), workspace);
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| format!("could not start the async runtime: {e}"))?;
+    runtime.block_on(server.serve_stdio())
 }
 
 /// Two bars at 120 bpm: a bass line and a chord pattern on separate tracks, each placed twice.
@@ -266,7 +262,7 @@ mod tests {
     fn demo_project_is_valid_and_renders_two_bars() {
         let project = demo_project();
         assert_eq!(project.validate(), Ok(()));
-        let samples = render_offline(&project, 48_000, 512).unwrap();
+        let samples = loopwerk_engine::render_offline(&project, 48_000, 512).unwrap();
         let seconds = samples.len() as f64 / 2.0 / 48_000.0;
         assert!((4.0..4.2).contains(&seconds), "{seconds} s");
         let peak = samples.iter().fold(0.0f32, |m, s| m.max(s.abs()));

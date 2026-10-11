@@ -49,8 +49,9 @@ crates/
   engine   L1 audio graph and offline/real-time rendering
   als      L1 Live Set (.als) reader into model; later one crate per format (dawproject, flp)
   session  L2 open project, undo history and the command registry (ADR 0002)
+  automation L3 MCP server (rmcp) over a session, file roots, WAV rendering (docs/mcp.md)
 apps/
-  loopwerk-cli   headless CLI (render, later mcp)
+  loopwerk-cli   headless CLI: render, play, mcp
 docs/
   decisions/  architecture decision records; read 0001 before changing the model
   spec/       clean-room specs written from observation (formats, behaviour)
