@@ -48,6 +48,7 @@ crates/
   model    L0 DAW-neutral project as pure data (tracks, channels, clip contents, clips, launcher)
   engine   L1 audio graph and offline/real-time rendering
   als      L1 Live Set (.als) reader into model; later one crate per format (dawproject, flp)
+  session  L2 open project, undo history and the command registry (ADR 0002)
 apps/
   loopwerk-cli   headless CLI (render, later mcp)
 docs/
