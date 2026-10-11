@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SizedSample};
 use loopwerk_engine::Renderer;
-use loopwerk_engine::model::Project;
+use loopwerk_engine::model::{LaneData, Project};
 
 /// Frames rendered per engine call; output buffers larger than this are filled in several calls.
 const SCRATCH_FRAMES: usize = 4096;
@@ -39,7 +39,7 @@ pub fn play(project: &Project) -> Result<(), String> {
     let renderer = Renderer::new(project, config.sample_rate).map_err(|e| e.to_string())?;
     let length = renderer.length();
     if length == 0 {
-        println!("nothing to play: the arrangement is empty");
+        println!("{}", nothing_to_play(project));
         return Ok(());
     }
     let progress = Arc::new(Progress::default());
@@ -74,6 +74,28 @@ pub fn play(project: &Project) -> Result<(), String> {
     drop(stream);
     println!("done");
     Ok(())
+}
+
+/// Explains why a project produced no sound: no clips at all, or only clips the engine cannot
+/// play yet.
+fn nothing_to_play(project: &Project) -> String {
+    let clips: Vec<_> = project.arrangement.lanes.iter().flat_map(|l| &l.clips).collect();
+    let audio = clips
+        .iter()
+        .filter(|c| {
+            project
+                .content(c.content)
+                .is_some_and(|content| content.lanes.iter().any(|l| matches!(l.data, LaneData::Audio(_))))
+        })
+        .count();
+    match (clips.len(), audio) {
+        (0, _) => "nothing to play: the arrangement has no clips (try --scene <n> for launcher clips)".to_string(),
+        (_, 0) => "nothing to play: the arrangement's clips have no notes".to_string(),
+        (total, audio) => format!(
+            "nothing to play yet: {audio} of {total} arrangement clips are audio clips, and audio playback \
+             is not implemented yet (ROADMAP M5); only MIDI notes play for now"
+        ),
+    }
 }
 
 fn build<T>(
