@@ -57,11 +57,19 @@ crates/
   media    L2 finds, decodes and analyses a project's audio files (symphonia) into the engine's AudioPool
   session  L2 open project, undo history, the command registry (ADR 0002) and the attached player
   automation L3 MCP server (rmcp) over a session, file roots, WAV rendering (docs/mcp.md)
+  dsp      L0 signal-processing blocks for built-in devices: smoothing, filters, crossovers, LFOs, shapers, oversampling (ADR 0004)
+  device-api L0 the Device trait, parameter descriptions, contract tests every device runs
+devices/
+  utility  gain, balance, width, mono, bass mono, phase, channels, DC filter; depends on dsp, device-api
+  auto-pan LFO panning and tremolo, free in Hz or synced to the song position
+  dj-eq    three bands with kills, Linkwitz-Riley crossovers at 24 or 48 dB/octave
+  vinyl-distortion  tracing (even), pinch (odd, out of phase) and crackle, oversampled
+  overdrive  pedal-style: band, drive, tone, dynamics, dry/wet; oversampled
 apps/
   loopwerk-cli   headless CLI: render, play, mcp
 docs/
   architecture.md  how the crates, threads and commands fit together
-  decisions/  architecture decision records; read 0001 before changing the model
+  decisions/  architecture decision records; read 0001 before changing the model, 0004 before a device
   spec/       clean-room specs written from observation (formats, behaviour)
   INDEX.md    generated list of documents and the code each covers (scripts/docs.py)
 scripts/   research helpers (e.g. extracting and diffing .als files) and docs.py (the docs index)
