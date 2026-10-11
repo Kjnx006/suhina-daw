@@ -80,6 +80,28 @@ Continue from the last file of series 1 and use an audio track that has no clips
 If you have a CLAP or VST3 plug-in with a free licence, also save `44-plugin.als` with it on the
 track and note the plug-in's name and version.
 
+## Series 4: open questions
+
+Answers the open questions in [`als-format.md`](als-format.md). Start from
+`36-audio-clip-gain.als`, not from a `44-*` file, so no commercial plug-in state ends up in these
+sets. "The C3 clip" is the session clip in 1-MIDI slot 1 (C3, loop on, 2 bars).
+
+| # | File name | Edit from the previous file |
+|---|---|---|
+| 50 | `50-time-signature-3-4.als` | In the transport bar, set the time signature to 3/4 (type `3` in the numerator). |
+| 51 | `51-time-signature-6-8.als` | Set 6/8. |
+| 52 | `52-time-signature-7-8.als` | Set 7/8. |
+| 53 | `53-time-signature-4-4.als` | Back to 4/4. |
+| 54 | `54-clip-start-marker.als` | Clip View of the C3 clip: type `1.2.1` in **Start**. |
+| 55 | `55-clip-loop-position.als` | Type `1.3.1` in the loop **Position**. |
+| 56 | `56-clip-loop-off.als` | Turn **Loop** off. |
+| 57 | `57-clip-end-marker.als` | Type `2.3.1` in **End**. |
+| 58 | `58-clip-deactivated.als` | Select the C3 clip in Session View and press `0` (deactivate clip). |
+| 59 | `59-note-deactivated.als` | Open the G3 clip (1-MIDI slot 2), select the note and press `0` (deactivate note). |
+| 60 | `60-group-track.als` | Select the headers of 3-Audio and 4-loopwerk-demo (Ctrl-click) and press `Ctrl+G`. |
+| 61 | `61-audio-warp-off.als` | Session audio clip on 4-loopwerk-demo: Warp off. |
+| 62 | `62-audio-unwarped-loop-start.als` | Move the loop **Position** to about one second. Log the exact value Live shows. |
+
 ## Tips from the first run
 
 - Live's default new set already has two MIDI tracks, two audio tracks, two returns and eight
