@@ -6,7 +6,7 @@ Loopwerk is pre-alpha. Milestones are in order; each one builds on the previous.
 |---|---|---|
 | M0 | **Foundation:** workspace, GPL-3.0-or-later, clean-room rules, DAW-neutral model (ADR 0001) | done |
 | M1 | **First sound:** offline renderer; `.als` reader for tempo, tracks, mixer, sends, scenes, MIDI clips, and audio clips and device chains as data (not yet played); `loopwerk-cli render` | done |
-| M2 | **Real-time playback:** audio output (ALSA, PipeWire, JACK, WASAPI, CoreAudio), transport, `loopwerk-cli play` | next |
+| M2 | **Real-time playback:** audio output (ALSA, PipeWire, JACK, WASAPI, CoreAudio), transport, `loopwerk-cli play` | in progress: `play` works, waiting for a listening test |
 | M3 | **Commands and agents:** every action is an engine command with an id, params and undo; the CLI and an **MCP server** drive the same commands, so an agent can open, inspect, edit, play and render a project headlessly | |
 | M4 | **Clip launching:** launch quantisation, scenes, stop buttons, follow actions | |
 | M5 | **Audio playback:** play imported audio clips with gain, transpose, warping and time-stretching | |

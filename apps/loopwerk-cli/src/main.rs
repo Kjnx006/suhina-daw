@@ -1,5 +1,7 @@
 //! Headless Loopwerk CLI.
 
+mod play;
+
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -8,16 +10,18 @@ use loopwerk_engine::render_offline;
 
 const USAGE: &str = "\
 usage: loopwerk-cli render (<project.als> | --demo) -o <out.wav> [--scene <n>] [--sample-rate <hz>]
+       loopwerk-cli play (<project.als> | --demo) [--scene <n>]
 
 commands:
   render    render a project offline to a 32-bit float stereo WAV file
+  play      play a project once on the default audio output
 
 options:
   <project.als>      a Live Set to import
-  --demo             render the built-in demo project instead
-  -o, --output       output WAV path
-  --scene <n>        render scene n (1-based) of the clip launcher instead of the arrangement
-  --sample-rate      sample rate in Hz (default 48000)";
+  --demo             use the built-in demo project instead
+  -o, --output       output WAV path (render only)
+  --scene <n>        use scene n (1-based) of the clip launcher instead of the arrangement
+  --sample-rate      sample rate in Hz (render only; default 48000)";
 
 #[derive(Debug)]
 enum Source {
@@ -26,23 +30,36 @@ enum Source {
 }
 
 #[derive(Debug)]
-struct RenderArgs {
+struct Args {
     source: Source,
-    output: PathBuf,
+    output: Option<PathBuf>,
     scene: Option<usize>,
     sample_rate: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Command {
+    Render,
+    Play,
 }
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
-        Some("render") => match parse_render(args.get(1..).unwrap_or_default()).and_then(|a| render(&a)) {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(message) => {
-                eprintln!("error: {message}");
-                ExitCode::FAILURE
+        Some(name @ ("render" | "play")) => {
+            let command = if name == "render" { Command::Render } else { Command::Play };
+            let result = parse_args(args.get(1..).unwrap_or_default(), command).and_then(|a| match command {
+                Command::Render => render(&a),
+                Command::Play => play::play(&load_project(&a)?),
+            });
+            match result {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(message) => {
+                    eprintln!("error: {message}");
+                    ExitCode::FAILURE
+                }
             }
-        },
+        }
         Some("--version" | "-V") => {
             println!("loopwerk-cli {}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
@@ -58,7 +75,7 @@ fn main() -> ExitCode {
     }
 }
 
-fn parse_render(args: &[String]) -> Result<RenderArgs, String> {
+fn parse_args(args: &[String], command: Command) -> Result<Args, String> {
     let mut output = None;
     let mut sample_rate = 48_000;
     let mut scene = None;
@@ -92,16 +109,22 @@ fn parse_render(args: &[String]) -> Result<RenderArgs, String> {
             source = Some(next);
         }
     }
-    Ok(RenderArgs {
+    match (command, &output) {
+        (Command::Render, None) => return Err(format!("missing --output\n\n{USAGE}")),
+        (Command::Play, Some(_)) => return Err(format!("play does not write a file; use render\n\n{USAGE}")),
+        _ => {}
+    }
+    Ok(Args {
         source: source.ok_or(format!("missing project: give a .als file or --demo\n\n{USAGE}"))?,
-        output: output.ok_or(format!("missing --output\n\n{USAGE}"))?,
+        output,
         scene,
         sample_rate,
     })
 }
 
-fn render(args: &RenderArgs) -> Result<(), String> {
-    let mut project = match &args.source {
+/// Opens the project named by the arguments, printing import warnings, and applies `--scene`.
+fn load_project(args: &Args) -> Result<Project, String> {
+    let project = match &args.source {
         Source::Demo => demo_project(),
         Source::Als(path) => {
             let import = loopwerk_als::read_file(path).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -111,9 +134,15 @@ fn render(args: &RenderArgs) -> Result<(), String> {
             import.project
         }
     };
-    if let Some(scene) = args.scene {
-        project = scene_as_arrangement(&project, scene)?;
+    match args.scene {
+        Some(scene) => scene_as_arrangement(&project, scene),
+        None => Ok(project),
     }
+}
+
+fn render(args: &Args) -> Result<(), String> {
+    let path = args.output.as_ref().ok_or("missing --output")?;
+    let project = load_project(args)?;
     let samples = render_offline(&project, args.sample_rate, 512).map_err(|e| e.to_string())?;
 
     let spec = hound::WavSpec {
@@ -122,7 +151,6 @@ fn render(args: &RenderArgs) -> Result<(), String> {
         bits_per_sample: 32,
         sample_format: hound::SampleFormat::Float,
     };
-    let path = &args.output;
     let mut writer = hound::WavWriter::create(path, spec).map_err(|e| format!("{}: {e}", path.display()))?;
     for sample in &samples {
         writer.write_sample(*sample).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -248,6 +276,7 @@ mod tests {
     #[test]
     fn render_args_need_one_project_and_an_output() {
         let args = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let parse_render = |a: &[String]| parse_args(a, Command::Render);
         assert!(parse_render(&args(&["-o", "x.wav"])).is_err());
         assert!(parse_render(&args(&["--demo"])).is_err());
         assert!(parse_render(&args(&["--demo", "-o"])).is_err());
@@ -259,6 +288,15 @@ mod tests {
         assert_eq!(ok.sample_rate, 44_100);
         assert_eq!(ok.scene, Some(1));
         assert!(matches!(ok.source, Source::Als(_)));
+    }
+
+    #[test]
+    fn play_args_take_a_project_but_no_output() {
+        let args = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert!(parse_args(&args(&["--demo"]), Command::Play).is_ok());
+        assert!(parse_args(&args(&["a.als", "--scene", "3"]), Command::Play).is_ok());
+        assert!(parse_args(&args(&["--demo", "-o", "x.wav"]), Command::Play).is_err());
+        assert!(parse_args(&args(&[]), Command::Play).is_err());
     }
 
     #[test]
