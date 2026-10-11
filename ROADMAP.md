@@ -80,7 +80,7 @@ placeholder):
 
 | Imports from Live | Loopwerk device | DSP from | Status |
 |---|---|---|---|
-| Utility, Auto Pan | utility, auto-pan | own | DSP done; import planned |
+| Utility, Auto Pan | utility, auto-pan | own | DSP done; import done for Utility, planned for Auto Pan |
 | EQ Three | three-band DJ EQ with kills | own crossovers (Linkwitz-Riley) | DSP done; import planned |
 | Vinyl Distortion | vinyl distortion | own, oversampled | DSP done; import planned |
 | Overdrive | overdrive | own, oversampled | DSP done; import planned |

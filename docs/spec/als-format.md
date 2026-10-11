@@ -1,11 +1,12 @@
 ---
 description: The Live Set (.als) format as observed: container, tracks, clips, notes, audio, warp markers, devices
-read_when: reading .als, importer, XML element, warp markers, time signature, devices, plug-in state
+read_when: reading .als, importer, XML element, warp markers, time signature, devices, plug-in state, Utility, StereoGain, device parameters
 type: spec
 status: current
 last_verified: 2026-10-11
 covers:
   - crates/als/src/lib.rs
+  - crates/als/src/devices.rs
   - crates/als/tests/synthetic.rs
 ---
 
@@ -16,7 +17,7 @@ What we have learned about the Live Set format, from Live Sets we authored ourse
 
 - **Observed with:** Live 12.4.6 (`Creator="Ableton Live 12.4.6"`, `MinorVersion="12.0_12402"`,
   `MajorVersion="5"`), Windows.
-- **Corpus:** series 1, files `00`–`20` (MIDI clips, scenes, mixer); series 2, files `30`–`36` (audio clips); series 3, files `40`–`44` (devices, plug-ins); series 4, files `50`–`62` (time signatures, clip markers, deactivation, groups, unwarped audio).
+- **Corpus:** series 1, files `00`–`20` (MIDI clips, scenes, mixer); series 2, files `30`–`36` (audio clips); series 3, files `40`–`44` (devices, plug-ins); series 4, files `50`–`62` (time signatures, clip markers, deactivation, groups, unwarped audio); series 6, files `110`–`135` (Utility).
 - Every statement marked **(hypothesis)** still needs a corpus file that proves it.
 
 ## Container
@@ -196,7 +197,9 @@ from `true` to `false`) and `UserName@Value` (empty unless renamed).
 **Live's own devices** are elements named after the device type: `OriginalSimpler`, `Eq8`,
 `Reverb`, `Delay`. Their parameters are nested elements with the usual `Manual` values; band 3
 gain of EQ Eight is `Bands.2/ParameterA/Gain/Manual` (+3 dB stored as `3`). `LastPresetRef`
-points at the default preset the device was loaded from.
+points at the default preset the device was loaded from. The importer keeps them as
+placeholders, except the ones that have a Loopwerk counterpart: those become Loopwerk devices
+with their parameters mapped (`crates/als/src/devices.rs`; so far the Utility, below).
 
 **Plug-ins** are `PluginDevice` elements whose `PluginDesc` holds one of:
 
@@ -210,6 +213,37 @@ points at the default preset the device was loaded from.
 
 Plug-in state is the plug-in vendor's own format. Loopwerk keeps it verbatim and hands it back
 to the plug-in. **Never commit a corpus file that contains a commercial plug-in's state.**
+
+### Utility (`StereoGain`)
+
+Corpus: series 6, files `110`–`135`, and two extra files at 50M and 50S. Those files were saved as a chain, each from the previous
+one, not from the default, so a neighbour diff shows the step; `128` has both phase switches on.
+
+Live's Utility is the element `StereoGain`. Parameters that can be automated hold their value in
+`<Name>/Manual@Value` next to an `AutomationTarget`; the two plain elements hold it in `@Value`.
+
+| Element | Stored | Observed | Loopwerk `utility` |
+|---|---|---|---|
+| `Gain` | linear gain | -12 dB → `0.2511886358`, +6 dB → `1.99526238`, -inf → `0`, fully up → `56.2341309` (+35 dB) | `gain` = 20·log10 of it, dB; `0` → the minimum (silence) |
+| `Balance` | -1 … 1 | the knob shows 50L … 50R; typing `50L` stored `-1`, typing `100R` stopped at `1` | `balance`, the same number |
+| `StereoWidth` | fraction | 0 % → `0`, 200 % → `1.99999988`, fully up → `4` (400 %) | `width`, the same number |
+| `MidSideBalanceOn` | `@Value` true/false | the Width knob's Mid/Side Mode (right-click menu, not on the panel). Turning it on reset `StereoWidth` to `1` | when true: `width` = 1 and `midSide` from `MidSideBalance` |
+| `MidSideBalance` | 0 … 2, linear in what the knob shows | on switching the mode on, the knob shows `0` and stores `1`; 100M `0`, 50M `0.5`, 50S `1.5`, 100S `2` | `midSide` = value − 1 (−1 only mid, +1 only side), only when `MidSideBalanceOn` is true |
+| `Mono` | true/false | | `mono` |
+| `BassMono` | true/false | | `bassMono` |
+| `BassMonoFrequency` | Hz | 50 … 500, default 120 | `bassMonoFrequency` |
+| `BassMonoAudition` | `@Value` true/false | the headphones button by the frequency; not automatable | `bassMonoListen` |
+| `PhaseInvertL`, `PhaseInvertR` | true/false | `Ø L`, `Ø R`, independent | `invertLeft`, `invertRight` |
+| `ChannelMode` | 0 … 3 | `0` Left, `1` Stereo (default), `2` Right, `3` Swap | `channel`: Stereo 0, Left 1, Right 2, Swap 3 (a different order) |
+| `DcFilter` | true/false | | `dcFilter` |
+| `Mute` | true/false | | `mute` |
+| `On` | true/false | the device switch, as on every device | the model's `Device::enabled` |
+| `LegacyGain`, `LegacyMode` | `0`, `false` | unchanged in every file | not mapped **(hypothesis: older sets stored gain here)** |
+
+Still open: how Mid/Side between the ends scales mid and side in the sound (the stored value is
+linear in the display; Loopwerk keeps one at full and turns the other down linearly), and
+whether Width and Mid/Side sound like Loopwerk's at the same settings. Both need bounces of
+`118` and of the 50M and 50S files (`120-utility-midside-mid-50M.als`, `…-50S.als`).
 
 ## Noise: ignore when importing or diffing
 
