@@ -10,8 +10,8 @@ use std::time::{Duration, Instant};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SizedSample};
-use loopwerk_engine::Renderer;
 use loopwerk_engine::model::{LaneData, Project};
+use loopwerk_engine::{AudioPool, Renderer};
 
 /// Frames rendered per engine call; output buffers larger than this are filled in several calls.
 const SCRATCH_FRAMES: usize = 4096;
@@ -26,7 +26,7 @@ struct Progress {
 }
 
 /// Plays the project's arrangement once on the default output device and returns when it ends.
-pub fn play(project: &Project) -> Result<(), String> {
+pub fn play(project: &Project, audio: &AudioPool) -> Result<(), String> {
     let host = cpal::default_host();
     let device = host.default_output_device().ok_or("no audio output device found")?;
     let supported = device.default_output_config().map_err(|e| format!("audio output {device}: {e}"))?;
@@ -36,7 +36,7 @@ pub fn play(project: &Project) -> Result<(), String> {
         return Err(format!("audio output {device} reports no channels"));
     }
 
-    let renderer = Renderer::new(project, config.sample_rate).map_err(|e| e.to_string())?;
+    let renderer = Renderer::with_audio(project, audio, config.sample_rate).map_err(|e| e.to_string())?;
     let length = renderer.length();
     if length == 0 {
         println!("{}", nothing_to_play(project));
@@ -76,8 +76,8 @@ pub fn play(project: &Project) -> Result<(), String> {
     Ok(())
 }
 
-/// Explains why a project produced no sound: no clips at all, or only clips the engine cannot
-/// play yet.
+/// Explains why a project produced no sound: no clips at all, clips without notes, or audio
+/// clips whose files are missing.
 fn nothing_to_play(project: &Project) -> String {
     let clips: Vec<_> = project.arrangement.lanes.iter().flat_map(|l| &l.clips).collect();
     let audio = clips
@@ -92,8 +92,8 @@ fn nothing_to_play(project: &Project) -> String {
         (0, _) => "nothing to play: the arrangement has no clips (try --scene <n> for launcher clips)".to_string(),
         (_, 0) => "nothing to play: the arrangement's clips have no notes".to_string(),
         (total, audio) => format!(
-            "nothing to play yet: {audio} of {total} arrangement clips are audio clips, and audio playback \
-             is not implemented yet (ROADMAP M5); only MIDI notes play for now"
+            "nothing to play: {audio} of {total} arrangement clips are audio clips whose files could not be \
+             loaded (see the warnings above)"
         ),
     }
 }

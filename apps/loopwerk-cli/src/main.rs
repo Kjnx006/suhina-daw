@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use loopwerk_automation::{LoopwerkMcp, Workspace, render_wav, scene_as_arrangement};
+use loopwerk_engine::AudioPool;
 use loopwerk_engine::model::*;
 use loopwerk_session::Session;
 
@@ -54,7 +55,10 @@ fn main() -> ExitCode {
             let command = if name == "render" { Command::Render } else { Command::Play };
             let result = parse_args(args.get(1..).unwrap_or_default(), command).and_then(|a| match command {
                 Command::Render => render(&a),
-                Command::Play => play::play(&load_project(&a)?),
+                Command::Play => {
+                    let (project, audio) = load_project(&a)?;
+                    play::play(&project, &audio)
+                }
             });
             match result {
                 Ok(()) => ExitCode::SUCCESS,
@@ -133,28 +137,32 @@ fn parse_args(args: &[String], command: Command) -> Result<Args, String> {
     })
 }
 
-/// Opens the project named by the arguments, printing import warnings, and applies `--scene`.
-fn load_project(args: &Args) -> Result<Project, String> {
-    let project = match &args.source {
-        Source::Demo => demo_project(),
+/// Opens the project named by the arguments and the audio files it uses, printing warnings, and
+/// applies `--scene`.
+fn load_project(args: &Args) -> Result<(Project, AudioPool), String> {
+    let (project, audio) = match &args.source {
+        Source::Demo => (demo_project(), AudioPool::new()),
         Source::Als(path) => {
             let import = loopwerk_als::read_file(path).map_err(|e| format!("{}: {e}", path.display()))?;
-            for warning in &import.warnings {
+            let folder = path.parent().unwrap_or(std::path::Path::new("."));
+            let (audio, audio_warnings) = loopwerk_media::load_project_audio(&import.project, folder);
+            for warning in import.warnings.iter().chain(&audio_warnings) {
                 eprintln!("warning: {warning}");
             }
-            import.project
+            (import.project, audio)
         }
     };
-    match args.scene {
-        Some(scene) => scene_as_arrangement(&project, scene),
-        None => Ok(project),
-    }
+    let project = match args.scene {
+        Some(scene) => scene_as_arrangement(&project, scene)?,
+        None => project,
+    };
+    Ok((project, audio))
 }
 
 fn render(args: &Args) -> Result<(), String> {
     let path = args.output.as_ref().ok_or("missing --output")?;
-    let project = load_project(args)?;
-    let summary = render_wav(&project, path, args.sample_rate)?;
+    let (project, audio) = load_project(args)?;
+    let summary = render_wav(&project, &audio, path, args.sample_rate)?;
     println!("wrote {} ({:.2} s, {} Hz)", path.display(), summary.seconds, summary.sample_rate);
     Ok(())
 }

@@ -14,6 +14,7 @@ loopwerk-engine.workspace = true
 loopwerk-als.workspace = true
 loopwerk-session.workspace = true
 loopwerk-automation.workspace = true
+loopwerk-media.workspace = true
 tokio = { version = "1", features = ["rt-multi-thread"] }  # MIT
 cpal.workspace = true
 

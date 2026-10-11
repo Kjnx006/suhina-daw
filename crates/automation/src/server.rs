@@ -229,7 +229,7 @@ impl LoopwerkMcp {
     }
 
     #[tool(
-        description = "Render the arrangement (or one launcher scene) offline to a 32-bit float stereo WAV below the write root. Notes play as sine tones for now; audio clips and plug-ins are not rendered yet."
+        description = "Render the arrangement (or one launcher scene) offline to a 32-bit float stereo WAV below the write root. Notes play as sine tones for now; audio clips play (warped clips change pitch with speed); plug-ins are not rendered yet."
     )]
     async fn project_render(&self, Parameters(p): Parameters<RenderParams>) -> Result<CallToolResult, McpError> {
         let path = match self.workspace.writable(&p.output, p.overwrite.unwrap_or(false)) {
@@ -246,9 +246,15 @@ impl LoopwerkMcp {
                     }
                     None => session.project().clone(),
                 };
-                let summary = render_wav(&project, &path, sample_rate)?;
+                let folder = session.source().and_then(|s| s.parent()).map(|p| p.to_path_buf());
+                let (audio, warnings) = match folder {
+                    Some(folder) => loopwerk_media::load_project_audio(&project, &folder),
+                    None => Default::default(),
+                };
+                let summary = render_wav(&project, &audio, &path, sample_rate)?;
                 Ok(json!({
                     "output": display_path(&path),
+                    "warnings": warnings,
                     "seconds": summary.seconds,
                     "sample_rate": summary.sample_rate,
                     "peak": summary.peak,

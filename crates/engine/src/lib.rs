@@ -2,13 +2,22 @@
 //! [`Renderer::new`] does all allocation up front, and [`Renderer::process`] never allocates,
 //! so the same `process` call can later run on the audio thread.
 
+mod audio;
+
 use std::fmt;
 
+use audio::AudioEvent;
+pub use audio::{AudioData, AudioPool};
 pub use loopwerk_model as model;
 use loopwerk_model::{ChannelRole, Clip, ContentLane, LaneData, Project, TrackId};
 
 /// Voices that can sound at once. A note that arrives when all are busy steals the oldest.
 const MAX_VOICES: usize = 64;
+/// Audio clips that can play at once; more overlapping clips than this are skipped.
+const MAX_AUDIO_VOICES: usize = 64;
+/// Audio clips play at unity gain (0 dB) on a centred track: this undoes the headroom scaling
+/// that `track_gains` applies for the sine voices.
+const AUDIO_HEADROOM: f32 = 4.0;
 /// Release time after note-off, in seconds.
 const RELEASE_SECONDS: f64 = 0.05;
 /// Attack time, in seconds; long enough to avoid a click at note-on.
@@ -72,12 +81,23 @@ pub struct Renderer {
     events: Vec<NoteEvent>,
     next_event: usize,
     voices: [Voice; MAX_VOICES],
+    audio_events: Vec<AudioEvent>,
+    next_audio: usize,
+    /// Indices into `audio_events` that are playing; the first `active_audio_count` are valid.
+    active_audio: [usize; MAX_AUDIO_VOICES],
+    active_audio_count: usize,
     position: u64,
     length: u64,
 }
 
 impl Renderer {
+    /// A renderer for the project's notes; audio clips stay silent. See [`Renderer::with_audio`].
     pub fn new(project: &Project, sample_rate: u32) -> Result<Self, RenderError> {
+        Self::with_audio(project, &AudioPool::new(), sample_rate)
+    }
+
+    /// A renderer that also plays audio clips whose files are in `audio`.
+    pub fn with_audio(project: &Project, audio: &AudioPool, sample_rate: u32) -> Result<Self, RenderError> {
         if !(8_000..=384_000).contains(&sample_rate) {
             return Err(RenderError::InvalidSampleRate(sample_rate));
         }
@@ -89,26 +109,57 @@ impl Renderer {
 
         let frames_per_beat = 60.0 / bpm * f64::from(sample_rate);
         let mut events = Vec::new();
+        let mut audio_events = Vec::new();
         for lane in &project.arrangement.lanes {
             for clip in lane.clips.iter().filter(|c| c.enabled) {
                 let Some(content) = project.content(clip.content) else { continue };
                 for content_lane in &content.lanes {
                     let Some(track) = content_lane.target.or(lane.track) else { continue };
                     let Some((gain_left, gain_right)) = track_gains(project, track) else { continue };
-                    collect_notes(clip, content_lane, frames_per_beat, gain_left, gain_right, &mut events);
+                    match &content_lane.data {
+                        LaneData::Notes(_) => {
+                            collect_notes(clip, content_lane, frames_per_beat, gain_left, gain_right, &mut events)
+                        }
+                        LaneData::Audio(region) => {
+                            let Some(data) = audio.get(&region.file) else { continue };
+                            let gains = (gain_left * AUDIO_HEADROOM, gain_right * AUDIO_HEADROOM);
+                            audio_events.extend(AudioEvent::new(
+                                clip,
+                                region,
+                                data.clone(),
+                                frames_per_beat,
+                                bpm,
+                                gains,
+                                sample_rate,
+                            ));
+                        }
+                    }
                 }
             }
         }
         events.sort_by_key(|e| e.start);
+        audio_events.sort_by_key(|e| e.start);
 
         let release = (RELEASE_SECONDS * f64::from(sample_rate)) as u64;
-        let length = events.iter().map(|e| e.end.saturating_add(release)).max().unwrap_or(0);
+        let notes_end = events.iter().map(|e| e.end.saturating_add(release)).max().unwrap_or(0);
+        let length = audio_events.iter().map(|e| e.end).max().unwrap_or(0).max(notes_end);
         let seconds = length as f64 / f64::from(sample_rate);
         if seconds > MAX_RENDER_SECONDS {
             return Err(RenderError::TooLong { seconds });
         }
 
-        Ok(Self { sample_rate, events, next_event: 0, voices: [Voice::default(); MAX_VOICES], position: 0, length })
+        Ok(Self {
+            sample_rate,
+            events,
+            next_event: 0,
+            voices: [Voice::default(); MAX_VOICES],
+            audio_events,
+            next_audio: 0,
+            active_audio: [0; MAX_AUDIO_VOICES],
+            active_audio_count: 0,
+            position: 0,
+            length,
+        })
     }
 
     pub fn sample_rate(&self) -> u32 {
@@ -154,10 +205,50 @@ impl Renderer {
                 left += sample as f32 * voice.gain_left;
                 right += sample as f32 * voice.gain_right;
             }
-            *out_left = left;
-            *out_right = right;
+            let (audio_left, audio_right) = self.audio_frame();
+            *out_left = left + audio_left;
+            *out_right = right + audio_right;
             self.position += 1;
         }
+    }
+
+    /// Starts audio clips that begin at the current frame, mixes the playing ones and drops the
+    /// ones that have ended.
+    fn audio_frame(&mut self) -> (f32, f32) {
+        while let Some(event) = self.audio_events.get(self.next_audio) {
+            if event.start > self.position {
+                break;
+            }
+            if event.end > self.position
+                && let Some(slot) = self.active_audio.get_mut(self.active_audio_count)
+            {
+                *slot = self.next_audio;
+                self.active_audio_count += 1;
+            }
+            self.next_audio += 1;
+        }
+        let (mut left, mut right) = (0.0f32, 0.0f32);
+        let mut i = 0;
+        while i < self.active_audio_count {
+            let index = self.active_audio.get(i).copied().unwrap_or(usize::MAX);
+            match self.audio_events.get(index) {
+                Some(event) if self.position < event.end => {
+                    let (l, r) = event.sample(self.position);
+                    left += l;
+                    right += r;
+                    i += 1;
+                }
+                _ => {
+                    // Ended: move the last active entry into this slot.
+                    self.active_audio_count -= 1;
+                    let last = self.active_audio.get(self.active_audio_count).copied().unwrap_or(usize::MAX);
+                    if let Some(slot) = self.active_audio.get_mut(i) {
+                        *slot = last;
+                    }
+                }
+            }
+        }
+        (left, right)
     }
 
     fn start_voice(&mut self, event: &NoteEvent) {
@@ -180,8 +271,19 @@ impl Renderer {
 }
 
 /// Renders the whole arrangement offline into interleaved stereo, `block_frames` at a time.
+/// Audio clips stay silent; see [`render_offline_with_audio`].
 pub fn render_offline(project: &Project, sample_rate: u32, block_frames: usize) -> Result<Vec<f32>, RenderError> {
-    let mut renderer = Renderer::new(project, sample_rate)?;
+    render_offline_with_audio(project, &AudioPool::new(), sample_rate, block_frames)
+}
+
+/// Like [`render_offline`], playing audio clips whose files are in `audio`.
+pub fn render_offline_with_audio(
+    project: &Project,
+    audio: &AudioPool,
+    sample_rate: u32,
+    block_frames: usize,
+) -> Result<Vec<f32>, RenderError> {
+    let mut renderer = Renderer::with_audio(project, audio, sample_rate)?;
     let total = usize::try_from(renderer.length())
         .ok()
         .and_then(|frames| frames.checked_mul(2))

@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use loopwerk_engine::model::{Arrangement, ArrangementLane, Project};
-use loopwerk_engine::render_offline;
+use loopwerk_engine::{AudioPool, render_offline_with_audio};
 
 /// What a render produced.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -14,9 +14,15 @@ pub struct RenderSummary {
     pub peak: f32,
 }
 
-/// Renders the project's arrangement to a 32-bit float stereo WAV file at `path`.
-pub fn render_wav(project: &Project, path: &Path, sample_rate: u32) -> Result<RenderSummary, String> {
-    let samples = render_offline(project, sample_rate, 512).map_err(|e| e.to_string())?;
+/// Renders the project's arrangement, with the audio files in `audio`, to a 32-bit float stereo
+/// WAV file at `path`.
+pub fn render_wav(
+    project: &Project,
+    audio: &AudioPool,
+    path: &Path,
+    sample_rate: u32,
+) -> Result<RenderSummary, String> {
+    let samples = render_offline_with_audio(project, audio, sample_rate, 512).map_err(|e| e.to_string())?;
     let spec =
         hound::WavSpec { channels: 2, sample_rate, bits_per_sample: 32, sample_format: hound::SampleFormat::Float };
     let mut writer = hound::WavWriter::create(path, spec).map_err(|e| format!("{}: {e}", path.display()))?;

@@ -23,7 +23,7 @@ loopwerk-cli mcp --read-root ./projects --write-root ./renders
 | `command_list` | Command ids with description, kind (`read`, `edit`, `history`) and parameter schema; optional `filter`. |
 | `command_run` | Run one command: `{"id": "track.setPan", "params": {"track": "Bass", "pan": -1}}`. |
 | `command_batch` | Run `steps` in order; each editing command is its own undo step; `stop_on_error` (default true). |
-| `project_render` | Render the arrangement, or `scene` (1-based), to a WAV below the write root. |
+| `project_render` | Render the arrangement, or `scene` (1-based), to a WAV below the write root. Audio files are loaded from the opened set's folder; missing ones are listed in `warnings`. |
 
 Commands are defined once in `loopwerk-session` (ADR 0002); the MCP server, the CLI and later
 the UI all run the same ones.
