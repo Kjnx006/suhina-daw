@@ -166,7 +166,9 @@ impl Reader {
         let scenes = self.scenes(live_set);
 
         for entry in &entries {
-            let mut channel = self.channel(entry, &returns);
+            let parent = self.parent(entry, &entries);
+            let parent_channel = parent.and_then(|p| entries.iter().find(|e| e.track == p)).map(|e| e.channel);
+            let mut channel = self.channel(entry, &returns, parent_channel);
             channel.devices = self.devices(entry.node, &entry.name);
             channels.push(channel);
             tracks.push(Track {
@@ -175,7 +177,7 @@ impl Reader {
                 color: None,
                 content: ContentKinds { notes: entry.kind == TrackKind::Midi, audio: entry.kind == TrackKind::Audio },
                 channel: Some(entry.channel),
-                parent: self.parent(entry, &entries),
+                parent,
                 extensions: Extensions::default(),
             });
             if entry.kind != TrackKind::Return {
@@ -203,21 +205,22 @@ impl Reader {
 
     fn transport(&mut self, live_set: Node) -> Transport {
         let mut transport = Transport::default();
-        let mixer = path(live_set, &["MainTrack", "DeviceChain", "Mixer"])
-            .or_else(|| path(live_set, &["MasterTrack", "DeviceChain", "Mixer"]));
-        let Some(mixer) = mixer else {
+        let main = child(live_set, "MainTrack").or_else(|| child(live_set, "MasterTrack"));
+        let Some((main, mixer)) = main.and_then(|m| path(m, &["DeviceChain", "Mixer"]).map(|mixer| (m, mixer))) else {
             self.warn("no main track found; using 120 bpm in 4/4");
             return transport;
         };
-        match number(mixer, &["Tempo", "Manual"]) {
+        match parameter_value(main, mixer, "Tempo").and_then(parse_number) {
             Some(bpm) if (1.0..=999.0).contains(&bpm) => transport.tempo_bpm = bpm,
             _ => self.warn("tempo missing or out of range; using 120 bpm"),
         }
-        match value(mixer, &["TimeSignature", "Manual"]) {
-            Some("201") | None => {}
-            Some(code) => self.warn(format!("time signature code {code} is not understood yet; using 4/4")),
+        match parameter_value(main, mixer, "TimeSignature") {
+            None => {}
+            Some(code) => match code.parse::<u32>().ok().and_then(time_signature) {
+                Some(signature) => transport.time_signature = signature,
+                None => self.warn(format!("time signature code {code} is not understood; using 4/4")),
+            },
         }
-        transport.time_signature = TimeSignature { numerator: 4, denominator: 4 };
         transport
     }
 
@@ -234,7 +237,7 @@ impl Reader {
         channel
     }
 
-    fn channel(&mut self, entry: &TrackEntry, returns: &[ChannelId]) -> Channel {
+    fn channel(&mut self, entry: &TrackEntry, returns: &[ChannelId], parent_channel: Option<ChannelId>) -> Channel {
         let role = match entry.kind {
             TrackKind::Return => ChannelRole::Effect,
             TrackKind::Group => ChannelRole::Submix,
@@ -258,6 +261,12 @@ impl Reader {
 
         match value(entry.node, &["DeviceChain", "AudioOutputRouting", "Target"]) {
             Some("AudioOut/Main") | None => {}
+            Some("AudioOut/GroupTrack") => match parent_channel {
+                Some(group) => channel.output = Some(group),
+                None => {
+                    self.warn(format!("track {}: routed to a group but is in none; using the main output", entry.name))
+                }
+            },
             Some(other) => {
                 self.warn(format!("track {}: output {other} is not supported yet; using the main output", entry.name))
             }
@@ -483,7 +492,7 @@ impl Reader {
         } else if let Some(range) = loop_range {
             (0.0, range.end - range.start)
         } else {
-            (0.0, out_marker - offset)
+            (0.0, loop_end - loop_start)
         };
         if !(length.is_finite() && length > 0.0) {
             self.warn(format!("track {track}: clip {name:?} has no length; skipped"));
@@ -610,6 +619,34 @@ fn decode_hex(text: &str) -> Option<Vec<u8>> {
 
 fn hex_digit(byte: u8) -> Option<u8> {
     char::from(byte).to_digit(16).and_then(|d| u8::try_from(d).ok())
+}
+
+/// The value of a main-track parameter such as `Tempo` or `TimeSignature`. Live keeps the
+/// current value in the default event (time `-63072000`) of the parameter's automation envelope;
+/// for the time signature the parameter's own `Manual` value is not updated, so the envelope wins.
+fn parameter_value<'a>(main: Node<'a, '_>, mixer: Node<'a, '_>, name: &str) -> Option<&'a str> {
+    let parameter = child(mixer, name)?;
+    let from_envelope = parameter
+        .children()
+        .find(|n| n.has_tag_name("AutomationTarget"))
+        .and_then(|target| target.attribute("Id"))
+        .and_then(|target| {
+            path(main, &["AutomationEnvelopes", "Envelopes"])?
+                .children()
+                .filter(|n| n.has_tag_name("AutomationEnvelope"))
+                .find(|env| value(*env, &["EnvelopeTarget", "PointeeId"]) == Some(target))
+        })
+        .and_then(|env| path(env, &["Automation", "Events"]))
+        .and_then(|events| events.children().find(|e| e.is_element() && e.attribute("Time") == Some("-63072000")))
+        .and_then(|event| event.attribute("Value"));
+    from_envelope.or_else(|| value(parameter, &["Manual"]))
+}
+
+/// Live's time-signature code: `99 * log2(denominator) + numerator - 1` (4/4 is 201, 7/8 is 303).
+fn time_signature(code: u32) -> Option<TimeSignature> {
+    let numerator = u8::try_from(code % 99 + 1).ok()?;
+    let denominator = u8::try_from(2u32.checked_pow(code / 99)?).ok()?;
+    (denominator <= 64).then_some(TimeSignature { numerator, denominator })
 }
 
 fn empty_channel(id: ChannelId, name: &str, role: ChannelRole) -> Channel {

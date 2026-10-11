@@ -5,7 +5,7 @@
 use std::fmt;
 
 pub use loopwerk_model as model;
-use loopwerk_model::{Clip, ContentLane, LaneData, Project, TrackId};
+use loopwerk_model::{ChannelRole, Clip, ContentLane, LaneData, Project, TrackId};
 
 /// Voices that can sound at once. A note that arrives when all are busy steals the oldest.
 const MAX_VOICES: usize = 64;
@@ -194,15 +194,32 @@ pub fn render_offline(project: &Project, sample_rate: u32, block_frames: usize) 
 }
 
 /// Equal-power pan and channel volume for a track; `None` when the track is silent (muted, or
-/// it has no channel).
+/// it has no channel). The volume and mute of every channel the track's output passes through
+/// (groups, then the master) apply too; their pan does not yet.
 fn track_gains(project: &Project, track: TrackId) -> Option<(f32, f32)> {
     let channel_id = project.tracks.iter().find(|t| t.id == track)?.channel?;
     let channel = project.channels.iter().find(|c| c.id == channel_id)?;
-    if channel.mute {
-        return None;
-    }
     let pan = if channel.pan.is_finite() { channel.pan.clamp(-1.0, 1.0) } else { 0.0 };
-    let volume = if channel.volume.is_finite() { channel.volume.max(0.0) } else { 0.0 };
+    let gain = |c: &loopwerk_model::Channel| if c.volume.is_finite() { c.volume.max(0.0) } else { 0.0 };
+
+    let mut volume = 1.0;
+    let mut visited = Vec::new();
+    let mut next = Some(channel);
+    // Bounded, so a routing cycle in a malformed project cannot loop forever.
+    while let Some(c) = next.take() {
+        if c.mute || visited.len() > 64 || visited.contains(&c.id) {
+            return None;
+        }
+        visited.push(c.id);
+        volume *= gain(c);
+        next = c.output.and_then(|id| project.channels.iter().find(|o| o.id == id));
+    }
+    if let Some(master) = project.channels.iter().find(|c| c.role == ChannelRole::Master && !visited.contains(&c.id)) {
+        if master.mute {
+            return None;
+        }
+        volume *= gain(master);
+    }
     let angle = (pan + 1.0) * std::f64::consts::FRAC_PI_4;
     // Scaled so a centred note has unity gain on each side, and quieter overall to leave headroom.
     let scale = volume * std::f64::consts::SQRT_2 * 0.25;
@@ -446,6 +463,35 @@ mod tests {
         project.channels[1].mute = true;
         let out = render_offline(&project, SR, 256).unwrap();
         assert_onsets(&out, &[0, 2 * beat]);
+    }
+
+    #[test]
+    fn group_and_master_volume_and_mute_apply_to_the_tracks_routed_through_them() {
+        let mut project = project_with(untargeted(vec![note(0.0, 1.0, 69)]), vec![clip(0.0, 4.0)], 2);
+        let peak = |p: &Project| render_offline(p, SR, 256).unwrap().iter().fold(0.0f32, |m, s| m.max(s.abs()));
+        let alone = peak(&project);
+
+        // Track 1 plays into channel 2 (a group) at half volume.
+        project.channels[0].output = Some(ChannelId(2));
+        project.channels[1].volume = 0.5;
+        assert!((peak(&project) - alone * 0.5).abs() < 1e-3);
+
+        project.channels[1].mute = true;
+        assert_eq!(render_offline(&project, SR, 256), Ok(Vec::new()));
+        project.channels[1].mute = false;
+
+        // A master channel scales everything that does not route to it explicitly.
+        project.channels.push(Channel {
+            id: ChannelId(9),
+            role: ChannelRole::Master,
+            volume: 0.5,
+            ..project.channels[1].clone()
+        });
+        assert!((peak(&project) - alone * 0.25).abs() < 1e-3);
+
+        // A routing cycle is silence, not a hang.
+        project.channels[1].output = Some(ChannelId(1));
+        assert_eq!(render_offline(&project, SR, 256), Ok(Vec::new()));
     }
 
     #[test]

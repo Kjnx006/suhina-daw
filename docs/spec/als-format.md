@@ -5,7 +5,7 @@ What we have learned about the Live Set format, from Live Sets we authored ourse
 
 - **Observed with:** Live 12.4.6 (`Creator="Ableton Live 12.4.6"`, `MinorVersion="12.0_12402"`,
   `MajorVersion="5"`), Windows.
-- **Corpus:** series 1, files `00`–`20` (MIDI clips, scenes, mixer); series 2, files `30`–`36` (audio clips); series 3, files `40`–`44` (devices, plug-ins).
+- **Corpus:** series 1, files `00`–`20` (MIDI clips, scenes, mixer); series 2, files `30`–`36` (audio clips); series 3, files `40`–`44` (devices, plug-ins); series 4, files `50`–`62` (time signatures, clip markers, deactivation, groups, unwarped audio).
 - Every statement marked **(hypothesis)** still needs a corpus file that proves it.
 
 ## Container
@@ -33,15 +33,19 @@ Default automation values use the time `-63072000` as a "before everything" mark
 | What | Where (under `LiveSet/MainTrack/DeviceChain/Mixer`) | Encoding |
 |---|---|---|
 | Tempo | `Tempo/Manual@Value` | BPM as a decimal number |
-| Time signature | `TimeSignature/Manual@Value` | an integer code; `201` = 4/4. The mapping for other signatures is unknown **(needs corpus)**. |
+| Time signature | the default event of the time-signature automation envelope (below) | An integer code: `99 × log2(denominator) + numerator − 1`. Observed: 3/4 = `200`, 4/4 = `201`, 6/8 = `302`, 7/8 = `303`. |
 
-The tempo is also the value of the tempo automation's default event
-(`MainTrack/AutomationEnvelopes/…/FloatEvent[@Time="-63072000"]`); both change together.
+Each parameter's current value also lives in the default event (`Time="-63072000"`) of its
+automation envelope. The envelope is found through ids: the parameter's `AutomationTarget@Id`
+equals `MainTrack/AutomationEnvelopes/Envelopes/AutomationEnvelope/EnvelopeTarget/PointeeId@Value`.
+For the tempo, `Manual` and the default event change together (a `FloatEvent`). For the time
+signature only the default event changes (an `EnumEvent`); `TimeSignature/Manual` stayed `201`
+through files `50`–`53`. **Read the envelope first and fall back to `Manual`.**
 
 ## Tracks
 
 `LiveSet/Tracks` lists the tracks in display order. Element names give the kind: `MidiTrack`,
-`AudioTrack`, `ReturnTrack`, and `GroupTrack` **(not in corpus yet)**. The main output is the
+`AudioTrack`, `ReturnTrack` and `GroupTrack`. The main output is the
 separate `LiveSet/MainTrack`.
 
 Per track:
@@ -50,9 +54,9 @@ Per track:
 |---|---|---|
 | Name | `Name/EffectiveName@Value` | Default names look like `1-MIDI`, `3-Audio`, `A-Reverb`. |
 | Colour | `Color@Value` | Index into Live's colour palette. |
-| Group | `TrackGroupId@Value` | `-1` when not in a group; otherwise the group track's `Id` **(hypothesis)**. |
+| Group | `TrackGroupId@Value` | `-1` when not in a group; otherwise the group track's `Id`. Grouping two tracks (file `60`) inserted a `GroupTrack` before them and renumbered the default names (`3-Audio` became `4-Audio`). |
 | Mixer | `DeviceChain/Mixer` | see below |
-| Output | `DeviceChain/AudioOutputRouting/Target@Value` | `AudioOut/Main` routes to the main output. |
+| Output | `DeviceChain/AudioOutputRouting/Target@Value` | `AudioOut/Main` routes to the main output; `AudioOut/GroupTrack` to the track's group. |
 | Session clips | `DeviceChain/MainSequencer/ClipSlotList/ClipSlot` | One slot per scene, in scene order. Return tracks have no slots. |
 | Arrangement clips | `DeviceChain/MainSequencer/ClipTimeable/ArrangerAutomation/Events` | `MidiClip` (and `AudioClip`) elements. |
 
@@ -86,10 +90,29 @@ The same `MidiClip` element is used in session slots
 | Extent | `CurrentStart@Value`, `CurrentEnd@Value` | Arrangement clips: positions on the arrangement (`8` … `12` for a one-bar clip at bar 3). Session clips: positions in the clip's content (`0` … `4`). |
 | Loop on/off | `Loop/LoopOn@Value` | |
 | Loop region | `Loop/LoopStart@Value`, `Loop/LoopEnd@Value` | In content beats. Setting the clip length to 2 bars changed `LoopEnd` (and `CurrentEnd`) from 4 to 8. |
-| Start marker | `Loop/StartRelative@Value` | Relative to `LoopStart` **(hypothesis)**. |
-| End marker (loop off) | `Loop/OutMarker@Value` | **(hypothesis)** |
+| Start marker | loop on: `LoopStart + StartRelative`; loop off: `LoopStart` | Beats. See *Markers* below. |
+| End marker (loop off) | `Loop/LoopEnd@Value` | Not `OutMarker`, whose meaning is still unknown. |
 | Name, colour | `Name@Value`, `Color@Value` | |
-| Muted clip | `Disabled@Value` | **(hypothesis: not toggled in corpus)** |
+| Deactivated clip | `Disabled@Value` | `true` after selecting the clip and pressing `0` (file `58`). |
+
+### Markers
+
+Observed on a session clip with a 2-bar loop (files `54`–`57`), in beats:
+
+| Edit | `LoopStart` | `LoopEnd` | `StartRelative` | `LoopOn` | `HiddenLoopStart`/`End` |
+|---|---|---|---|---|---|
+| before | 0 | 8 | 0 | true | 0 / 4 |
+| Start → 1.2.1 | 0 | 8 | **1** | true | |
+| Loop Position → 1.3.1 | **2** | **10** | **7** | true | |
+| Loop off | **9** | 10 | **0** | **false** | **2 / 10** |
+| End → 3.4.1 | 9 | **11** | 0 | false | 2 / 10 |
+
+- With the loop on, the start marker is `LoopStart + StartRelative`. Moving the loop kept its
+  length and moved the start marker by the same distance (to 3.2.1 = beat 9), so it stayed inside.
+- Turning the loop off rewrote the fields: `LoopStart` became the start marker and `LoopEnd` the
+  end marker, and the loop region moved to `HiddenLoopStart`/`HiddenLoopEnd` so it can return.
+- For a session clip, `CurrentStart`/`CurrentEnd` follow: `CurrentEnd − CurrentStart` was the
+  played length (8 with the loop on, then 1, then 2).
 
 ### Notes
 
@@ -103,6 +126,7 @@ number) and its notes in `Notes/MidiNoteEvent`:
 | `Velocity` | 0–127, **a decimal**: dragging gave `64.251297` |
 | `OffVelocity` | Release velocity, 0–127 |
 | `NoteId` | Per-clip note id |
+| `IsEnabled` | Present as `false` on a deactivated note (file `59`); absent otherwise |
 
 Live names MIDI note 60 "C3" (so 64 is E3, 67 is G3). Notes drawn without changing anything got
 velocity 100 in one clip and 98 in another.
@@ -135,8 +159,12 @@ clips are under `DeviceChain/MainSequencer/Sample/ArrangerAutomation/Events`**, 
 beat 2 and dragging it right replaced the list with (0, 0), (0.500146 s, beat 1.125) and its
 1/32-beat follower.
 
-**Unwarped clips.** Turning warp off changed `LoopEnd` from `8` to `4` while the file is 4 s long:
-with warp off, the loop region is in **seconds** **(hypothesis: confirm with a moved loop)**.
+**Unwarped clips.** With warp off, the clip's loop fields are in **seconds**. Turning warp off
+in file `31` changed `LoopEnd` from `8` (beats) to `4`; in file `61`, after a warp marker had been
+moved, it became `3.9376458177`, which is beat 8 converted through the warp markers (0.500146 s at
+beat 1.125, then 0.5 s per beat). Moving the start to 1 s (file `62`) set `LoopStart` to `1`. The
+warp markers are kept in `SavedWarpMarkersForStretched` while warp is off. With warp off the loop
+switch is unavailable in Live.
 `OutMarker` and `CurrentEnd` did not change.
 
 Adding the first clip to an empty track renamed the track after the clip (`4-Audio` →
@@ -186,9 +214,9 @@ These change without any musical edit:
 
 ## Open questions (next corpus files)
 
-- Time-signature codes other than 4/4.
-- Start marker, end marker and loop start moved away from 0, with loop on and off.
-- Group tracks, return tracks added or removed, track output to another track.
-- Disabled clips and disabled notes; note probability and velocity deviation.
-- Warp modes, a moved loop on an unwarped clip.
+- Note probability and velocity deviation; MIDI CC and pitch-bend envelopes.
+- Warp modes (`WarpMode` codes), audio fades.
+- Return tracks added or removed; sends routed pre-fader; track output to another track.
+- Tempo and time-signature changes over time (automation with more than the default event).
 - CLAP plug-ins, Audio Units, racks, Max for Live devices.
+- Sets saved by older Live versions.

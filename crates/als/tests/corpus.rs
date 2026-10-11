@@ -197,3 +197,73 @@ fn plugins_keep_id_and_state() {
     assert_eq!(vst2.kind, DeviceKind::Vst2 { id: 1_128_746_035 });
     assert!(vst2.state.as_ref().is_some_and(|s| s.len() == 3348));
 }
+
+#[test]
+fn time_signatures_come_from_the_automation_default() {
+    let ts = |name: &str| {
+        let t = open(name).project.transport.time_signature;
+        (t.numerator, t.denominator)
+    };
+    assert_eq!(ts("50-time-signature-3-4"), (3, 4));
+    assert_eq!(ts("51-time-signature-6-8"), (6, 8));
+    assert_eq!(ts("52-time-signature-7-8"), (7, 8));
+    assert_eq!(ts("53-time-signature-4-4"), (4, 4));
+}
+
+/// The session clip in 1-MIDI slot 1 through the marker edits of series 4.
+#[test]
+fn clip_start_loop_and_end_markers() {
+    let clip = |name: &str| open(name).project.launcher.columns[0].slots[0].clip.clone().unwrap();
+    let range = |c: &loopwerk_model::Clip| c.loop_range.map(|r| (r.start, r.end));
+
+    // Start 1.2.1 inside a 2-bar loop from 1.1.1.
+    let c = clip("54-clip-start-marker");
+    assert_eq!((c.offset, range(&c)), (1.0, Some((0.0, 8.0))));
+    // Loop moved to 1.3.1; Live moved the start to 3.2.1 (beat 9).
+    let c = clip("55-clip-loop-position");
+    assert_eq!((c.offset, range(&c)), (9.0, Some((2.0, 10.0))));
+    // Loop off: plays from the start marker (3.2.1) to the end marker (3.3.1).
+    let c = clip("56-clip-loop-off");
+    assert_eq!((c.offset, c.length, range(&c)), (9.0, 1.0, None));
+    // End marker moved to 3.4.1.
+    let c = clip("57-clip-end-marker");
+    assert_eq!((c.offset, c.length), (9.0, 2.0));
+    assert!(c.enabled);
+    assert!(!clip("58-clip-deactivated").enabled);
+}
+
+#[test]
+fn deactivated_notes_are_skipped() {
+    let p = open("59-note-deactivated").project;
+    let clip = p.launcher.columns[0].slots[1].clip.as_ref().unwrap();
+    let LaneData::Notes(notes) = &p.content(clip.content).unwrap().lanes[0].data else { panic!() };
+    assert!(notes.is_empty());
+}
+
+#[test]
+fn group_track_routes_its_members() {
+    let p = open("60-group-track").project;
+    let group = p.tracks.iter().find(|t| t.name == "3-Group").unwrap();
+    for name in ["4-Audio", "5-loopwerk-demo"] {
+        let track = p.tracks.iter().find(|t| t.name == name).unwrap();
+        assert_eq!(track.parent, Some(group.id));
+        let channel = p.channels.iter().find(|c| Some(c.id) == track.channel).unwrap();
+        assert_eq!(channel.output, group.channel);
+    }
+}
+
+#[test]
+fn unwarped_audio_times_are_seconds() {
+    let audio_column = |name: &str| {
+        let p = open(name).project;
+        let track = p.tracks.iter().find(|t| t.name == "5-loopwerk-demo").unwrap().id;
+        let clip = p.launcher.columns.iter().find(|c| c.track == track).unwrap().slots[0].clip.clone().unwrap();
+        (p.transport.tempo_bpm, clip)
+    };
+    // Warp off: Live stored the end as 3.9376 s (beat 8 through the moved warp marker).
+    let (bpm, clip) = audio_column("61-audio-warp-off");
+    assert!((clip.length - 3.937_645_8 * bpm / 60.0).abs() < 1e-6);
+    // Start moved to 1 s.
+    let (bpm, clip) = audio_column("62-audio-unwarped-start");
+    assert!((clip.offset - bpm / 60.0).abs() < 1e-9);
+}
