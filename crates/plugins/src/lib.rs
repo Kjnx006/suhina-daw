@@ -532,6 +532,11 @@ impl Plugin {
         reply
     }
 
+    /// The state last read from or given to the plug-in, without asking it.
+    pub fn last_state(&self) -> Option<&SavedState> {
+        self.last_state.as_ref()
+    }
+
     /// Reads the plug-in's state and keeps it for a restart.
     pub fn save_state(&mut self) -> Result<SavedState, PluginError> {
         let instance = self.instance;

@@ -30,6 +30,8 @@ const HEALTH_EVERY: Duration = Duration::from_millis(250);
 /// How often the state of each running plug-in is read, so a restart after a crash gets back
 /// what the user set in its editor (ADR 0006, decision 5).
 const SAVE_EVERY: Duration = Duration::from_secs(30);
+/// How long saving a project waits for its plug-ins to give their state.
+const SAVE_WAIT: Duration = Duration::from_secs(1);
 /// MIDI controller numbers an all-notes-off is sent as.
 const ALL_NOTES_OFF: u8 = 123;
 const SUSTAIN: u8 = 64;
@@ -281,6 +283,8 @@ pub struct Rack {
     owner: Option<u64>,
     returned_sender: Sender<Returned>,
     returned: Receiver<Returned>,
+    /// What happened while the project was saved, for the next [`Rack::sync`] to tell.
+    notices: Vec<String>,
 }
 
 impl Default for Rack {
@@ -290,6 +294,7 @@ impl Default for Rack {
         Self {
             returned_sender,
             returned,
+            notices: Vec::new(),
             env: None,
             sample_rate: 0,
             instances: HashMap::new(),
@@ -317,6 +322,41 @@ impl Rack {
 
     pub fn env(&self) -> Option<&PluginEnv> {
         self.env.as_deref()
+    }
+
+    /// The state of every plug-in device as it is now, by key, for saving the project. Each
+    /// running plug-in is asked on a thread of its own and the answers are waited for at most
+    /// [`SAVE_WAIT`], so a host process busy with something else (an editor opening over the
+    /// window) cannot hold the window: one that has not answered by then gives the state it last
+    /// gave, and a stopped one the state it left.
+    pub(crate) fn current_states(&mut self) -> HashMap<u64, SavedState> {
+        let running: Vec<u64> = self.instances.iter().filter(|(_, i)| i.control.is_some()).map(|(k, _)| *k).collect();
+        let asked: Vec<u64> = running
+            .into_iter()
+            .filter(|key| {
+                self.lend(*key, |control| {
+                    let _kept_by_the_control_half = control.save_state();
+                    Done::Saved
+                })
+                .is_ok()
+            })
+            .collect();
+        let deadline = Instant::now() + SAVE_WAIT;
+        let mut notices = Vec::new();
+        while asked.iter().any(|key| self.instances.get(key).is_some_and(|i| i.control.is_none()))
+            && Instant::now() < deadline
+        {
+            std::thread::sleep(Duration::from_millis(2));
+            self.take_returned(&mut notices);
+        }
+        self.notices.extend(notices);
+        let mut states = self.kept.clone();
+        for (key, instance) in &self.instances {
+            if let Some(state) = instance.control.as_ref().and_then(Plugin::last_state) {
+                states.insert(*key, state.clone());
+            }
+        }
+        states
     }
 
     /// Stops every plug-in, keeping each one's last state for when it starts again. The host
@@ -437,7 +477,7 @@ impl Rack {
     /// (in the background), stops the ones whose devices are gone, takes in the ones that have
     /// started and looks after their health. Returns what the user should hear about.
     pub fn sync(&mut self, project: &Project, player: Option<&mut Player>) -> Vec<String> {
-        let mut notices = Vec::new();
+        let mut notices = std::mem::take(&mut self.notices);
         let Some(player) = player else {
             self.stop_all();
             return notices;
