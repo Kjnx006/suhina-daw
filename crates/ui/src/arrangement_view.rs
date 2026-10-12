@@ -850,9 +850,9 @@ fn clip_box<'a>(
     for (edge, hover) in handles {
         let length = if edge == FadeEdge::In { shown.fade_in } else { shown.fade_out };
         let handle = fade_handle(rect, edge, length as f32 * state.beat_width);
-        let fill = motion::mix(theme::TEXT_SECONDARY, theme::TEXT_PRIMARY, hover);
+        let fill = motion::mix(theme::text_secondary(), theme::text_primary(), hover);
         handle_painter.rect_filled(handle, 0.0, fill);
-        handle_painter.rect_stroke(handle, 0.0, theme::hairline(theme::SURFACE_0), StrokeKind::Outside);
+        handle_painter.rect_stroke(handle, 0.0, theme::hairline(theme::surface_0()), StrokeKind::Outside);
     }
     result
 }
@@ -955,7 +955,7 @@ fn paint_clip(
     // A fade is a line over the waveform, from the clip's bottom corner to where it ends at
     // the top.
     if clip.audio {
-        let fade_stroke = theme::hairline(dim(theme::TEXT_SECONDARY));
+        let fade_stroke = theme::hairline(dim(theme::text_secondary()));
         let (top, bottom) = (rect.top() + 2.0, rect.bottom());
         if shown.fade_in > 0.0 {
             let end = (rect.left() + shown.fade_in as f32 * beat_width).min(rect.right());
