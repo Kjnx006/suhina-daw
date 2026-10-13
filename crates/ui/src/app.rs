@@ -1470,6 +1470,9 @@ impl App {
             self.settings = map_settings;
             self.settings_changed = true;
         }
+        if let Some(why) = self.sample_map.status.take() {
+            self.status = Status::Hint(why);
+        }
         let added = std::mem::take(&mut self.sample_map.add);
         if !added.is_empty() {
             self.add_to_selected(added);
@@ -1577,6 +1580,8 @@ impl App {
             self.view.drop = None;
             self.arrangement.drop = None;
             if let Some(target) = target {
+                // Dropped into the project: the preview has done its job.
+                browser_view::stop_preview(&mut self.browser, &mut self.projects);
                 self.drop_items(&items, target, separate);
             }
         }
