@@ -24,6 +24,19 @@ pub const OFFLINE_TIMEOUT: Duration = Duration::from_secs(10);
 /// stops waiting for them; the rest is for the engine itself and the audio device.
 pub(crate) const DEADLINE_SHARE: f64 = 0.6;
 
+/// What became of a block handed to a plug-in with [`PluginProcessor::send`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sent {
+    /// It is with the plug-in; [`PluginProcessor::wait`] takes the answer.
+    Out,
+    /// The plug-in could not take it (still busy with an earlier block, past the patience it
+    /// was given): this round trip is a miss and the block is lost to the plug-in, so an effect
+    /// passes the sound through and an instrument is silent for it.
+    Refused,
+    /// The processor does not split a block into sending and waiting; `process` runs it.
+    Unsupported,
+}
+
 /// The audio half of a running plug-in, as the engine sees it. Implemented outside the engine
 /// (the session, over `suhina-plugins`); test doubles implement it too.
 pub trait PluginProcessor: Send {
@@ -35,12 +48,16 @@ pub trait PluginProcessor: Send {
 
     /// The first half of [`PluginProcessor::process`]: hands `buffer` and `events` to the
     /// plug-in without waiting, so the plug-ins of several chains run at the same time and a
-    /// block's deadline is shared by the slowest rather than by all of them in turn. Returns
-    /// false when the plug-in cannot take the block now; the chain then runs it with
-    /// `process` instead. A processor that cannot split a block leaves this returning false.
-    fn send(&mut self, buffer: &[f32], events: &[(usize, NoteEvent)]) -> bool {
-        let _ = (buffer, events);
-        false
+    /// block's deadline is shared by the slowest rather than by all of them in turn. A
+    /// processor that cannot split a block leaves this saying [`Sent::Unsupported`], and the
+    /// chain runs the block with `process`; one that can but whose plug-in cannot take the
+    /// block (it has not answered an earlier one) within `patience` says [`Sent::Refused`], and
+    /// the block is a miss, counted once, without trying again. `patience` is zero in real time,
+    /// where waiting would spend the deadline every chain shares, and [`OFFLINE_TIMEOUT`] in an
+    /// offline render, which waits for every block (ADR 0006, decision 4).
+    fn send(&mut self, buffer: &[f32], events: &[(usize, NoteEvent)], patience: Duration) -> Sent {
+        let _ = (buffer, events, patience);
+        Sent::Unsupported
     }
 
     /// The second half: waits at most `timeout` for the block handed over with
@@ -161,7 +178,7 @@ pub(crate) struct PluginSlot {
     pub(crate) instrument: bool,
     pub(crate) latency: u32,
     pub(crate) enabled: bool,
-    /// Blocks it did not answer in time, for tests and diagnostics.
+    /// Round trips it did not answer in time or refused; tests read it.
     pub(crate) missed: u64,
 }
 
@@ -188,14 +205,26 @@ impl PluginSlot {
         }
     }
 
-    /// Hands `span` with `events` to the plug-in without waiting ([`PluginProcessor::send`]);
-    /// whether it took it, so [`PluginSlot::finish`] must follow. A disabled or empty slot
-    /// does not.
-    pub(crate) fn send(&mut self, span: &[f32], events: &[(usize, NoteEvent)]) -> bool {
+    /// Hands `span` with `events` to the plug-in without waiting for its answer
+    /// ([`PluginProcessor::send`]); offline (`deadline` `None`) a host still busy with an earlier
+    /// block is waited for, up to [`OFFLINE_TIMEOUT`]. [`Sent::Out`]: [`PluginSlot::finish`]
+    /// must follow. [`Sent::Refused`]: this round trip is already a miss (the sound passes, or an
+    /// instrument is silent) and must not be run again. [`Sent::Unsupported`] (also a disabled
+    /// or empty slot, or none running): the chain runs the slot with [`PluginSlot::run`].
+    pub(crate) fn send(&mut self, span: &mut [f32], events: &[(usize, NoteEvent)], deadline: Option<Instant>) -> Sent {
         if !self.enabled || span.is_empty() {
-            return false;
+            return Sent::Unsupported;
         }
-        self.processor.as_mut().is_some_and(|processor| processor.send(span, events))
+        let Some(processor) = self.processor.as_mut() else { return Sent::Unsupported };
+        let patience = if deadline.is_some() { Duration::ZERO } else { OFFLINE_TIMEOUT };
+        let sent = processor.send(span, events, patience);
+        if sent == Sent::Refused {
+            self.missed += 1;
+            if self.instrument {
+                span.fill(0.0);
+            }
+        }
+        sent
     }
 
     /// Waits for the block handed over with [`PluginSlot::send`] until `deadline` and puts the
