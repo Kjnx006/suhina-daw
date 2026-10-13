@@ -148,6 +148,9 @@ close gets an issue, so the pull request can say `Closes #N`. An issue gets a ty
 area labels (`CONTRIBUTING.md` › Issues lists them); a larger piece split into issues is an
 `epic`, and repository, build and release work is a `chore`. Items imported from the earlier
 board keep their old key in the title (`(LOOP-27)`); a pull request for one names that key.
+Before starting, claim the item the way [`CONTRIBUTING.md`](CONTRIBUTING.md) › *Working on an issue*
+describes — no open pull request for it, `Backlog` or `Ready` on the board, a comment with the plan —
+for a person and for an agent alike.
 
 ## 4. Before you finish a task
 
