@@ -35,6 +35,21 @@ pub enum CommandKind {
     Audio,
 }
 
+impl ParamType {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Number => "number",
+            Self::Integer => "integer",
+            Self::Bool => "bool",
+            Self::Track => "track",
+            Self::Decibels => "decibels",
+            Self::Text => "text",
+            Self::Tracks => "tracks",
+            Self::Texts => "texts",
+        }
+    }
+}
+
 impl CommandKind {
     pub fn name(self) -> &'static str {
         match self {
@@ -127,6 +142,21 @@ impl<T> CommandSpec<T> {
         }
         let required: Vec<&str> = self.params.iter().filter(|p| p.required).map(|p| p.name).collect();
         json!({ "type": "object", "properties": properties, "required": required, "additionalProperties": false })
+    }
+
+    /// The command as one row of the table in `docs/commands.md`.
+    pub fn markdown_row(&self) -> String {
+        let cell = |text: &str| text.replace('|', r"\|");
+        let params: Vec<String> = self
+            .params
+            .iter()
+            .map(|p| {
+                let optional = if p.required { "" } else { ", optional" };
+                format!("`{}` ({}{optional}): {}", p.name, p.ty.name(), cell(p.doc))
+            })
+            .collect();
+        let params = if params.is_empty() { "none".to_string() } else { params.join("; ") };
+        format!("| `{}` | {} | {} | {params} |", self.id, self.kind.name(), cell(self.label))
     }
 
     /// The command as `commands.list` and the MCP server's `command_list` show it.

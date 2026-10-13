@@ -125,6 +125,7 @@ trademark of Steinberg Media Technologies GmbH.
 | | |
 |---|---|
 | [`docs/INDEX.md`](docs/INDEX.md) | Every document, what it is for, and the code it describes |
+| [`docs/commands.md`](docs/commands.md) | Every command the CLI, MCP server and UI run, with its parameters |
 | [`ROADMAP.md`](ROADMAP.md) | Milestones, what works now, what is next |
 | [`AGENTS.md`](AGENTS.md) | Rules for contributors and agents, and the crate map |
 | [`docs/architecture.md`](docs/architecture.md) | How the parts fit: layers, data flow, threads, commands, where new code goes |

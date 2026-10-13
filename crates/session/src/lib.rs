@@ -28,7 +28,7 @@ pub use commands::{CommandKind, CommandSpec, Param, ParamType, Run, commands, pa
 pub use files::{MAX_FILES, file_tempo};
 pub use library::{Category, Found, file_info, library_commands, search_items};
 pub use plugins::{device_plugin, plugin_commands};
-pub use projects::{MAX_OPEN_PROJECTS, ProjectId, Projects, all_commands, project_commands};
+pub use projects::{MAX_OPEN_PROJECTS, ProjectId, Projects, all_commands, commands_markdown, project_commands};
 pub use rack::{
     Hosted, OfflinePlugins, PluginEnv, PluginProgress, PluginReport, PluginStatus, is_instrument, start_offline,
 };

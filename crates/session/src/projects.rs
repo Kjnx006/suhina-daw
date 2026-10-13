@@ -385,14 +385,7 @@ impl Projects {
             check_params(id, &[], params)?;
             return Ok(all_commands());
         }
-        if let Some(spec) = PROJECT_COMMANDS
-            .iter()
-            .chain(plugin_commands())
-            .chain(crate::library_commands())
-            .chain(crate::sound_map_commands())
-            .chain(crate::audio_commands())
-            .find(|c| c.id == id)
-        {
+        if let Some(spec) = projects_commands().find(|c| c.id == id) {
             if project.is_some() {
                 return Err(format!("{id} does not run on one project; it takes no target project").into());
             }
@@ -432,14 +425,40 @@ impl Projects {
 
 /// Every command, project commands first, as `commands.list` shows them.
 pub fn all_commands() -> Value {
-    let projects = PROJECT_COMMANDS
+    let projects = projects_commands().map(CommandSpec::describe);
+    Value::Array(projects.chain(commands().iter().map(CommandSpec::describe)).collect())
+}
+
+/// The commands that run on [`Projects`] rather than on one project's session: the ones
+/// [`Projects::execute_in`] runs, in the order [`all_commands`] and [`commands_markdown`] list them.
+fn projects_commands() -> impl Iterator<Item = &'static CommandSpec<Projects>> {
+    PROJECT_COMMANDS
         .iter()
         .chain(plugin_commands())
         .chain(crate::library_commands())
         .chain(crate::sound_map_commands())
         .chain(crate::audio_commands())
-        .map(CommandSpec::describe);
-    Value::Array(projects.chain(commands().iter().map(CommandSpec::describe)).collect())
+}
+
+/// `docs/commands.md`: every command in the order of [`all_commands`], as `suhina-cli commands
+/// --markdown` prints it.
+pub fn commands_markdown() -> String {
+    let mut out = String::from(
+        "# Commands\n\n\
+         Every command Suhina has, generated from the command registry in `crates/session` by\n\
+         `suhina-cli commands --markdown`; do not edit by hand. A workflow regenerates it on `main`\n\
+         after every merge, so pull requests leave it alone. The CLI, the MCP server and the UI run\n\
+         these same commands ([ADR 0002](decisions/0002-commands.md), [`mcp.md`](mcp.md)).\n\n\
+         | Command | Kind | What it does | Parameters |\n\
+         |---|---|---|---|\n",
+    );
+    let rows =
+        projects_commands().map(CommandSpec::markdown_row).chain(commands().iter().map(CommandSpec::markdown_row));
+    for row in rows {
+        out.push_str(&row);
+        out.push('\n');
+    }
+    out
 }
 
 fn check_params(id: &str, expected: &[Param], params: &Value) -> Result<(), CommandError> {

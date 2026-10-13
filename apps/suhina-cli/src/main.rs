@@ -14,6 +14,7 @@ const USAGE: &str = "\
 usage: suhina-cli render (<project.als> | --demo) -o <out.wav> [--scene <n>] [--sample-rate <hz>] [<fm>]
        suhina-cli play (<project.als> | --demo) [--scene <n> | --launcher] [<fm>] [<output>]
        suhina-cli fm-synth voices <file.syx>
+       suhina-cli commands [--markdown]
        suhina-cli mcp [--read-root <dir>] [--write-root <dir>] [--audio]
        suhina-cli audio devices
        suhina-cli plugins (scan [--all] | list | folders | add-folder <dir> | remove-folder <dir>
@@ -28,6 +29,8 @@ commands:
   render    render a project offline to a 32-bit float stereo WAV file
   play      play a project once on the default audio output, or with --launcher launch its
             clips and scenes by typing commands
+  commands  list every command the MCP server and the UI run, with what it does; --markdown
+            prints the table in docs/commands.md
   mcp       serve the Model Context Protocol on stdin/stdout for agents; files can be read only
             below --read-root and written only below --write-root (no root, no access); with
             --audio, opened projects play on the default output so agents can launch clips,
@@ -159,6 +162,13 @@ fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        Some("commands") => match list_commands(args.get(1..).unwrap_or_default()) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(message) => {
+                eprintln!("error: {message}");
+                ExitCode::FAILURE
+            }
+        },
         Some("mcp") => match mcp(args.get(1..).unwrap_or_default()) {
             Ok(()) => ExitCode::SUCCESS,
             Err(message) => {
@@ -178,6 +188,25 @@ fn main() -> ExitCode {
             eprintln!("{USAGE}");
             ExitCode::from(2)
         }
+    }
+}
+
+/// `suhina-cli commands [--markdown]`.
+fn list_commands(args: &[String]) -> Result<(), String> {
+    match args {
+        [] => {
+            for command in suhina_session::all_commands().as_array().into_iter().flatten() {
+                let id = command["id"].as_str().unwrap_or_default();
+                let label = command["label"].as_str().unwrap_or_default();
+                println!("{id:<24} {label}");
+            }
+            Ok(())
+        }
+        [flag] if flag == "--markdown" => {
+            print!("{}", suhina_session::commands_markdown());
+            Ok(())
+        }
+        _ => Err("usage: suhina-cli commands [--markdown]".into()),
     }
 }
 

@@ -168,26 +168,9 @@ From Live Sets we authored ourselves in Live 12.4 ([format spec](docs/spec/als-f
 ### M3 Commands and agents (in progress)
 - Every edit is a command with an id, typed parameters and one undo step; failed or invalid edits
   leave the project unchanged ([ADR 0002](docs/decisions/0002-commands.md)).
-- Commands so far: `commands.list`, `project.info`, `project.save`, `project.tracks`, `project.clips`,
-  `transport.setTempo`, `track.setVolume`, `track.setPan`, `track.setMute`, `track.setSolo`, `track.setOutput`, `track.group`, `track.ungroup`, `track.move`, `track.rename`,
-  `track.setColor`, `track.delete`, `clip.move`, `clip.duplicate`, `clip.delete`, `clip.setGain`, `clip.setFades`, `clip.copy`, `clip.cut`, `clip.paste`,
-  `edit.undo`, `edit.redo`; for the transport `transport.play`, `transport.stop`,
-  `transport.setPosition`, `transport.setMetronome`; for several open projects `projects.list`, `projects.switch`,
-  `projects.next`, `projects.previous`, `projects.close`; for plug-ins `plugins.scan`,
-  `plugins.list`, `plugins.folders`, `plugins.addFolder`, `plugins.removeFolder`,
-  `plugins.check`, `plugins.setHosting` (also as `suhina-cli plugins …`); for the audio
-  output `audio.devices` (also `suhina-cli audio devices`), `audio.setOutput`, `audio.info`;
-  for devices
-  `devices.list`, `track.devices`, `device.add`, `device.remove`, `device.setEnabled`,
-  `device.setParam`, `device.addPlugin`, `device.plugin`, `device.openEditor`,
-  `device.closeEditor`, `device.restart`; for tracks and files `track.add`, `clip.addFiles`
-  (samples and MIDI files as clips); for previews `preview.play`, `preview.stop`; for the
-  browser's library `library.folders`, `library.addFolder`, `library.removeFolder`,
-  `library.refresh`, `library.list`, `library.search`, `library.info`, `library.pinned`,
-  `library.pin`, `library.unpin`, `library.recent`, `library.tags`, `library.setTag`,
-  `library.removeTag`, `library.tag`; for the sample map `soundmap.status`, `soundmap.analyse`,
-  `soundmap.layout`, `soundmap.similar`, `soundmap.info`; for missing files `project.missingFiles`,
-  `library.findFiles`, `project.relinkFiles`.
+- Commands for the project, tracks, clips, undo, the open projects, plug-ins, devices, the audio output, the library and the sample map:
+  [`docs/commands.md`](docs/commands.md) lists every one with its parameters (generated from the
+  registry; `suhina-cli commands` prints them).
 - Several projects open at once, like tabs, one of them active and playing; commands go to the
   active one or to a named one ([ADR 0007](docs/decisions/0007-several-open-projects.md)).
 - `suhina-cli mcp` serves them to agents over the Model Context Protocol, with file access
