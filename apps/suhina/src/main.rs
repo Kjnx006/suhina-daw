@@ -1,5 +1,5 @@
-//! Loopwerk, the desktop app: opens a project, plays it on the default audio output and shows it
-//! in the main window (`loopwerk-ui`).
+//! Suhina, the desktop app: opens a project, plays it on the default audio output and shows it
+//! in the main window (`suhina-ui`).
 
 // Release builds on Windows start without a console window.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
@@ -10,17 +10,17 @@ mod theme_files;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use loopwerk_session::Session;
-use loopwerk_ui::keymap::Keymap;
-use loopwerk_ui::settings::{Graphics, Settings};
-use loopwerk_ui::settings_view::About;
-use loopwerk_ui::themes::FileAction;
-use loopwerk_ui::{App, NewProject, OpenAs, Status};
+use suhina_session::Session;
+use suhina_ui::keymap::Keymap;
+use suhina_ui::settings::{Graphics, Settings};
+use suhina_ui::settings_view::About;
+use suhina_ui::themes::FileAction;
+use suhina_ui::{App, NewProject, OpenAs, Status};
 
 const USAGE: &str = "\
-usage: loopwerk [<project.locr> | <project.als> | --demo] [--renderer wgpu|glow] [--no-animations]
+usage: suhina [<project.locr> | <project.als> | --demo] [--renderer wgpu|glow] [--no-animations]
 
-  <project.locr>     a Loopwerk project to open, or a Live Set (.als) to import
+  <project.locr>     a Suhina project to open, or a Live Set (.als) to import
   --demo             open a small built-in project
   --renderer         how the window is drawn this time: wgpu or glow (OpenGL); the
                      default is the one chosen in Options > Settings
@@ -28,10 +28,12 @@ usage: loopwerk [<project.locr> | <project.als> | --demo] [--renderer wgpu|glow]
 Without a project the window opens empty; Ctrl+T makes a new one or opens one, and a
 .locr or .als file dropped on it opens.
 Settings are kept in settings.txt, the keys in keymap.json and themes in themes/<name>.json,
-in Loopwerk's folder of the user's app data.";
+in Suhina's folder of the user's app data.";
 
-/// The folder eframe keeps Loopwerk's window state in; the settings file lives beside it.
-const APP_ID: &str = "Loopwerk";
+/// The folder eframe keeps Suhina's window state in; the settings file lives beside it.
+const APP_ID: &str = "Suhina";
+/// The app id before the program was renamed: where its settings were kept.
+const OLD_APP_ID: &str = "Loopwerk"; // rename_suhina: keep
 const SETTINGS_FILE: &str = "settings.txt";
 const KEYMAP_FILE: &str = "keymap.json";
 const THEMES_FOLDER: &str = "themes";
@@ -64,7 +66,15 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    // Settings kept under the program's old name are copied to the new one on the first start.
+    let old_folders = [
+        (suhina_plugins::library::old_settings_folder(), suhina_plugins::library::new_settings_folder()),
+        (eframe::storage_dir(OLD_APP_ID), eframe::storage_dir(APP_ID)),
+    ];
+    let copied: Vec<String> =
+        old_folders.into_iter().filter_map(|(old, new)| suhina_plugins::library::adopt_old_folder(old, new)).collect();
     let (settings, mut settings_warnings) = load_settings();
+    settings_warnings.extend(copied);
     let (keymap, keymap_warnings) = load_keymap();
     settings_warnings.extend(keymap_warnings);
     let renderer = args.renderer.unwrap_or(match settings.graphics {
@@ -75,13 +85,13 @@ fn main() -> ExitCode {
         eframe::Renderer::Glow => Graphics::OpenGl,
         eframe::Renderer::Wgpu => Graphics::Gpu,
     };
-    let mut themes = theme_files::ThemeFiles::new(eframe::storage_dir(APP_ID).map(|d| d.join(THEMES_FOLDER)));
+    let mut themes = theme_files::ThemeFiles::new(eframe::storage_dir(app_id()).map(|d| d.join(THEMES_FOLDER)));
     let (theme_list, theme_warnings) = themes.read_all();
     settings_warnings.extend(theme_warnings);
-    let recent = recent::Recent::load(eframe::storage_dir(APP_ID).map(|d| d.join(RECENT_FILE)));
+    let recent = recent::Recent::load(eframe::storage_dir(app_id()).map(|d| d.join(RECENT_FILE)));
     let mut window = Window { app: App::new(), graphics_now, audio_output: None, themes, recent };
     // The browser's library: browser.json and the folder indexes beside the settings (ADR 0012).
-    let mut library = loopwerk_library::Library::new(eframe::storage_dir(APP_ID));
+    let mut library = suhina_library::Library::new(eframe::storage_dir(app_id()));
     settings_warnings.extend(library.take_warnings());
     if let Err(e) = library.start() {
         settings_warnings.push(e);
@@ -94,7 +104,7 @@ fn main() -> ExitCode {
     match args.source {
         Source::Nothing => {}
         Source::Demo => {
-            let session = Session::new(loopwerk_ui::demo::demo_project());
+            let session = Session::new(suhina_ui::demo::demo_project());
             let (session, warnings, output) = with_audio(session);
             window.audio_output = output;
             window.app.open_project(session, &warnings, OpenAs::NewTab);
@@ -107,7 +117,7 @@ fn main() -> ExitCode {
 
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
-            .with_title("Loopwerk")
+            .with_title("Suhina")
             .with_inner_size([1280.0, 800.0])
             .with_min_inner_size([640.0, 400.0])
             .with_drag_and_drop(true),
@@ -116,10 +126,10 @@ fn main() -> ExitCode {
     };
     let animations = args.animations;
     let result = eframe::run_native(
-        APP_ID,
+        app_id(),
         options,
         Box::new(move |cc| {
-            loopwerk_ui::theme::install(&cc.egui_ctx);
+            suhina_ui::theme::install(&cc.egui_ctx);
             window.app.set_editor_owner(native_window(cc));
             window.app.set_settings(&cc.egui_ctx, settings);
             let folder = window.themes.folder_text();
@@ -204,7 +214,7 @@ impl eframe::App for Window {
                 .app
                 .projects()
                 .get(id)
-                .map(|session| loopwerk_output::open_player(session.project(), session.audio()));
+                .map(|session| suhina_output::open_player(session.project(), session.audio()));
             match opened {
                 Some(Ok((player, device))) => {
                     self.app.attach_player(id, player);
@@ -245,7 +255,7 @@ impl Window {
     /// Makes a new project, blank or from a template, and opens it in a new tab.
     fn new_project(&mut self, new: NewProject) {
         let made = match new {
-            NewProject::Blank => Ok((Session::new(loopwerk_session::blank_project()), Vec::new())),
+            NewProject::Blank => Ok((Session::new(suhina_session::blank_project()), Vec::new())),
             NewProject::Template(path) => Session::from_template(&path),
         };
         match made {
@@ -257,9 +267,9 @@ impl Window {
     /// Decodes a session's audio, starts it playing (stopped) and shows it.
     fn show_session(&mut self, mut session: Session, mut warnings: Vec<String>, how: OpenAs) {
         let folder = session.audio_folder().map_or_else(|| PathBuf::from("."), Path::to_path_buf);
-        let (audio, audio_warnings) = loopwerk_media::load_project_audio(session.project(), &folder);
+        let (audio, audio_warnings) = suhina_media::load_project_audio(session.project(), &folder);
         warnings.extend(audio_warnings);
-        let waveforms = loopwerk_ui::waveform::from_pool(&audio);
+        let waveforms = suhina_ui::waveform::from_pool(&audio);
         session.set_audio(audio);
         let (session, output_warnings, output) = with_audio(session);
         warnings.extend(output_warnings);
@@ -322,7 +332,7 @@ impl Window {
         if let Some(warning) = warnings.first() {
             self.app.set_status(Status::Error(warning.clone()));
         }
-        if !loopwerk_ui::theme::is_built_in(&self.app.settings().theme) {
+        if !suhina_ui::theme::is_built_in(&self.app.settings().theme) {
             ctx.request_repaint_after(std::time::Duration::from_secs(1));
         }
     }
@@ -364,19 +374,30 @@ fn saved(path: &Path, what: &str) -> String {
     format!("{what} {}", path.display())
 }
 
-/// Where projects are saved and templates kept until the settings say otherwise: `Loopwerk`
-/// in the user's documents folder.
+/// The app id whose folder holds the settings: the old one while only its folder exists
+/// (copying it under the new name failed), so the settings stay readable.
+fn app_id() -> &'static str {
+    match (eframe::storage_dir(APP_ID), eframe::storage_dir(OLD_APP_ID)) {
+        (Some(new), Some(old)) if !new.exists() && old.is_dir() => OLD_APP_ID,
+        _ => APP_ID,
+    }
+}
+
+/// Where projects are saved and templates kept until the settings say otherwise: `Suhina`
+/// in the user's documents folder, or the folder made under the program's old name while only
+/// that one exists (projects there stay where recent lists and links expect them).
 fn default_folders() -> (PathBuf, PathBuf) {
     let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")).map(PathBuf::from);
     let documents = home.map(|h| h.join("Documents")).unwrap_or_default();
-    let base = documents.join("Loopwerk");
+    let (new, old) = (documents.join("Suhina"), documents.join(OLD_APP_ID));
+    let base = if !new.exists() && old.is_dir() { old } else { new };
     (base.join("Projects"), base.join("Templates"))
 }
 
 /// Connects the default audio output to `session`, playing its audio; without one the project
 /// still opens. Returns the session, warnings and a description of the output.
 fn with_audio(mut session: Session) -> (Session, Vec<String>, Option<String>) {
-    match loopwerk_output::open_player(session.project(), session.audio()) {
+    match suhina_output::open_player(session.project(), session.audio()) {
         Ok((player, device)) => {
             session.attach_player(player);
             (session, Vec::new(), Some(device))
@@ -402,7 +423,7 @@ fn native_window(cc: &eframe::CreationContext<'_>) -> Option<u64> {
 }
 
 fn settings_path() -> Option<PathBuf> {
-    eframe::storage_dir(APP_ID).map(|dir| dir.join(SETTINGS_FILE))
+    eframe::storage_dir(app_id()).map(|dir| dir.join(SETTINGS_FILE))
 }
 
 /// The saved settings, or the defaults when there are none yet.
@@ -422,7 +443,7 @@ fn save_settings(settings: &Settings) -> Result<(), String> {
 
 /// The saved keymap over the default keys, or the defaults when there is none yet.
 fn load_keymap() -> (Keymap, Vec<String>) {
-    let path = eframe::storage_dir(APP_ID).map(|dir| dir.join(KEYMAP_FILE));
+    let path = eframe::storage_dir(app_id()).map(|dir| dir.join(KEYMAP_FILE));
     match path.map(std::fs::read_to_string) {
         Some(Ok(text)) => Keymap::from_json(&text),
         Some(Err(e)) if e.kind() != std::io::ErrorKind::NotFound => {
@@ -432,9 +453,9 @@ fn load_keymap() -> (Keymap, Vec<String>) {
     }
 }
 
-/// Writes one of Loopwerk's files in its app-data folder.
+/// Writes one of Suhina's files in its app-data folder.
 fn save_file(name: &str, text: &str) -> Result<(), String> {
-    let dir = eframe::storage_dir(APP_ID).ok_or("there is no folder to keep settings in")?;
+    let dir = eframe::storage_dir(app_id()).ok_or("there is no folder to keep settings in")?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("could not save {name}: {e}"))?;
     std::fs::write(dir.join(name), text).map_err(|e| format!("could not save {name}: {e}"))
 }
