@@ -1779,6 +1779,13 @@ impl App {
             }
             "transport.playFromSelection" => actions.push(self.play_action(true)),
             "selection.copy" | "selection.cut" | "selection.duplicate" | "selection.delete" => {
+                // Points selected on an automation lane are deleted before any clip.
+                if action == "selection.delete"
+                    && let Some(delete) = self.arrangement.automation.delete_selected()
+                {
+                    actions.push(delete);
+                    return;
+                }
                 let Some((track, index)) = self.arrangement.selected_clip() else { return };
                 let id = match action {
                     "selection.copy" => "clip.copy",

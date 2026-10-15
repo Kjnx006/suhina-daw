@@ -37,7 +37,16 @@ plays through that track's instrument and effects. The move is one undo step.
 `clip.duplicate {track, index, stack?}` places a copy right after the clip, replacing what the
 copy covers unless stacked, as a moved clip does (the window stacks when the setting for the
 clip's kind is on); `clip.delete {track, index}` removes it. In the Arrangement view a clip's
-right-click menu has both, and the keys Ctrl+D and Delete act on the selected clip.
+right-click menu has both, and the keys Ctrl+D and Delete act on the selected clip. Points
+selected on an automation lane are deleted by Delete before any clip; selecting a clip ends a
+selection of points, and selecting points ends the clip's selection
+([automation](automation.md#in-the-arrangement-view)).
+
+## Automation lanes
+
+Under a track, the lanes of its automation, shown and hidden with the envelope button on its
+header; a track's row grows by their height, and the next track moves down. Their gestures are
+in the [automation spec](automation.md#in-the-arrangement-view).
 
 ## Copy, cut and paste
 

@@ -139,6 +139,22 @@ suhina-cli mcp --read-root ./projects --write-root ./renders [--audio]
   default, unit, options); `track.devices` lists a track's devices with their values;
   `device.add`, `device.remove`, `device.setEnabled` and `device.setParam` (through
   `command_run`) edit a track's chain, one undo step each ([ADR 0004](decisions/0004-built-in-devices.md)).
+  `device.setParam` sets a plug-in device's parameter too, by the id `device.pluginParams` lists
+  (a running plug-in's parameters with their ranges, default, value and the plug-in's own
+  text), heard from the next block; `device.setAutomation {param, points}` automates one over the
+  arrangement, `points` a flat list of beat and value (`[0, 0.2, 4, 0.8]`), `[]` removing it.
+  Values are kept in the parameter's range once `device.pluginParams` has listed them.
+  `track.devices` gives a plug-in's set values and any device's lanes (`automation`).
+
+- **Automation.** `automation.addPoint`, `automation.movePoint`, `automation.deletePoint`,
+  `automation.movePoints`, `automation.deletePoints` (several points of one lane in one undo
+  step), `automation.clear`, `automation.setEnabled` and `automation.list` (through `command_run`) edit
+  the envelopes of a track's `volume`, `pan` and `mute` (no `device`) and of any device
+  parameter (`device` and its `param` id), point by point, each one undo step; values in the
+  set command's unit (the volume in dB). `device.setAutomation` replaces a whole device lane, for
+  built-in devices too. Setting an automated parameter by hand turns its lane off (the answer
+  says `"automation": "off"`) until `automation.setEnabled` turns it on again
+  ([automation spec](spec/automation.md)).
   An instrument (`fm-synth`) goes first, on a MIDI track, and plays the track's notes; effects
   follow. `device.add {preset, voice?}` adds the FM synth playing a DX7 voice from a `.syx` file. Renders and
   the playing engine run the chains.
