@@ -85,7 +85,8 @@ crates/
   separation L2 stem separation: chunking, weighted overlap-add and resampling around an inference backend
              trait, and a deterministic test backend (a band splitter); no model or commands yet (#146)
   session  L2 open projects (tabs, ADR 0007), undo history, the command registry (ADR 0002), the
-           attached player, each project's decoded audio and previews (ADR 0011)
+           attached player, each project's decoded audio and previews (ADR 0011), backups
+           (autosave and the offer after a crash, ADR 0010)
   automation L3 MCP server (rmcp) over a session, file roots, WAV rendering (docs/mcp.md)
   output   L3 the audio device: lists hosts and devices (cpal; ASIO with the `asio` feature), opens the one
            chosen (WASAPI exclusive through `wasapi`), plays an engine in blocks of the chosen buffer
@@ -94,6 +95,7 @@ crates/
   device-api L0 the Device trait, parameter descriptions, contract tests every device runs
   device-registry L1 every built-in effect or instrument by its stable id: makes and lists them (ADR 0004)
   ipc      L0 audio blocks to a plug-in host process: shared memory, block sync with a deadline (ADR 0006; may use unsafe)
+  realtime L0 real-time priority for audio threads: MMCSS Pro Audio on Windows, SCHED_FIFO or rtkit on Linux
   plugins  L1 the engine's side of plug-in hosting: start a host process, control protocol, health, state, restart; scanning; offline runs
   plugin-host  the suhina-plugin-host executable plug-ins run in (ADR 0006; may use unsafe): CLAP, VST3, test plug-ins
 devices/

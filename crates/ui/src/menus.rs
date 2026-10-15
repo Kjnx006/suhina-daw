@@ -31,9 +31,14 @@ pub struct TrackMenu<'a> {
     pub is_group: bool,
     /// The tracks selected in the view; grouping takes them when this track is one of them.
     pub selection: &'a [TrackId],
+    /// The groups the track can move into, with their names.
+    pub into: &'a [(TrackId, String)],
+    /// Takes the track out of its group, one level up; `None` when it is in none.
+    pub out: Option<Action>,
 }
 
-/// The menu of a track header or column: name, colour, group, ungroup, delete.
+/// The menu of a track header or column: name, colour, group, ungroup, move into or out of a
+/// group, delete.
 pub fn track_menu(ui: &mut Ui, menu: &TrackMenu<'_>, actions: &mut Vec<Action>) {
     let track = menu.track.0;
     ui.set_min_width(180.0);
@@ -83,6 +88,22 @@ pub fn track_menu(ui: &mut Ui, menu: &TrackMenu<'_>, actions: &mut Vec<Action>) 
         actions.push(Action::new("track.ungroup", json!({ "track": track })));
         ui.close();
     }
+    if !menu.into.is_empty() {
+        ui.menu_button("Move into group", |ui| {
+            for (group, name) in menu.into {
+                if ui.button(name).clicked() {
+                    actions.push(Action::new("track.setGroup", json!({ "track": track, "group": group.0 })));
+                    ui.close();
+                }
+            }
+        });
+    }
+    if let Some(out) = &menu.out
+        && ui.button("Move out of group").clicked()
+    {
+        actions.push(out.clone());
+        ui.close();
+    }
     ui.separator();
     if ui.button("Delete track").clicked() {
         actions.push(Action::new("track.delete", json!({ "track": track })));
@@ -94,6 +115,10 @@ pub fn track_menu(ui: &mut Ui, menu: &TrackMenu<'_>, actions: &mut Vec<Action>) 
 /// kind is on, so its copy leaves the clips it lands on as they are.
 pub fn clip_menu(ui: &mut Ui, track: TrackId, index: usize, stack: bool, actions: &mut Vec<Action>) {
     ui.set_min_width(140.0);
+    if ui.add(egui::Button::new("Copy").shortcut_text("Ctrl+C")).clicked() {
+        actions.push(Action::new("clip.copy", json!({ "track": track.0, "index": index })));
+        ui.close();
+    }
     if ui.add(egui::Button::new("Duplicate").shortcut_text("Ctrl+D")).clicked() {
         let mut params = json!({ "track": track.0, "index": index });
         if stack {
@@ -181,6 +206,27 @@ pub fn scene_field_action(field: &str, scene: usize, text: &str) -> Option<Actio
             ))
         }
         _ => None,
+    }
+}
+
+/// A clip slot's right-click menu: copy its clip, or paste the copied clip into it (`scene`
+/// from 1). Copy is greyed out on an empty slot, Paste while nothing has been copied.
+pub fn slot_menu(
+    ui: &mut Ui,
+    track: TrackId,
+    scene: usize,
+    has_clip: bool,
+    can_paste: bool,
+    actions: &mut Vec<Action>,
+) {
+    ui.set_min_width(140.0);
+    if ui.add_enabled(has_clip, egui::Button::new("Copy").shortcut_text("Ctrl+C")).clicked() {
+        actions.push(Action::new("clip.copy", json!({ "track": track.0, "scene": scene })));
+        ui.close();
+    }
+    if ui.add_enabled(can_paste, egui::Button::new("Paste").shortcut_text("Ctrl+V")).clicked() {
+        actions.push(Action::new("clip.paste", json!({ "track": track.0, "scene": scene })));
+        ui.close();
     }
 }
 

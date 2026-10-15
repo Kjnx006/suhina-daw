@@ -101,3 +101,68 @@ fn a_choice_of_missing_things_falls_back_to_the_default() {
         Err(e) => assert!(!e.is_empty()),
     }
 }
+
+#[test]
+fn the_priority_notice_is_told_once() {
+    let told = AtomicBool::new(false);
+    assert_eq!(tell_once(&told, None), None, "nothing to tell leaves it untold");
+    assert_eq!(tell_once(&told, Some("first".into())), Some("first".into()));
+    assert_eq!(tell_once(&told, Some("again".into())), None);
+}
+
+/// The render thread says what priority it got before it renders anything, so the stream can
+/// tell the user before the device starts; it plays on whatever it got.
+#[test]
+fn the_render_thread_says_its_priority_first() {
+    let said = std::thread::spawn(|| {
+        let renderer = Renderer::stopped(&suhina_model::Project::default(), &AudioPool::new(), 48_000).unwrap();
+        let (producer, _consumer) = ring(256);
+        let (stop, progress) = (AtomicBool::new(true), Progress::default());
+        let (joined, said) = mpsc::sync_channel(1);
+        let _renderer = render_ahead(renderer, producer, 256, &stop, &progress, &joined);
+        said.try_recv().unwrap()
+    })
+    .join()
+    .unwrap();
+    let (priority, notice) = said;
+    if priority.is_real_time() || priority == Priority::Off {
+        assert_eq!(notice, None);
+    }
+    if let Some(notice) = notice {
+        assert!(notice.contains(priority.describe()), "{notice}");
+    }
+}
+
+#[test]
+fn an_output_plays_in_place_of_a_chosen_device_that_is_not_there() {
+    let choice = |host: Option<&str>, device: Option<&str>| OutputChoice {
+        host: host.map(String::from),
+        device: device.map(String::from),
+        ..OutputChoice::default()
+    };
+    assert!(!in_place_of(&OutputChoice::default(), "ALSA", "default"), "nothing chosen");
+    assert!(!in_place_of(&choice(Some("alsa "), Some("USB Audio")), "ALSA", "usb audio"), "names as compared");
+    assert!(in_place_of(&choice(None, Some("USB Audio")), "ALSA", "default"), "another device");
+    assert!(in_place_of(&choice(Some("ASIO"), None), "WASAPI", "Speakers"), "another host");
+}
+
+#[test]
+fn the_chosen_device_is_looked_for_in_the_background() {
+    let system = DeviceOutput::new();
+    let gone = OutputChoice { host: Some("No such host".into()), ..OutputChoice::default() };
+    // The first ask starts a look and does not wait for it.
+    assert_eq!(system.chosen_present(&gone), None);
+    let mut answer = None;
+    for _ in 0..500 {
+        std::thread::sleep(Duration::from_millis(10));
+        answer = system.chosen_present(&gone);
+        if answer.is_some() {
+            break;
+        }
+    }
+    assert_eq!(answer, Some(false));
+    // An answer is for the choice it was asked for: another choice waits for its own look.
+    let other = OutputChoice { device: Some("Elsewhere".into()), ..gone.clone() };
+    std::thread::sleep(Duration::from_millis(200));
+    assert_eq!(system.chosen_present(&other), None);
+}

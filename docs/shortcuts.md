@@ -96,6 +96,8 @@ keys. Unknown actions, keys and presets are skipped with a warning in the status
 | In the piano roll: play a key of the key column through the track's instrument while it is held; Ctrl+click, Ctrl+drag select the notes of that pitch or those pitches ([spec](spec/ui-clip-editor.md) › Playing the keys) | click, drag on the key column; Ctrl+click, Ctrl+drag |
 | Group the selected tracks (`selection.group`) | Ctrl+G |
 | Quantise the piano roll's selected notes, or all its notes, with the settings the quantise block in the clip column keeps (`pianoRoll.quantize`, [spec](spec/ui-clip-editor.md) › Quantise) | Ctrl+U |
+| Add an arrangement marker at the playhead, or at the play start marker while stopped (`marker.addAtPlayhead`; [spec](spec/arrangement-editing.md#markers)) | M |
+| Turn arrangement looping on or off; on without a loop region makes one over the first 4 bars (`transport.setLoopEnabled`; [spec](spec/arrangement-editing.md#loop-region)) | Ctrl+L |
 | Next, previous project (`projects.next`, `projects.previous`) | Ctrl+Tab, Ctrl+Shift+Tab |
 | New project or open one (`file.new`), open one (`file.open`) | Ctrl+T, Ctrl+O |
 | Save, save as (`file.save`, `file.saveAs`); save as template (`file.saveTemplate`) | Ctrl+S, Ctrl+Shift+S; none |
@@ -118,6 +120,12 @@ the arrows keep their other uses (the sample map, the browser's search), and the
 puts the copied notes right after the selected notes, or at the playhead when it is inside the
 clip, else right after where they were copied from; pasted and duplicated notes are selected
 ([clip editor spec](spec/ui-clip-editor.md) › Shortcuts).
+
+In the Session view, copy and paste act on the selected clip slot (the one clicked last): Ctrl+C
+copies its clip, Ctrl+V puts the copied clip in it, replacing what it holds. That is how an
+arrangement clip goes into a slot: Ctrl+C on the clip, Tab, click a slot, Ctrl+V
+([Session view](spec/ui-session-view.md) › Between the views). Cut, duplicate and delete act on
+arrangement clips only.
 
 Zoom in has two keys, `Ctrl+Plus` and `Ctrl+Equals`. On macOS `+` is typed as Shift and `=`, and
 while Cmd is held the window reports that key as `=`, never `+`: `Ctrl+Plus` cannot fire there, and

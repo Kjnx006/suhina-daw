@@ -125,7 +125,12 @@ fn everything() -> Project {
         extensions: Extensions::default(),
     };
     Project {
-        transport: Transport { tempo_bpm: 128.5, time_signature: TimeSignature { numerator: 7, denominator: 8 } },
+        transport: Transport {
+            tempo_bpm: 128.5,
+            time_signature: TimeSignature { numerator: 7, denominator: 8 },
+            loop_range: Some(LoopRange { start: 4.0, end: 12.5 }),
+            loop_enabled: true,
+        },
         tracks: vec![
             Track { color: None, ..track(1, false, Some(4), None) },
             track(2, true, Some(2), Some(1)),
@@ -192,6 +197,7 @@ fn everything() -> Project {
                     clips: vec![Clip { enabled: false, loop_range: None, ..clip(2, 4.0) }],
                 },
             ],
+            markers: vec![Marker::new(0.0, "Intro"), Marker::new(16.0, "Verse"), Marker::new(16.0, "")],
         },
         launcher: Launcher {
             scenes: vec![
@@ -320,6 +326,17 @@ fn hostile_values_are_errors_not_crashes() {
         r#"{ "arrangement": { "lanes": [ { "clips": [ { "content": 1, "start": 0, "length": 4, "fade_in_shape": "wobbly" } ] } ] } }"#,
         r#"{ "arrangement": { "lanes": [ { "clips": [ { "content": 1, "start": 0, "length": 4, "fade_out_shape": 3 } ] } ] } }"#,
         r#"{ "arrangement": { "lanes": [ { "clips": [ { "content": 1, "start": 0, "length": 4, "fade_in_curve": 2 } ] } ] } }"#,
+        r#"{ "arrangement": { "markers": [ { "beat": -1, "name": "before" } ] } }"#,
+        r#"{ "transport": { "loop": { "start": 4, "end": 4 } } }"#,
+        r#"{ "transport": { "loop": { "start": -1, "end": 4 } } }"#,
+        r#"{ "transport": { "loop": { "start": 8, "end": 4, "enabled": true } } }"#,
+        r#"{ "transport": { "loop": { "start": 0 } } }"#,
+        r#"{ "transport": { "loop": { "start": 0, "end": 4, "enabled": "yes" } } }"#,
+        r#"{ "transport": { "loop": [0, 4] } }"#,
+        r#"{ "arrangement": { "markers": [ { "beat": "soon" } ] } }"#,
+        r#"{ "arrangement": { "markers": [ { "name": "nowhere" } ] } }"#,
+        r#"{ "arrangement": { "markers": [ { "beat": 1, "name": 7 } ] } }"#,
+        r#"{ "arrangement": { "markers": { "beat": 1 } } }"#,
         r#"{ "arrangement": { "lanes": [ { "clips": [ { "content": 1, "start": 0, "length": 4, "follow": true } ] } ] } }"#,
         r#"{ "arrangement": { "lanes": [ { "clips": [ { "content": 1, "start": 0, "length": 4, "follow": { "time": 0 } } ] } ] } }"#,
         r#"{ "arrangement": { "lanes": [ { "clips": [ { "content": 1, "start": 0, "length": 4, "follow": { "time": 1e9 } } ] } ] } }"#,
@@ -385,6 +402,34 @@ fn a_clip_without_fade_shapes_has_linear_fades() {
     assert_eq!(FadeCurve::default(), FadeCurve { shape: FadeShape::Linear, curve: 0.0 });
 }
 
+/// A loop region is kept while looping is off; a project without one writes no `loop`.
+#[test]
+fn the_loop_region_is_kept_while_off_and_left_out_when_there_is_none() {
+    let project = from_json(
+        r#"{ "format": "suhina", "version": 1, "project": { "transport": { "loop": { "start": 2, "end": 6 } } } }"#,
+    )
+    .unwrap();
+    assert_eq!(project.transport.loop_range, Some(LoopRange { start: 2.0, end: 6.0 }));
+    assert!(!project.transport.loop_enabled, "off unless the file says so");
+    assert_eq!(from_json(&to_json(&project)).unwrap().transport, project.transport);
+    assert!(!to_json(&Project::default()).contains(r#""loop""#));
+}
+
+/// Markers come back in beat order, however the file lists them; a project without any writes
+/// no `markers`, as files did before markers existed.
+#[test]
+fn markers_are_read_in_beat_order_and_left_out_when_there_are_none() {
+    let project = from_json(
+        r#"{ "format": "suhina", "version": 1, "project": { "arrangement": { "markers": [
+            { "beat": 32, "name": "Outro" }, { "beat": 0.5 }, { "beat": 8, "name": "Verse" } ] } } }"#,
+    )
+    .unwrap();
+    let markers: Vec<(f64, &str)> = project.arrangement.markers.iter().map(|m| (m.beat, m.name.as_str())).collect();
+    assert_eq!(markers, [(0.5, ""), (8.0, "Verse"), (32.0, "Outro")]);
+    assert!(!to_json(&Project::default()).contains("markers"));
+    assert!(to_json(&project).contains(r#""markers""#));
+}
+
 /// A clip without a follow action writes none, and a file written before follow actions reads
 /// as off.
 #[test]
@@ -405,6 +450,30 @@ fn a_clip_without_a_follow_action_has_it_off() {
     .unwrap();
     let follow = project.arrangement.lanes[0].clips[0].follow_action;
     assert_eq!(follow, FollowAction { enabled: true, action_b: FollowKind::Stop, ..FollowAction::default() });
+}
+
+#[test]
+fn nested_groups_survive_a_round_trip_and_a_group_cycle_is_refused() {
+    // Track 3 moves into a group of its own (track 5), which sits inside group 1.
+    let mut project = everything();
+    let mut inner = project.tracks[0].clone();
+    inner.id = TrackId(5);
+    inner.channel = Some(ChannelId(6));
+    inner.parent = Some(TrackId(1));
+    project.tracks.insert(1, inner);
+    project.tracks[3].parent = Some(TrackId(5));
+    let mut bus = project.channels[3].clone();
+    bus.id = ChannelId(6);
+    bus.output = Some(ChannelId(4));
+    project.channels.push(bus);
+    project.channels[4].output = Some(ChannelId(6));
+    assert_eq!(project.validate(), Ok(()));
+    assert_eq!(project.group_depth(TrackId(3)), Some(2));
+    assert_eq!(from_json(&to_json(&project)), Ok(project.clone()));
+
+    project.tracks[0].parent = Some(TrackId(5));
+    let error = from_json(&to_json(&project)).err().map(|e| e.0).unwrap_or_default();
+    assert!(error.contains("inside itself"), "{error}");
 }
 
 #[test]

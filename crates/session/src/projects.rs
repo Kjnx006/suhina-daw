@@ -55,10 +55,17 @@ pub struct Projects {
     /// When a failed output was last opened again, so a device that keeps failing is tried
     /// every [`OUTPUT_RETRY`], not every frame.
     output_retried: Option<std::time::Instant>,
+    /// When the audio system was last asked whether the chosen device is back, while the
+    /// output plays in its place.
+    output_watched: Option<std::time::Instant>,
+    /// Backups of the open projects: the settings and the thread that writes them.
+    pub(crate) backups: crate::backup::Backups,
 }
 
 /// How often an output whose device reported an error is opened again.
 const OUTPUT_RETRY: std::time::Duration = std::time::Duration::from_secs(2);
+/// How often an output playing in place of the chosen device looks whether it is back.
+const OUTPUT_WATCH: std::time::Duration = std::time::Duration::from_secs(3);
 
 const PROJECT: Param = param("project", ParamType::Integer, "project id, from projects.list");
 
@@ -128,6 +135,7 @@ impl Projects {
     /// playing one there.
     pub fn set_output_choice(&mut self, choice: crate::OutputChoice) {
         self.output_choice = choice;
+        self.output_watched = None;
     }
 
     /// Opens the chosen output for project `id` (the active one when `None`), with its
@@ -260,7 +268,14 @@ impl Projects {
 
     /// Closes `id` and returns its session. If it was active, the tab to its right becomes
     /// active (or the one to its left when it was the last).
+    /// Closing is a critical operation: with backups before critical operations, a project with
+    /// unsaved changes is backed up first.
     pub fn close(&mut self, id: ProjectId) -> Result<Session, CommandError> {
+        if self.get(id).is_none() {
+            return Err(unknown_project(id));
+        }
+        self.back_up_critical(id);
+        self.backups_after_close(id);
         let index = self.open.iter().position(|o| o.id == id).ok_or_else(|| unknown_project(id))?;
         let closed = self.open.remove(index);
         if self.active == Some(id) {
@@ -339,26 +354,51 @@ impl Projects {
 
     /// Opens the active project's output again when its device reported an error: a driver
     /// that asked to be reset (ASIO, after its buffer size or sample rate changed in its own
-    /// panel), or a device unplugged, which then falls back to the default one. Returns what
-    /// the user should hear about.
+    /// panel), or a device unplugged, which then falls back to the default one. While the
+    /// output plays in place of the chosen device, looks every few seconds whether that device
+    /// is back and, when it is, moves the output there, keeping the transport (as
+    /// `audio.setOutput` does). Returns what the user should hear about.
     pub fn check_output(&mut self) -> Vec<String> {
-        let failed = self
-            .session_mut(None)
-            .ok()
-            .and_then(|s| s.player())
-            .and_then(crate::Player::output_info)
-            .is_some_and(|info| info.failed);
-        if !failed || self.output_retried.is_some_and(|t| t.elapsed() < OUTPUT_RETRY) {
+        let Some(info) = self.session_mut(None).ok().and_then(|s| s.player()).and_then(crate::Player::output_info)
+        else {
+            return Vec::new();
+        };
+        if info.failed {
+            if self.output_retried.is_some_and(|t| t.elapsed() < OUTPUT_RETRY) {
+                return Vec::new();
+            }
+            self.output_retried = Some(std::time::Instant::now());
+            return match self.reopen_output() {
+                Ok(notice) => {
+                    let mut said = vec!["the audio device reported an error; its output was opened again".to_string()];
+                    said.extend(notice);
+                    said
+                }
+                Err(e) => vec![e.0],
+            };
+        }
+        if info.fallback { self.return_to_chosen() } else { Vec::new() }
+    }
+
+    /// Moves the output back to the chosen device when the audio system says it is there,
+    /// asking at most every [`OUTPUT_WATCH`].
+    fn return_to_chosen(&mut self) -> Vec<String> {
+        let Some(system) = self.audio.clone() else { return Vec::new() };
+        if self.output_watched.is_some_and(|t| t.elapsed() < OUTPUT_WATCH) {
             return Vec::new();
         }
-        self.output_retried = Some(std::time::Instant::now());
-        match self.reopen_output() {
-            Ok(notice) => {
-                let mut said = vec!["the audio device reported an error; its output was opened again".to_string()];
-                said.extend(notice);
-                said
-            }
-            Err(e) => vec![e.0],
+        self.output_watched = Some(std::time::Instant::now());
+        if system.chosen_present(&self.output_choice) != Some(true) {
+            return Vec::new();
+        }
+        if let Err(e) = self.reopen_output() {
+            return vec![e.0];
+        }
+        // Gone again meanwhile: it plays in place of it again, and the next look tries again.
+        let now = self.session_mut(None).ok().and_then(|s| s.player()).and_then(crate::Player::output_info);
+        match now {
+            Some(info) if !info.fallback => vec![format!("the audio device {} is back; it plays again", info.device)],
+            _ => Vec::new(),
         }
     }
 
@@ -399,19 +439,28 @@ impl Projects {
         // A command may need a plug-in that has started meanwhile, or add one.
         self.poll_plugins();
         let target = project.or(self.active);
+        if let Some(target) = target
+            && crate::backup::CRITICAL_COMMANDS.contains(&id)
+        {
+            self.back_up_critical(target);
+        }
         let result = self.session_mut(project)?.execute(id, params);
         self.poll_plugins();
         if let Ok(value) = &result {
             crate::library::record_use(&mut self.files, id, params, value);
         }
-        // A project saved under a new name is shown by it.
+        // A project saved under a new name is shown by it; its backups need no offering.
         if id == "project.save"
             && let Ok(saved) = &result
             && saved.get("copy") == Some(&Value::Bool(false))
-            && let Some(open) = self.open.iter_mut().find(|o| Some(o.id) == target)
-            && let Some(stem) = open.session.source().and_then(|s| s.file_stem())
+            && let Some(target) = target
         {
-            open.name = stem.to_string_lossy().into_owned();
+            if let Some(open) = self.open.iter_mut().find(|o| o.id == target)
+                && let Some(stem) = open.session.source().and_then(|s| s.file_stem())
+            {
+                open.name = stem.to_string_lossy().into_owned();
+            }
+            self.backups_after_save(target);
         }
         result
     }
@@ -442,6 +491,7 @@ fn projects_commands() -> impl Iterator<Item = &'static CommandSpec<Projects>> {
         .chain(crate::library_commands())
         .chain(crate::sound_map_commands())
         .chain(crate::audio_commands())
+        .chain(crate::backup::backup_commands())
 }
 
 /// `docs/commands.md`: every command in the order of [`all_commands`], as `suhina-cli commands

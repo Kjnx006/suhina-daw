@@ -100,6 +100,7 @@ fn project() -> Project {
                     extensions: Extensions::default(),
                 }],
             }],
+            markers: Vec::new(),
         },
         ..Project::default()
     }
@@ -176,9 +177,10 @@ fn a_render_from_an_open_project_uses_the_running_plug_ins_state() {
     assert!((render(&heard) - EDITOR_GAIN).abs() < 1e-4, "{}", render(&heard));
     assert!((render(session.project()) - DEFAULT_GAIN).abs() < 1e-4);
 
-    // Reading the plug-in's state is not an edit: nothing to undo, nothing unsaved, and the open
-    // project is as it was.
+    // Reading the plug-in's state is not an edit of the project: nothing to undo, and the open
+    // project is as it was. The change made in the editor is unsaved all the same (issue #362).
     assert!(!session.can_undo());
-    assert!(!session.has_unsaved_changes());
     assert_eq!(session.project(), &opened);
+    session.check_plugin_edits();
+    assert!(session.has_unsaved_changes());
 }

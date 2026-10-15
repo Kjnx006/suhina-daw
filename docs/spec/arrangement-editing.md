@@ -1,6 +1,6 @@
 ---
-description: How arrangement clips behave when moved (along a lane, to another track, over other clips), how audio clips fade in and out, and where playback starts and stops (the play start marker)
-read_when: start marker, clip offset, loop start, moving clips, clip.move, overlapping clips, clip stacking, trimming, splitting, allow sample stacking, allow MIDI stacking, fades, fade-in, fade-out, clip.setFades, fade handles, fade shape, fade curve, curve handle, inShape, outShape, inCurve, outCurve, linear, equal_power, fast, slow, s_curve, FadeShape, FadeCurve, play position, play start marker, ruler click, transport.setPosition, stop returns, playhead
+description: How arrangement clips behave when moved (along a lane, to another track, over other clips), how audio clips fade in and out, where playback starts and stops (the play start marker), and named markers on the timeline
+read_when: start marker, clip offset, loop start, moving clips, clip.move, overlapping clips, clip stacking, trimming, splitting, allow sample stacking, allow MIDI stacking, fades, fade-in, fade-out, clip.setFades, fade handles, fade shape, fade curve, curve handle, inShape, outShape, inCurve, outCurve, linear, equal_power, fast, slow, s_curve, FadeShape, FadeCurve, play position, play start marker, ruler click, transport.setPosition, stop returns, playhead, markers, locators, marker row, marker.add, marker.move, marker.rename, marker.delete, marker.jump, project.markers
 type: spec
 status: draft
 last_verified: 2026-10-15
@@ -11,12 +11,14 @@ covers:
   - crates/model/src/lib.rs
   - crates/engine/src/audio.rs
   - crates/engine/src/launcher.rs
+  - crates/engine/src/loop_tests.rs
   - apps/suhina-cli/src/play.rs
   - crates/ui/src/menus.rs
   - crates/ui/src/drop.rs
   - crates/session/src/files.rs
   - crates/project-file/src/lib.rs
   - crates/ui/src/settings.rs
+  - crates/ui/src/keymap.rs
 ---
 
 # Arrangement editing
@@ -55,7 +57,20 @@ in the [automation spec](automation.md#in-the-arrangement-view).
 it covers unless stacked. The pasted clip plays its own copy of the content, so editing one does
 not change the other. The window's keys paste after the selected clip, or at the playhead on the
 selected track ([shortcuts](../shortcuts.md)), and stack when the stacking setting for the
-clip's kind is on, like a moved clip.
+clip's kind is on, like a moved clip. A clip's right-click menu has Copy.
+
+The clipboard is shared with the clip slots ([clip launching](clip-launching.md) › Clips between
+the arrangement and the slots): `clip.copy {track, scene}` copies a slot's clip, which pastes
+onto the arrangement like any other, and `clip.paste {track, scene}` puts the copied
+arrangement clip into a slot. Pasting with `start` and `scene` together, or neither, is an error;
+`start` is at most 120000 beats.
+
+**Dragging into a slot, and back.** A clip dragged in the Arrangement view and held over
+**Session** in the control bar for half a second switches the view; let go over a slot and the
+clip is copied into it, the arrangement left as it was. A slot's clip dragged and held over
+**Arrangement** lands on the lane under the pointer, at the beat on the grid, as a copy that
+replaces what it covers unless stacked. Both are `clip.copy` then `clip.paste`
+([Session view](ui-session-view.md) › Between the views).
 
 ## Fades
 
@@ -167,6 +182,11 @@ setting, and a second Stop goes to the beginning.
 
 `launcher.state` reports `start_beat` (the marker) next to `beat` and `position` (the playhead).
 
+**A new audio output.** When the output is opened again (`audio.setOutput`, a device that
+reported an error, the chosen device back), the marker stays where it was and, while playing,
+playback goes on from the playhead: the engine jumps there without moving the marker
+(`LaunchCommand::Locate`), so a later Stop still returns to the marker.
+
 **Starting inside the arrangement.** From the marker's frame on, the arrangement plays exactly as
 it would at that frame of a render from the beginning, with two exceptions: a note that started
 before the marker is not played (notes are not picked up mid-way), and a time-stretched audio clip
@@ -210,12 +230,88 @@ start from.
 the track's arrangement clip `i` (0 first, as `project.clips` lists them). Agents pass `return` themselves; without it,
 Stop returns to the marker.
 
+## Markers
+
+A **marker** is a named position on the arrangement's timeline (other DAWs call it a locator or
+a cue): a beat from 0 on and a name. Playback jumps to it. A project keeps its markers in beat
+order; two can share a beat, and the one added later comes after. A marker is named by its index
+in that order, as `project.markers` lists it, so moving one can change its index (the command
+returns the new one).
+
+| Command | Does |
+|---|---|
+| `project.markers` | Lists the markers: `index`, `beat`, `name`. `project.info` counts them. |
+| `marker.add {beat, name?}` | Adds a marker at `beat` (0 … 120 000). Without a name it is "Marker n", n the first number from the marker count up that no marker uses. Returns its index. |
+| `marker.move {index, beat}` | Moves a marker to `beat`; it goes after any marker already there. Returns its new index. |
+| `marker.rename {index, name}` | Renames it; the name is trimmed and may not be empty. |
+| `marker.delete {index}` | Deletes it. |
+| `marker.jump {index}` | A transport command, not an edit: runs as `transport.setPosition` at the marker's beat. Stopped, the play start marker moves there; playing, playback jumps there at once. Needs the audio engine, as every transport command does. |
+
+The four edits are one undo step each; a bad index, beat or name is an error and changes nothing.
+The project file keeps markers in `arrangement.markers` ([format](suhina-format.md)); a Live Set's
+locators import as markers ([.als format](als-format.md) › Locators).
+
+**In the Arrangement view** markers sit in a row of their own under the ruler: a line at the
+marker's beat with its name in a tag beside it, cut short where the next marker starts. A click on
+a marker runs `marker.jump`. Dragging it moves it (`marker.move` when let go) on the same grid a
+ruler click uses (Alt held: free). A right-click on a marker opens its menu: a field with its name
+and **Rename** (or Enter), **Jump to marker**, **Delete marker**. A right-click on the ruler or on
+an empty part of the marker row offers **Add marker here**, on that grid. The key **M** (the action
+`marker.addAtPlayhead`, in the keymap) adds a marker where the playhead is while playing, and at the
+play start marker while stopped.
+
+## Loop region
+
+The **loop region** is a span of the arrangement's timeline, a start and an end in beats, that
+playback repeats while **looping** is on. The project keeps the region while looping is off, so
+turning it on again repeats the same span. It is separate from a clip's own loop
+([Start marker and loop](#start-marker-and-loop)), which repeats inside one clip.
+
+**Playing.** While looping is on and the playhead reaches the loop end, playback goes on from the
+loop start on the very next frame: the frame after the loop end's last one is the loop start's
+first, whatever the audio block size. The wrap is a jump while playing ([Play
+position](#play-position)): notes that sound are released, notes that start at the loop start or
+later play again, and audio clips play on from where they are at the loop start, sample for
+sample. The play start marker does not move, so Stop goes back to it as usual. A playhead that is
+already at or past the loop end (the play start marker set there, or a jump there) plays on
+without wrapping; one before the loop start plays into the region and then repeats it. A loop
+region shorter than one sample frame does not repeat.
+
+Offline, the same path loops (`render_launches`, the oracle for playback). A render of the whole
+arrangement (`suhina-cli render`, the MCP render tools) plays it once from start to end and does
+not repeat the region.
+
+**Commands.**
+
+| Command | Does |
+|---|---|
+| `transport.setLoop {start, end, enabled?}` | Sets the region: `start` from 0, `end` after it, at most 120 000. Without `enabled` looping stays as it was; `enabled: true` or `false` turns it on or off as well. Returns `{start, end, enabled}`. |
+| `transport.setLoopEnabled {enabled?}` | Turns looping on or off; without `enabled` it toggles. Turned on when the project has no region, it first makes one over the first 4 bars (in the project's time signature). |
+
+Both are edits, one undo step each; a bad value is an error and changes nothing. `project.info`
+reports `loop` (`{start, end, enabled}`, or null without a region). The project file keeps it
+under `transport.loop` ([format](suhina-format.md)); a Live Set's arrangement loop imports
+([.als format](als-format.md#arrangement-loop)).
+
+**In the Arrangement view** the loop brace sits in a row of its own between the ruler and the
+marker row: a bar from the loop start to the loop end, bright while looping is on and dim while
+it is off. Dragging along an empty part of the row draws a new region on the grid a ruler click
+uses (Alt held: free) and turns looping on. Dragging within 4 px of an end of the brace moves that
+end; dragging its middle moves the whole region, keeping its length. A click on the brace, the key
+**Ctrl+L** (`transport.setLoopEnabled`, in the keymap) and a right-click on the row (**Turn loop
+on** or **Turn loop off**) turn looping on or off.
+
+**Limits.** A time-stretched audio clip in the region is silent for a moment after each wrap in
+real-time playback, until the stretch worker has caught up with the loop start, as after any jump
+while playing; offline it plays without a gap.
+
 ## Tracks
 
 | Command | Does |
 |---|---|
-| `track.group {tracks, name?}` | A new group track takes the place of the first track; the tracks (with what is inside them) follow it, play into it, and it plays where they played. They must all be in the same group, or in none. |
+| `track.group {tracks, name?}` | A new group track takes the place of the first track; the tracks (with what is inside them) follow it, play into it, and it plays where they played. They must all be in the same group, or in none. Grouping tracks already in a group nests the new group inside it. |
 | `track.ungroup {track}` | The group goes; its tracks stay where they were and play where the group played. |
+| `track.setGroup {track, group, index?}` | Moves a track, a group with everything inside it, into the group track `group` (an id or a name), or out of every group with `"none"`, and its channel plays into that group (the main output for `"none"`). It lands at `index` among the tracks directly in that group (or at the top level), from 0; at the end without `index`, or with one past the end. Refused for a return track, a target that is not a group, a group into itself or a group inside it, and a move that would nest deeper than the cap. |
 | `track.move {track, to}` | Moves a track, a group with everything inside it, to position `to` in the track order. |
 | `track.rename`, `track.setColor`, `track.delete` | Name (not empty), colour (`#rrggbb` or `none`), and deleting a track with its clips and slots; deleting a group ungroups it. |
 | `track.add {kind?, name?, after?, device?, preset?, voice?}` | A new audio or MIDI track with its channel, slots and lane, after `after` or after the last regular track ([browser](browser.md) › Commands). |
@@ -226,8 +322,27 @@ not per kind) ([browser](browser.md) › Files).
 
 In the Arrangement view a header click selects a track (Ctrl adds), Ctrl+G groups the selection,
 dragging a header moves the track above the lane under the pointer (below it from its lower half),
-and a right-click opens the track's menu: name, colour, group, ungroup, delete. The Session view's
-column headers have the same menu.
+and a right-click opens the track's menu: name, colour, group, ungroup, **Move into group** (a
+submenu of every other group it can go into), **Move out of group** (one level up, right after the
+group it leaves), delete. The Session view's column headers have the same menu.
+
+### Groups inside groups
+
+Groups nest: a group track can hold tracks and other groups, at most 16 levels deep
+(`MAX_GROUP_DEPTH` in the model, which also refuses a group that is inside itself). A track's
+sound goes through its own channel, its group's, that group's group's and so on to the main
+output; each group's volume, mute and devices apply on the way ([ADR 0004](../decisions/0004-built-in-devices.md)
+› 10), and solo follows the nesting: a soloed track is heard through every group above it, a
+soloed group plays everything inside it at any depth.
+
+A header shows its nesting by stepping in 8 px per level. A group's colour square is its fold
+arrow: pointing down while the group is open, right while it is folded, when the lanes of every
+track inside it are hidden (the Session view hides their columns; both views fold the same
+groups, and folding is part of the view, not an edit, so it does not undo). A dragged header
+joins the group of the lane it is let go over: above that lane, or below it from its lower half,
+and below the header of an open group is into that group, first. Within the same group the drop
+is a `track.move`; into another group, or out to the top level, it is a `track.setGroup`. After a
+folded group is after everything inside it.
 
 While the piano roll is pulled to the top with **Edited track** (Settings › General › Piano roll),
 the view shows only its ruler and the edited track's lane, lit, with no return tracks and no main
@@ -266,5 +381,6 @@ overlaps shows one row.
 - Placing clips by recording follows the same rules (clips from the browser, duplicating and
   pasting already do).
 - Moving several selected clips at once.
+- Moving (rather than copying) a clip between a slot and the arrangement.
 - Whether a stacked lane should grow taller automatically.
-- Dragging along the ruler to scrub, and a loop brace.
+- Dragging along the ruler to scrub.

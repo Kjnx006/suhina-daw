@@ -323,6 +323,125 @@ fn render_a_block(renderer: &mut suhina_engine::Renderer) {
     renderer.process(&mut [0.0f32; 2 * 64]);
 }
 
+/// Markers under the ruler: M adds one at the play start marker, a right-click on the marker row
+/// adds one there on the grid, a click on a marker jumps to it, its menu deletes it.
+#[test]
+fn markers_are_added_jumped_to_and_deleted_from_the_marker_row() {
+    let mut renderer =
+        suhina_engine::Renderer::stopped(&demo_project(), &suhina_engine::AudioPool::new(), 48_000).unwrap();
+    let mut harness = arrangement_app_with_engine(&mut renderer);
+    let monitor = renderer.monitor();
+    let markers = |h: &Harness<'static, App>| -> Vec<(f64, String)> {
+        h.state()
+            .session()
+            .map_or(Vec::new(), |s| s.project().arrangement.markers.iter().map(|m| (m.beat, m.name.clone())).collect())
+    };
+    // The play start marker to bar 5 (beat 16), then M adds a marker there.
+    let ruler = harness.get_by_label("Ruler").rect();
+    let at = egui::pos2(ruler.left() + 130.0, ruler.center().y);
+    harness.hover_at(at);
+    harness.run();
+    harness.drag_at(at);
+    harness.drop_at(at);
+    harness.run();
+    render_a_block(&mut renderer);
+    harness.key_press(Key::M);
+    harness.run();
+    assert_eq!(markers(&harness), [(16.0, "Marker 1".to_string())]);
+
+    // A right-click in the middle of the row offers a marker on the bar there (8 points a beat).
+    let row = harness.get_by_label("Markers").rect();
+    let bar = ((f64::from(row.center().x - row.left()) / 8.0) / 4.0).round() * 4.0;
+    assert!(bar > 16.0, "{bar}");
+    harness.get_by_label("Markers").click_secondary();
+    harness.run();
+    harness.get_by_label("Add marker here").click();
+    harness.run();
+    assert_eq!(markers(&harness), [(16.0, "Marker 1".to_string()), (bar, "Marker 2".to_string())]);
+
+    // A click on a marker moves the play start marker there.
+    harness.get_by_label("Marker Marker 2").click();
+    harness.run();
+    render_a_block(&mut renderer);
+    assert_eq!(monitor.start_beat(), bar);
+
+    // Its menu deletes it, and undo brings it back.
+    harness.get_by_label("Marker Marker 1").click_secondary();
+    harness.run();
+    harness.get_by_label("Delete marker").click();
+    harness.run();
+    assert_eq!(markers(&harness), [(bar, "Marker 2".to_string())]);
+    harness.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    harness.run();
+    assert_eq!(markers(&harness).len(), 2);
+
+    // Dragged two bars to the right (64 points), it lands on the bar grid there.
+    let from = harness.get_by_label("Marker Marker 1").rect().left_center() + egui::vec2(4.0, 0.0);
+    harness.hover_at(from);
+    harness.run();
+    harness.drag_at(from);
+    harness.run();
+    harness.hover_at(from + egui::vec2(30.0, 0.0));
+    harness.run();
+    harness.hover_at(from + egui::vec2(64.0, 0.0));
+    harness.run();
+    harness.drop_at(from + egui::vec2(64.0, 0.0));
+    harness.run();
+    assert_eq!(markers(&harness)[0], (24.0, "Marker 1".to_string()));
+}
+
+/// The loop brace row under the ruler: a drag draws a region on the bar grid and turns looping
+/// on, Ctrl+L and a click on the brace turn it off and on, its end and its middle are dragged,
+/// and undo takes an edit back (`docs/spec/arrangement-editing.md` › Loop region).
+#[test]
+fn a_loop_region_is_drawn_resized_moved_and_toggled_in_the_loop_brace_row() {
+    let mut renderer =
+        suhina_engine::Renderer::stopped(&demo_project(), &suhina_engine::AudioPool::new(), 48_000).unwrap();
+    let mut harness = arrangement_app_with_engine(&mut renderer);
+    let looped = |h: &Harness<'static, App>| {
+        let transport = h.state().session().map(|s| s.project().transport.clone()).unwrap_or_default();
+        (transport.loop_range.map(|r| (r.start, r.end)), transport.loop_enabled)
+    };
+    let drag = |h: &mut Harness<'static, App>, from: egui::Pos2, by: f32| {
+        h.hover_at(from);
+        h.run();
+        h.drag_at(from);
+        h.run();
+        h.hover_at(from + egui::vec2(by / 2.0, 0.0));
+        h.run();
+        h.hover_at(from + egui::vec2(by, 0.0));
+        h.run();
+        h.drop_at(from + egui::vec2(by, 0.0));
+        h.run();
+    };
+    // 8 points a beat: from beat 4 to beat 12, a little off the bars, lands on them.
+    let row = harness.get_by_label("Loop brace").rect();
+    let at_beat = |beat: f32| egui::pos2(row.left() + beat * 8.0, row.center().y);
+    drag(&mut harness, at_beat(4.0) + egui::vec2(3.0, 0.0), 8.0 * 8.0 - 5.0);
+    assert_eq!(looped(&harness), (Some((4.0, 12.0)), true));
+
+    // Ctrl+L turns it off, a click on the brace on again.
+    harness.key_press_modifiers(Modifiers::COMMAND, Key::L);
+    harness.run();
+    assert_eq!(looped(&harness), (Some((4.0, 12.0)), false));
+    harness.hover_at(at_beat(8.0));
+    harness.run();
+    harness.drag_at(at_beat(8.0));
+    harness.drop_at(at_beat(8.0));
+    harness.run();
+    assert_eq!(looped(&harness), (Some((4.0, 12.0)), true));
+
+    // The end dragged two bars right, then the whole brace one bar right.
+    drag(&mut harness, at_beat(12.0), 64.0);
+    assert_eq!(looped(&harness), (Some((4.0, 20.0)), true));
+    drag(&mut harness, at_beat(10.0), 32.0);
+    assert_eq!(looped(&harness), (Some((8.0, 24.0)), true));
+
+    harness.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    harness.run();
+    assert_eq!(looped(&harness), (Some((4.0, 20.0)), true));
+}
+
 #[test]
 fn a_click_on_the_ruler_moves_the_play_start_marker_on_the_grid() {
     let mut renderer =
@@ -840,6 +959,32 @@ fn project_with_a_group() -> suhina_engine::model::Project {
 }
 
 #[test]
+fn a_folded_group_hides_its_columns_in_the_session_view() {
+    // Drums (track 1) inside the group.
+    let mut project = project_with_a_group();
+    project.tracks[0].parent = Some(suhina_engine::model::TrackId(20));
+    let group = project.tracks.pop().unwrap();
+    project.tracks.insert(0, group);
+    let view =
+        SessionHarness { grid: Grid::build(&project, None), state: SessionViewState::default(), actions: vec![] };
+    let mut harness = Harness::builder().with_size(SIZE).build_ui_state(
+        |ui, v: &mut SessionHarness| session_view::show(ui, &v.grid, &[], &mut v.state, &mut v.actions),
+        view,
+    );
+    theme::install(&harness.ctx);
+    harness.run();
+    assert!(harness.query_by_label("Track Drums").is_some());
+    harness.get_by_label("Fold Group").click();
+    harness.run();
+    assert!(harness.query_by_label("Track Drums").is_none());
+    assert!(harness.query_by_label("Track Bass").is_some());
+    harness.get_by_label("Unfold Group").click();
+    harness.run();
+    assert!(harness.query_by_label("Track Drums").is_some());
+    assert!(harness.state().actions.is_empty());
+}
+
+#[test]
 fn a_tall_header_routes_its_track_into_a_group() {
     struct Arrangement {
         timeline: Timeline,
@@ -922,6 +1067,82 @@ fn dragging_a_header_moves_the_track() {
     harness.drop_at(to);
     harness.run();
     assert_eq!(names(&harness)[..4], ["Vox", "Drums", "Bass", "Keys"]);
+}
+
+fn parent_name(h: &Harness<'static, App>, name: &str) -> Option<String> {
+    let session = h.state().session()?;
+    let p = session.project();
+    let parent = p.tracks.iter().find(|t| t.name == name)?.parent?;
+    p.tracks.iter().find(|t| t.id == parent).map(|t| t.name.clone())
+}
+
+#[test]
+fn groups_nest_fold_and_take_tracks_from_the_menu_and_by_dragging() {
+    let mut harness = arrangement_app();
+    // Drums into a group, and that group into another.
+    harness.get_by_label("Track Drums").click();
+    harness.run();
+    harness.key_press_modifiers(Modifiers::COMMAND, Key::G);
+    harness.run();
+    harness.get_by_label("Track Group").click();
+    harness.run();
+    harness.key_press_modifiers(Modifiers::COMMAND, Key::G);
+    harness.run();
+    assert_eq!(names(&harness)[..3], ["Group", "Group", "Drums"]);
+    assert_eq!(parent_name(&harness, "Drums").as_deref(), Some("Group"));
+
+    // Keys into the outer group from its menu.
+    harness.get_by_label("Track Keys").click_secondary();
+    harness.run();
+    harness.get_by_label_contains("Move into group").click();
+    harness.run();
+    harness.get_all_by_label("Group").next().unwrap().click();
+    harness.run();
+    assert!(parent_name(&harness, "Keys").is_some());
+
+    // Folding the outer group hides everything inside it; unfolding shows it again.
+    assert_eq!(harness.query_all_by_label("Fold Group").count(), 2);
+    harness.get_all_by_label("Fold Group").next().unwrap().click();
+    harness.run();
+    assert!(harness.query_by_label("Track Drums").is_none());
+    assert!(harness.query_by_label("Track Keys").is_none());
+    assert_eq!(harness.query_all_by_label("Track Group").count(), 1);
+    harness.get_by_label("Unfold Group").click();
+    harness.run();
+    assert!(harness.query_by_label("Track Drums").is_some());
+
+    // Keys out of its group again, from its menu.
+    harness.get_by_label("Track Keys").click_secondary();
+    harness.run();
+    harness.get_by_label("Move out of group").click();
+    harness.run();
+    assert_eq!(parent_name(&harness, "Keys"), None);
+    assert_eq!(harness.state().session().map(|s| s.project().validate()), Some(Ok(())));
+}
+
+#[test]
+fn dragging_a_header_below_a_group_header_puts_the_track_in_the_group() {
+    let mut harness = arrangement_app();
+    harness.get_by_label("Track Drums").click();
+    harness.run();
+    harness.key_press_modifiers(Modifiers::COMMAND, Key::G);
+    harness.run();
+    let from = harness.get_by_label("Track Vox").rect().center();
+    let group = harness.get_by_label("Track Group").rect();
+    // The lower half of the group's header.
+    let to = egui::pos2(from.x, group.bottom() - 6.0);
+    harness.hover_at(from);
+    harness.run();
+    harness.drag_at(from);
+    harness.run();
+    harness.hover_at(from - egui::vec2(0.0, 40.0));
+    harness.run();
+    harness.hover_at(to);
+    harness.run();
+    harness.drop_at(to);
+    harness.run();
+    assert_eq!(names(&harness)[..3], ["Group", "Vox", "Drums"]);
+    assert_eq!(parent_name(&harness, "Vox").as_deref(), Some("Group"));
 }
 
 /// The demo project with an audio track, "Loop", whose clip plays `loop.wav` (two seconds of a
@@ -2000,6 +2221,111 @@ fn a_send_knob_sets_the_send_level_and_its_menu_the_mode() {
     assert!(undone.is_some_and(|(db, pre)| (db - before).abs() < 1e-9 && !pre), "{undone:?}");
 }
 
+/// A project saved in `dir` as `Song.suhina`, then changed and backed up by a run that never
+/// ends normally (a crash), its backups and journal in `dir/settings`. Returns the project file
+/// and the backup.
+#[allow(clippy::unwrap_used)] // a test helper outside #[test] functions
+fn crashed_run(dir: &std::path::Path) -> (std::path::PathBuf, std::path::PathBuf) {
+    let file = dir.join("Song.suhina");
+    Session::new(demo_project()).save(&file, false).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    let mut projects = suhina_session::Projects::new();
+    projects.set_backup_folder(Some(dir.join("settings")));
+    projects.add(Session::open(&file).unwrap().0, None).unwrap();
+    projects.execute("transport.setTempo", &json!({ "bpm": 97 })).unwrap();
+    let written = projects.execute("project.autosave", &json!({ "now": true })).unwrap();
+    (file, std::path::PathBuf::from(written["written"].as_str().unwrap()))
+}
+
+#[test]
+fn a_backup_a_crash_left_is_offered_on_start_and_opens_tied_to_its_file() {
+    let dir = std::env::temp_dir().join(format!("suhina-ui-recovery-{}", std::process::id()));
+    let _fresh = std::fs::remove_dir_all(&dir);
+    let (file, backup) = crashed_run(&dir);
+
+    let mut app = App::new();
+    app.set_browser_open(false);
+    app.projects_mut().set_backup_folder(Some(dir.join("settings")));
+    app.offer_recovery();
+    let mut harness = window(app);
+    assert!(harness.query_by_label("Open the backup").is_some());
+    // Show the folder hands the backup to the app and keeps asking.
+    harness.get_by_label("Show the backup's folder").click();
+    harness.run();
+    assert_eq!(harness.state_mut().take_reveal_request(), Some(backup.clone()));
+    assert!(harness.query_by_label("Open the backup").is_some());
+    harness.get_by_label("Open the backup").click();
+    harness.run();
+    assert!(harness.query_by_label("Open the backup").is_none());
+    let offer = harness.state_mut().take_recovery_request().expect("the backup to open");
+    assert_eq!((offer.backup.clone(), offer.file.clone()), (backup.clone(), Some(file.clone())));
+    // What the app does with it.
+    let (session, _) = Session::recover(&offer.backup, offer.file.as_deref()).unwrap();
+    harness.state_mut().open_project(session, &[], OpenAs::NewTab);
+    harness.run();
+    let session = harness.state().session().unwrap();
+    assert!(session.has_unsaved_changes());
+    assert_eq!((session.source(), session.project().transport.tempo_bpm), (Some(file.as_path()), 97.0));
+
+    // Offered once: the next start finds nothing.
+    assert!(harness.state_mut().finish_backups());
+    let mut next = App::new();
+    next.projects_mut().set_backup_folder(Some(dir.join("settings")));
+    next.offer_recovery();
+    let harness = window(next);
+    assert!(harness.query_by_label("Open the backup").is_none());
+    let _clean = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn ignoring_an_offered_backup_leaves_it_and_asks_no_more() {
+    let dir = std::env::temp_dir().join(format!("suhina-ui-recovery-ignore-{}", std::process::id()));
+    let _fresh = std::fs::remove_dir_all(&dir);
+    let (_file, backup) = crashed_run(&dir);
+    let mut app = App::new();
+    app.projects_mut().set_backup_folder(Some(dir.join("settings")));
+    app.offer_recovery();
+    let mut harness = window(app);
+    harness.get_by_label("Ignore the backup").click();
+    harness.run();
+    assert!(harness.query_by_label("Open the backup").is_none());
+    assert!(harness.state_mut().take_recovery_request().is_none());
+    assert!(harness.state().projects().is_empty());
+    assert!(harness.state_mut().finish_backups());
+    assert!(backup.is_file(), "the backup stays in its folder");
+    let mut next = App::new();
+    next.projects_mut().set_backup_folder(Some(dir.join("settings")));
+    next.offer_recovery();
+    assert!(window(next).query_by_label("Open the backup").is_none());
+    let _clean = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_critical_command_from_the_window_is_backed_up_first() {
+    let dir = std::env::temp_dir().join(format!("suhina-ui-critical-{}", std::process::id()));
+    let _fresh = std::fs::remove_dir_all(&dir);
+    let file = dir.join("Song.suhina");
+    Session::new(demo_project()).save(&file, false).unwrap();
+    let mut app = App::new();
+    app.projects_mut().set_backup_folder(Some(dir.join("settings")));
+    app.projects_mut().set_backup_settings(suhina_session::backup::Interval::Critical, true);
+    app.set_session(Session::open(&file).unwrap().0, &[]);
+    app.run(&Action::new("transport.setTempo", json!({ "bpm": 101 })));
+    assert!(!dir.join(".backup").exists(), "an ordinary edit is not critical");
+    let track = app.session().unwrap().project().tracks.first().unwrap().id.0;
+    app.run(&Action::new("track.delete", json!({ "track": track })));
+    let tracks = app.session().unwrap().project().tracks.len();
+    // The backup thread finishes, and quitting is critical too: a second backup has the delete.
+    assert!(app.finish_backups());
+    let mut kept: Vec<usize> = std::fs::read_dir(dir.join(".backup"))
+        .unwrap()
+        .map(|e| Session::open(&e.unwrap().path()).unwrap().0.project().tracks.len())
+        .collect();
+    kept.sort();
+    assert_eq!(kept, [tracks, tracks + 1]);
+    let _clean = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn help_about_shows_the_version_and_copies_it() {
     let mut harness = window(demo_app());
@@ -2019,4 +2345,190 @@ fn help_about_shows_the_version_and_copies_it() {
     harness.key_press(Key::Escape);
     harness.run();
     assert!(harness.query_by_label_contains(version).is_none());
+}
+
+#[test]
+fn a_slots_menu_copies_its_clip_and_pastes_once_something_is_copied() {
+    let mut harness = view();
+    harness.get_by_label("Launch Walk on Bass (scene 2)").click_secondary();
+    harness.run();
+    assert_eq!(harness.state().state.selected_slot, Some((suhina_engine::model::TrackId(2), 1)));
+    harness.state_mut().actions.clear();
+    harness.get_by_label_contains("Copy").click();
+    harness.run();
+    assert_eq!(harness.state().actions, [Action::new("clip.copy", json!({ "track": 2, "scene": 2 }))]);
+
+    // Nothing copied: Paste is there but does nothing.
+    harness.get_by_label("Stop Keys (scene 1)").click_secondary();
+    harness.run();
+    harness.state_mut().actions.clear();
+    harness.get_by_label_contains("Paste").click();
+    harness.run();
+    assert!(harness.state().actions.is_empty());
+    harness.key_press(Key::Escape);
+    harness.run();
+
+    harness.state_mut().state.can_paste = true;
+    harness.run();
+    harness.get_by_label("Stop Keys (scene 1)").click_secondary();
+    harness.run();
+    harness.state_mut().actions.clear();
+    harness.get_by_label_contains("Paste").click();
+    harness.run();
+    assert_eq!(harness.state().actions, [Action::new("clip.paste", json!({ "track": 3, "scene": 1 }))]);
+}
+
+#[test]
+fn clicking_a_slot_selects_it_and_still_launches_or_stops() {
+    let mut harness = view();
+    assert_eq!(
+        clicked(&mut harness, "Stop Keys (scene 1)"),
+        [Action::new("clip.launch", json!({ "track": 3, "scene": 1 }))]
+    );
+    assert_eq!(harness.state().state.selected_slot, Some((suhina_engine::model::TrackId(3), 0)));
+    clicked(&mut harness, "Launch Walk on Bass (scene 2)");
+    assert_eq!(harness.state().state.selected_slot, Some((suhina_engine::model::TrackId(2), 1)));
+}
+
+/// What Drums' slot in `scene` (from 0) holds: its clip's content name.
+fn drums_slot(harness: &Harness<'static, App>, scene: usize) -> Option<String> {
+    let session = harness.state().session()?;
+    let p = session.project();
+    let clip = p.launcher.columns[0].slots[scene].clip.as_ref()?;
+    p.content(clip.content).map(|c| c.name.clone())
+}
+
+#[test]
+fn an_arrangement_clip_copied_with_ctrl_c_pastes_into_the_selected_slot() {
+    let mut harness = arrangement_app();
+    harness.get_by_label("Clip Fill on Drums at bar 29").click();
+    harness.run();
+    harness.key_press_modifiers(Modifiers::COMMAND, Key::C);
+    harness.run();
+    harness.key_press(Key::Tab);
+    harness.run();
+    assert_eq!(harness.state().view(), View::Session);
+    // Ctrl+V with no slot picked says what to do.
+    harness.key_press_modifiers(Modifiers::COMMAND, Key::V);
+    harness.run();
+    assert!(matches!(harness.state().status(), Status::Hint(_)));
+    harness.get_by_label("Stop Drums (scene 5)").click();
+    harness.run();
+    harness.key_press_modifiers(Modifiers::COMMAND, Key::V);
+    harness.run();
+    assert_eq!(drums_slot(&harness, 4).as_deref(), Some("Fill"));
+    let arranged = harness.state().session().map_or(0, |s| s.project().arrangement.lanes[0].clips.len());
+    assert_eq!(arranged, 4, "the arrangement keeps its clips");
+    // One undo step empties the slot again.
+    harness.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    harness.run();
+    assert_eq!(drums_slot(&harness, 4), None);
+
+    // A slot's clip copies with Ctrl+C and pastes into another slot.
+    harness.get_by_label("Launch Fill on Drums (scene 4)").click();
+    harness.run();
+    harness.key_press_modifiers(Modifiers::COMMAND, Key::C);
+    harness.run();
+    harness.get_by_label("Stop Drums (scene 5)").click();
+    harness.run();
+    harness.key_press_modifiers(Modifiers::COMMAND, Key::V);
+    harness.run();
+    assert_eq!(drums_slot(&harness, 4).as_deref(), Some("Fill"));
+}
+
+/// Holds the pointer still for a second, a frame at a time, so a hover that waits fires.
+fn wait_over(harness: &mut Harness<'static, App>, at: egui::Pos2) {
+    for _ in 0..4 {
+        harness.hover_at(at);
+        harness.step();
+    }
+}
+
+#[test]
+fn an_arrangement_clip_dragged_over_the_session_switch_drops_into_a_slot() {
+    let mut harness = arrangement_app();
+    let from = harness.get_by_label("Clip Fill on Drums at bar 29").rect().center();
+    let switch = harness.get_by_label("Session view").rect().center();
+    harness.hover_at(from);
+    harness.step();
+    harness.drag_at(from);
+    harness.step();
+    harness.hover_at(from + egui::vec2(10.0, 0.0));
+    harness.step();
+    wait_over(&mut harness, switch);
+    assert_eq!(harness.state().view(), View::Session);
+    let slot = harness.get_by_label("Stop Drums (scene 5)").rect().center();
+    harness.hover_at(slot);
+    harness.step();
+    harness.drop_at(slot);
+    harness.run();
+    assert_eq!(drums_slot(&harness, 4).as_deref(), Some("Fill"));
+    let starts: Vec<f64> = harness
+        .state()
+        .session()
+        .map(|s| s.project().arrangement.lanes[0].clips.iter().map(|c| c.start).collect())
+        .unwrap_or_default();
+    assert_eq!(starts, [0.0, 64.0, 112.0, 128.0], "the arrangement clip stays where it was");
+}
+
+#[test]
+fn a_slot_clip_dragged_over_the_arrangement_switch_drops_on_a_lane() {
+    let mut harness = window(demo_app());
+    let from = harness.get_by_label("Launch Walk on Bass (scene 2)").rect().center();
+    let switch = harness.get_by_label("Arrangement view").rect().center();
+    harness.hover_at(from);
+    harness.step();
+    harness.drag_at(from);
+    harness.step();
+    harness.hover_at(from + egui::vec2(0.0, 12.0));
+    harness.step();
+    wait_over(&mut harness, switch);
+    assert_eq!(harness.state().view(), View::Arrangement);
+    // Bars 1 to 8 of Bass are empty; Root starts at bar 9, 8 points a beat.
+    let root = harness.get_by_label("Clip Root on Bass at bar 9").rect();
+    let to = egui::pos2(root.left() - 16.0 * 8.0, root.center().y);
+    harness.hover_at(to);
+    harness.step();
+    harness.drop_at(to);
+    harness.run();
+    let bass: Vec<(f64, f64)> = harness
+        .state()
+        .session()
+        .map(|s| s.project().arrangement.lanes[1].clips.iter().map(|c| (c.start, c.length)).collect())
+        .unwrap_or_default();
+    assert!(bass.contains(&(16.0, 4.0)), "{bass:?}");
+    assert!(matches!(harness.state().status(), Status::Done(text) if text.contains("Copied Walk to Bass")));
+}
+
+#[test]
+fn escape_or_a_drop_on_nothing_leaves_the_project_alone() {
+    let project = |h: &Harness<'static, App>| h.state().session().map(|s| s.project().clone());
+    let mut harness = window(demo_app());
+    let before = project(&harness);
+    let from = harness.get_by_label("Launch Walk on Bass (scene 2)").rect().center();
+    harness.hover_at(from);
+    harness.step();
+    harness.drag_at(from);
+    harness.step();
+    harness.hover_at(from + egui::vec2(0.0, 12.0));
+    harness.step();
+    harness.key_press(Key::Escape);
+    harness.run();
+    harness.drop_at(from + egui::vec2(0.0, 12.0));
+    harness.run();
+    assert_eq!(project(&harness), before);
+    // Dropped back on its own slot, or on a track header: nothing either.
+    for to in [from, harness.get_by_label("Track Keys").rect().center()] {
+        harness.hover_at(from);
+        harness.step();
+        harness.drag_at(from);
+        harness.step();
+        harness.hover_at(from + egui::vec2(0.0, 12.0));
+        harness.step();
+        harness.hover_at(to);
+        harness.step();
+        harness.drop_at(to);
+        harness.run();
+        assert_eq!(project(&harness), before);
+    }
 }

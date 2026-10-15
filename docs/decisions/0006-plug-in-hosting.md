@@ -8,6 +8,7 @@ covers:
   - crates/ipc/**
   - crates/plugins/**
   - crates/plugin-host/**
+  - crates/realtime/**
   - crates/engine/src/plugin.rs
   - crates/session/src/rack.rs
   - crates/output/src/lib.rs
@@ -150,10 +151,29 @@ workspace forbids.
    *crashed* or *hung*; the engine kills the process and offers a restart. Offline renders wait
    without a deadline (with a long timeout), so they run as fast as the plug-in allows; a block
    left unanswered there says whether the process died (the plug-in crashed) or is still stuck.
-   *Built:* the host's audio threads and the desktop app's render thread join MMCSS "Pro Audio"
-   on Windows (`audio_thread_priority`; `thread-priority`'s highest, `THREAD_PRIORITY_HIGHEST`,
-   only where MMCSS refuses) and take the highest priority the system gives them elsewhere (on
-   Linux the normal priority until real-time rights are set up). The deadline is 60 % of a block's
+   *Built:* the host's audio threads and the desktop app's render thread take their priority
+   from `suhina-realtime`, which says what each system gives. **Windows:** MMCSS "Pro Audio"
+   (`audio_thread_priority`, MPL-2.0), which also bounds a thread's share of a core;
+   `THREAD_PRIORITY_HIGHEST` only where MMCSS refuses. **Linux:** `SCHED_FIFO` at priority 10
+   set directly where the user has real-time rights (`rtprio`, the `audio` group); otherwise
+   rtkit over the system D-Bus (`zbus`, pure Rust, so nothing to install or ship), which grants
+   `SCHED_RR` at 10 or its ceiling when lower, after `RLIMIT_RTTIME` is set within rtkit's
+   maximum as it requires; otherwise the highest normal priority, and otherwise the normal one.
+   Priority 10 keeps the sound server's own threads (PipeWire, JACK) above the ones feeding
+   them. The D-Bus exchange runs on a helper thread with a 2 s limit, so a system bus that never
+   answers costs no more. rtkit's grant comes with a limit the kernel enforces: a real-time
+   thread that runs `RLIMIT_RTTIME` (200 ms by default) without waiting ends its process. The
+   render thread tells `RealTime` when it waits and how long each block took: it rests 50 µs
+   after an eighth of the limit without waiting (a device that drains faster than it plays, a
+   project too heavy to render in time), and leaves real-time scheduling for good when one
+   block alone takes a quarter of it, so an overloaded project drops out instead of ending
+   Suhina. The hosts' audio threads wait for every block, so only a plug-in stuck in one block
+   that long hits the limit, and the host process ending is then a crash the engine already
+   reports and restarts. **macOS:** the highest priority (the audio workgroup is to come).
+   Nothing fails over it: when real-time scheduling is refused the first stream in a process
+   adds a notice (the app shows it, `suhina-cli play` prints it), and the hosts' threads, which
+   ask the same system, play on silently. `SUHINA_NO_REALTIME=1` turns it off, to compare.
+   The deadline is 60 % of a block's
    playing time for all of a block's plug-ins together, one after another, so it depends on
    the block: the audio output renders the engine in blocks of its own ahead of the device into a
    ring, rather than in the device's buffers, after a driver that gave 3 ms buffers left 25
@@ -188,7 +208,8 @@ workspace forbids.
 5. **State survives crashes.** The host pulls each plug-in's state on save and periodically;
    the saved project keeps it in `Device::state` (a VST3 controller's in an extension), and the
    open project keeps what it was opened with, so reading it is neither a change nor an undo
-   step. A restart loads the last state and keeps the latency
+   step (a state that changed in the editor since the last save still makes the project
+   unsaved, [ADR 0010](0010-project-files.md) decision 7). A restart loads the last state and keeps the latency
    the chain was compensated for. `project.save` asks every running plug-in for its state as it
    is then, each on a thread of its own, waits at most a second for the answers (the last state
    read stands in for one that has not answered) and writes that, with the last state of
@@ -435,7 +456,9 @@ workspace forbids.
   names it. Every 30 s the session reads each running plug-in's state, so a restart after a
   crash gets back what was set in its editor (decision 5); saving the project
   (`project.save`) reads each one's state then and writes it into the project, so a reopened
-  project, or a plug-in started again from scratch, gets the same settings. Crashes and hangs are noticed within 250 ms and shown on the
+  project, or a plug-in started again from scratch, gets the same settings. Those reads also
+  tell when a setting was changed in the editor since the project was saved, which makes the
+  project unsaved without an undo step ([ADR 0010](0010-project-files.md), decision 7). Crashes and hangs are noticed within 250 ms and shown on the
   device; `device.restart` starts it again (one that could not start at all is started from
   scratch with the project's state).
 - **Latency** is compensated: every track is heard as late as the one whose devices (built-in

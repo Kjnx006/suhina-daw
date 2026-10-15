@@ -64,13 +64,17 @@ suhina-cli mcp --read-root ./projects --write-root ./renders [--audio]
   exclusive mode is possible, plus the output `chosen`. `audio.setOutput {host?, device?,
   sample_rate?, buffer_frames?, exclusive?}` changes the parts given (an empty text or 0 goes back
   to the default; a new host forgets the device) and reopens the active project's output there,
-  the transport where it was (while playing, the play start marker moves to the playhead) and the
+  the transport where it was (the play start marker stays; while playing, playback goes on from
+  the playhead with the launched clips playing on and the launches still waiting, at the launch
+  quantisation and scene tempo there were) and the
   plug-ins running on when the sample rate stays the same; a device that is not there plays the
-  default output and the result's `notice` says so. The engine renders in blocks of
+  default output and the result's `notice` says so. The choice is kept: while the default plays
+  in its place, Suhina looks every few seconds whether the chosen device is back and moves the
+  output there, the same way. The engine renders in blocks of
   `buffer_frames` (64 to 4096), which sets the plug-ins' deadline. `audio.info` says what plays
   now: `host`, `device`, `sample_rate`, `buffer_frames` (the device's, measured),
-  `engine_block`, `exclusive`, `latency_ms` (engine to speaker, measured), `underruns` and
-  `failed`. Without `--audio`, `audio.devices` returns an error.
+  `engine_block`, `exclusive`, `latency_ms` (engine to speaker, measured), `underruns`,
+  `failed` and `fallback` (it plays in place of a chosen host or device that is not there). Without `--audio`, `audio.devices` returns an error.
 
 - **Play position.** `transport.setPosition {beats}` moves the play start marker, where
   `transport.play` starts (a jump while playing). `transport.play {from: "clip", track, index}`
@@ -83,14 +87,23 @@ suhina-cli mcp --read-root ./projects --write-root ./renders [--audio]
 - **Saving.** `project.save { path?, copy? }` (through `command_run`) writes the project as a
   Suhina project (`.suhina`, [spec](spec/suhina-format.md)) with its plug-ins' state as it is now;
   without a path, to the project file it came from (a `.locr` from before October 2026 stays `.locr`); `copy: true` writes a copy (a template) and the
-  project keeps its own file. `project.info` reports `unsaved_changes`. `project_open` opens
+  project keeps its own file. `project.info` reports `unsaved_changes`, which a change made only in
+  a plug-in's editor sets too, within about a minute (two state reads that agree). `project_open` opens
   `.suhina` (and older `.locr`) files as well as Live Sets.
+- **Backups.** `project.autosave { now?, interval?, clean_up? }` reports where the active
+  project's backups go, its last one and whether one is due ([spec](spec/backups.md));
+  `now: true` writes one into `.backup` beside the project's file, which must be below the write
+  root. Agents cannot choose `interval: "critical"`, which would write there unasked; the server
+  writes no timed backups.
 
 - **Clips.** `project.clips` lists each arrangement clip with its start, length and fades
   (lengths, shapes and curves); `clip.move`, `clip.duplicate`, `clip.delete`, `clip.copy`,
   `clip.cut`, `clip.paste`, `clip.setGain` and `clip.setFades` (fade-in and fade-out in beats,
   `inShape`/`outShape` and `inCurve`/`outCurve`) edit them through
-  `command_run` ([arrangement editing](spec/arrangement-editing.md)).
+  `command_run` ([arrangement editing](spec/arrangement-editing.md)). `clip.copy {track, scene}`
+  copies a clip slot's clip and `clip.paste {track, scene}` puts the copied clip into a slot, so a
+  clip goes from the arrangement into a slot and back
+  ([clip launching](spec/clip-launching.md) › Clips between the arrangement and the slots).
 
 - **Slot loops.** `clip.setLoop {track, scene, loop}` switches the loop of the clip in a slot: on,
   it repeats its whole length; off, it plays once. A file placed in a slot with `clip.addFiles`

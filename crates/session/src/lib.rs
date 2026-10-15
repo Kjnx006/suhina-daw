@@ -4,6 +4,7 @@
 
 pub mod audio;
 mod automation;
+pub mod backup;
 mod blank;
 mod commands;
 mod devices;
@@ -12,6 +13,7 @@ mod follow;
 mod library;
 mod meters;
 mod notes;
+mod plugin_edits;
 mod plugins;
 mod preview;
 mod projects;
@@ -78,6 +80,8 @@ pub struct Player {
     controller: Controller,
     keep_alive: Option<Box<dyn std::any::Any + Send>>,
     output: Option<std::sync::Arc<dyn LiveOutput>>,
+    /// The launch quantisation last sent, which a new output is given again.
+    quantization: Option<suhina_engine::Quantization>,
 }
 
 /// `controller`, with the follow actions' random numbers seeded from the clock, so each
@@ -91,7 +95,7 @@ fn seeded(mut controller: Controller) -> Controller {
 
 impl Player {
     pub fn new(controller: Controller, keep_alive: Option<Box<dyn std::any::Any + Send>>) -> Self {
-        Self { controller: seeded(controller), keep_alive, output: None }
+        Self { controller: seeded(controller), keep_alive, output: None, quantization: None }
     }
 
     /// A player whose output reports what it runs with (`audio.info`).
@@ -100,7 +104,7 @@ impl Player {
         keep_alive: Option<Box<dyn std::any::Any + Send>>,
         output: std::sync::Arc<dyn LiveOutput>,
     ) -> Self {
-        Self { controller: seeded(controller), keep_alive, output: Some(output) }
+        Self { controller: seeded(controller), keep_alive, output: Some(output), quantization: None }
     }
 
     /// What the output runs with now, when it says.
@@ -115,7 +119,16 @@ impl Player {
     }
 
     pub fn send(&mut self, command: suhina_engine::LaunchCommand) -> Result<(), CommandError> {
-        self.controller.send(command).map_err(CommandError)
+        self.controller.send(command).map_err(CommandError)?;
+        if let suhina_engine::LaunchCommand::SetQuantization(q) = command {
+            self.quantization = Some(q);
+        }
+        Ok(())
+    }
+
+    /// The launch quantisation last sent to this player, if any.
+    pub fn quantization(&self) -> Option<suhina_engine::Quantization> {
+        self.quantization
     }
 
     pub fn monitor(&self) -> &LauncherMonitor {
@@ -234,6 +247,8 @@ pub struct Session {
     /// Set when a continued edit could not reach the playing engine; [`Session::catch_up_player`]
     /// sends the project again.
     player_behind: bool,
+    /// When the project was last backed up and where (`backup.rs`).
+    pub(crate) backup: backup::SessionBackups,
 }
 
 /// Files kept decoded ahead of the commands that use them.
@@ -259,6 +274,7 @@ impl Session {
             decoded: Vec::new(),
             open_step: None,
             player_behind: false,
+            backup: backup::SessionBackups::default(),
         }
     }
 
@@ -513,14 +529,44 @@ impl Session {
         Ok((session, warnings))
     }
 
+    /// Opens a backup (`docs/spec/backups.md` › The offer on start) as an unsaved project tied
+    /// to `file`, the project file it is a backup of: saving writes `file`, and the backup is
+    /// left as it is. Without `file` (a project never saved) it opens untitled.
+    pub fn recover(backup: &Path, file: Option<&Path>) -> Result<(Self, Vec<String>), CommandError> {
+        if !suhina_project_file::is_project_file(backup) {
+            return Err(format!("{} is not a Suhina project", backup.display()).into());
+        }
+        let (mut session, warnings) = Self::open(backup)?;
+        session.source = file.map(Path::to_path_buf);
+        // The changes since the project file was saved are in the backup only.
+        session.changes = 1;
+        // ...and the backup holds them, so it is not written again until something changes.
+        session.backup.backed_at = 1;
+        Ok((session, warnings))
+    }
+
+    /// The newest backup of the project written in this run.
+    pub fn last_backup(&self) -> Option<&backup::Backup> {
+        self.backup.last.as_ref()
+    }
+
     /// The folder the project's relative audio paths start from, as the audio is loaded.
     pub fn audio_folder(&self) -> Option<&Path> {
         self.audio_folder.as_deref()
     }
 
-    /// Whether the project changed since it was opened or last saved.
+    /// Whether the project changed since it was opened or last saved, by a command or in a
+    /// plug-in's editor (noticed as its state is read now and then; see
+    /// [`Session::check_plugin_edits`]).
     pub fn has_unsaved_changes(&self) -> bool {
-        self.changes != self.saved_at
+        self.changes != self.saved_at || self.plugins.edited()
+    }
+
+    /// Reads the running plug-ins' states now, so a change made in a plug-in's editor since
+    /// the last read shows in [`Session::has_unsaved_changes`]: before asking whether to save
+    /// on close or quit. Waits at most a second or two for plug-ins that do not answer.
+    pub fn check_plugin_edits(&mut self) {
+        self.plugins.check_edits();
     }
 
     /// Saves the project as a Suhina project at `path` (`.suhina` is added when it has neither
@@ -539,19 +585,33 @@ impl Session {
             name.push(suhina_project_file::EXTENSION);
             path.set_file_name(name);
         }
-        let mut project = self.project_as_heard();
-        let from = match &self.audio_folder {
-            Some(folder) => folder.clone(),
-            None => std::env::current_dir().unwrap_or_default(),
-        };
         let to = path.parent().map_or_else(PathBuf::new, Path::to_path_buf);
-        suhina_project_file::rebase_audio(&mut project, &from, &to);
+        let (mut project, states) = self.heard();
+        suhina_project_file::rebase_audio(&mut project, &self.audio_from(), &to);
         suhina_project_file::write_file(&path, &project).map_err(|e| CommandError(e.0))?;
         if !copy {
             self.source = Some(path.clone());
             self.saved_at = self.changes;
+            self.plugins.saved(&states);
         }
         Ok(path)
+    }
+
+    /// The project as it would be saved into `folder`: with the running plug-ins' state as it
+    /// is now ([`Session::project_as_heard`]) and audio paths relative to `folder`.
+    pub(crate) fn snapshot(&mut self, folder: &Path) -> Project {
+        let mut project = self.project_as_heard();
+        suhina_project_file::rebase_audio(&mut project, &self.audio_from(), folder);
+        project
+    }
+
+    /// The folder the project's relative audio paths start from: its audio folder, or the
+    /// current one.
+    fn audio_from(&self) -> PathBuf {
+        match &self.audio_folder {
+            Some(folder) => folder.clone(),
+            None => std::env::current_dir().unwrap_or_default(),
+        }
     }
 
     pub fn project(&self) -> &Project {
@@ -566,6 +626,11 @@ impl Session {
     /// keeps the state it was last given. The open project is not changed: reading a plug-in's
     /// state is neither a change nor an undo step.
     pub fn project_as_heard(&mut self) -> Project {
+        self.heard().0
+    }
+
+    /// [`Session::project_as_heard`], with the plug-in states it holds by device key.
+    fn heard(&mut self) -> (Project, std::collections::HashMap<u64, suhina_plugins::SavedState>) {
         let mut project = self.project.clone();
         let states = self.plugins.current_states();
         for device in suhina_engine::plugin_devices(&project) {
@@ -587,7 +652,7 @@ impl Session {
                 }
             }
         }
-        project
+        (project, states)
     }
 
     pub fn source(&self) -> Option<&Path> {
@@ -753,5 +818,44 @@ fn unknown_command(id: &str) -> CommandError {
         CommandError(format!("unknown command {id}; commands.list shows them all"))
     } else {
         CommandError(format!("unknown command {id}; did you mean one of: {}", similar.join(", ")))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+    use suhina_plugins::SavedState;
+
+    use super::*;
+
+    /// Two reads of plug-in device `key` that agree, as the rack makes them now and then.
+    fn read_twice(session: &mut Session, key: u64, byte: u8) {
+        for _ in 0..2 {
+            session.plugins.edits.read(key, &SavedState::from(vec![byte]));
+        }
+    }
+
+    #[test]
+    fn a_change_in_a_plug_ins_editor_is_unsaved_until_the_project_is_saved() {
+        let dir = std::env::temp_dir().join(format!("suhina-plugin-edits-{}", std::process::id()));
+        let mut session = Session::new(blank_project());
+        read_twice(&mut session, 7, 1);
+        assert!(!session.has_unsaved_changes(), "the state a plug-in runs with is not a change");
+
+        read_twice(&mut session, 7, 2);
+        assert!(session.has_unsaved_changes());
+        assert_eq!(session.execute("project.info", &json!({})).unwrap()["unsaved_changes"], true);
+        assert!(!session.can_undo(), "an editor tweak is not an undo step");
+
+        // A copy (a template, a backup) is not the project saved.
+        let path = dir.join("song.suhina").display().to_string();
+        session
+            .execute("project.save", &json!({ "path": dir.join("copy").display().to_string(), "copy": true }))
+            .unwrap();
+        assert!(session.has_unsaved_changes());
+
+        session.execute("project.save", &json!({ "path": path })).unwrap();
+        assert!(!session.has_unsaved_changes());
+        let _clean = std::fs::remove_dir_all(&dir);
     }
 }

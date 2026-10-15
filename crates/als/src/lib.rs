@@ -2,7 +2,7 @@
 //!
 //! The format is described in `docs/spec/als-format.md`, which was written from Live Sets we
 //! authored ourselves. This reader covers what that spec covers: tempo, tracks, mixer, sends,
-//! scenes, MIDI and audio clips, plug-ins, and Live's devices that have a Suhina counterpart
+//! scenes, locators, MIDI and audio clips, plug-ins, and Live's devices that have a Suhina counterpart
 //! (see `devices.rs`). Anything else is skipped or kept as a placeholder and reported in
 //! [`Import::warnings`], so a project still opens with everything else intact.
 
@@ -17,8 +17,8 @@ use roxmltree::Node;
 use suhina_model::{
     Arrangement, ArrangementLane, AudioRegion, Channel, ChannelId, ChannelRole, Clip, ClipContent, ContentId,
     ContentKinds, ContentLane, Device, DeviceKind, Extension, Extensions, LaneData, Launcher, LauncherColumn,
-    LoopRange, Note, Project, Scene, Send, Slot, StretchMode, TimeSignature, Track, TrackId, Transport,
-    ValidationError, WarpMarker,
+    LoopRange, MAX_GROUP_DEPTH, Marker, Note, Project, Scene, Send, Slot, StretchMode, TimeSignature, Track, TrackId,
+    Transport, ValidationError, WarpMarker,
 };
 
 /// Upper bound for the decompressed XML, so a malicious file cannot exhaust memory.
@@ -197,19 +197,52 @@ impl Reader {
             }
         }
 
-        Project {
+        let mut project = Project {
             transport,
             tracks,
             channels,
             contents: std::mem::take(&mut self.contents),
-            arrangement: Arrangement { lanes },
+            arrangement: Arrangement { lanes, markers: self.markers(live_set) },
             launcher: Launcher { scenes, columns },
             extensions: Extensions::default(),
+        };
+        self.untangle_groups(&mut project);
+        project
+    }
+
+    /// Takes out of its group a track whose groups lead back to it, or that sits deeper than
+    /// Suhina nests groups ([`MAX_GROUP_DEPTH`]), so the set still opens: the track moves to the
+    /// top level and plays to the main output instead of into that group.
+    fn untangle_groups(&mut self, project: &mut Project) {
+        for _ in 0..project.tracks.len() {
+            let tangled = project
+                .tracks
+                .iter()
+                .find(|t| project.group_depth(t.id).is_none_or(|depth| depth > MAX_GROUP_DEPTH))
+                .map(|t| (t.id, t.name.clone(), t.channel, t.parent));
+            let Some((id, name, channel, parent)) = tangled else { return };
+            let deep = project.group_depth(id).is_some();
+            let group_channel = parent.and_then(|p| project.tracks.iter().find(|t| t.id == p)).and_then(|t| t.channel);
+            if let Some(track) = project.tracks.iter_mut().find(|t| t.id == id) {
+                track.parent = None;
+            }
+            if let Some(c) = project.channels.iter_mut().find(|c| Some(c.id) == channel)
+                && c.output.is_some()
+                && c.output == group_channel
+            {
+                c.output = None;
+            }
+            self.warn(if deep {
+                format!("track {name}: groups nest more than {MAX_GROUP_DEPTH} deep; moved out of its group")
+            } else {
+                format!("track {name}: its groups contain each other; moved out of its group")
+            });
         }
     }
 
     fn transport(&mut self, live_set: Node) -> Transport {
         let mut transport = Transport::default();
+        self.loop_region(live_set, &mut transport);
         let main = child(live_set, "MainTrack").or_else(|| child(live_set, "MasterTrack"));
         let Some((main, mixer)) = main.and_then(|m| path(m, &["DeviceChain", "Mixer"]).map(|mixer| (m, mixer))) else {
             self.warn("no main track found; using 120 bpm in 4/4");
@@ -227,6 +260,26 @@ impl Reader {
             },
         }
         transport
+    }
+
+    /// The arrangement's loop region and whether it is on (`docs/spec/als-format.md` ›
+    /// Arrangement loop). A region that is missing a value or does not end after it starts is
+    /// left out with a warning.
+    fn loop_region(&mut self, live_set: Node, transport: &mut Transport) {
+        let Some(node) = child(live_set, "Transport") else { return };
+        let start = number(node, &["LoopStart"]);
+        let length = number(node, &["LoopLength"]);
+        if start.is_none() && length.is_none() {
+            return;
+        }
+        let range = start.zip(length).map(|(start, length)| LoopRange { start, end: start + length });
+        match range.filter(LoopRange::is_valid_region) {
+            Some(range) => {
+                transport.loop_range = Some(range);
+                transport.loop_enabled = boolean(node, &["LoopOn"]).unwrap_or(false);
+            }
+            None => self.warn("skipped the arrangement loop: its start or length is missing or not usable"),
+        }
     }
 
     fn main_channel(&mut self, live_set: Node, id: ChannelId) -> Channel {
@@ -446,6 +499,23 @@ impl Reader {
                 time_signature: None,
             })
             .collect()
+    }
+
+    /// The set's locators as markers, in beat order (`docs/spec/als-format.md` › Locators). One
+    /// without a usable time is left out with a warning.
+    fn markers(&mut self, live_set: Node) -> Vec<Marker> {
+        let Some(locators) = path(live_set, &["Locators", "Locators"]) else { return Vec::new() };
+        let mut arrangement = Arrangement::default();
+        for locator in locators.children().filter(|n| n.has_tag_name("Locator")) {
+            let name = value(locator, &["Name"]).unwrap_or_default();
+            match number(locator, &["Time"]).filter(|beat| *beat >= 0.0) {
+                Some(beat) => {
+                    arrangement.insert_marker(Marker::new(beat, name));
+                }
+                None => self.warn(format!("skipped the locator {name:?}: its time is missing or before the start")),
+            }
+        }
+        arrangement.markers
     }
 
     fn arrangement_clips(&mut self, entry: &TrackEntry) -> Vec<Clip> {

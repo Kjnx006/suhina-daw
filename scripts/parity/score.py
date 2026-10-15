@@ -30,7 +30,7 @@ SECTIONS = {"total": 344, "zero": 111, "coverage": 0.168}
 # pull request cannot read the count of a command it just added from it.
 MANUAL_CHAPTERS = 43  # chapters 1 to 43, the same chapters CHAPTERS lists
 MANUAL_PDF_PAGES = 1039
-COMMANDS = 133
+COMMANDS = 143
 
 # num, chapter title, pages of the manual body, coverage 0..1 (None = not a feature chapter),
 # status, note. "coverage" is the share of what the chapter documents that Suhina has today.
@@ -38,7 +38,8 @@ CHAPTERS = [
     (1, "Welcome to Live", 1, None, "n/a", "Front matter."),
     (2, "First Steps (installation, Learn/Info view, Settings)", 11, 0.52, "partial",
      "Release and nightly packages for Windows, macOS and Linux; Help > About names the build "
-     "(version, nightly date and commit, platform). Settings pages: General, Interface, Graphics, Audio (driver/device/rate/buffer/exclusive), "
+     "(version, nightly date and commit, platform). Settings pages: General, Interface, Graphics, Audio (driver/device/rate/buffer/exclusive; "
+     "a change or a device back after unplugging keeps playback and launched clips going), "
      "Shortcuts, Plug-ins. Missing Link, Tempo & MIDI, File & Folder, Library, Record/Warp/Launch, "
      "Learn view, Info view."),
     (3, "Live Concepts", 27, 0.50, "partial",
@@ -52,20 +53,26 @@ CHAPTERS = [
      "from the formats' own categories) or in a flat list sortable by name, vendor, type, format "
      "and date, with pins and tags on them. Missing collections/tag editor depth, packs, Splice, "
      "Cloud, Push transfer, filter groups, browser history."),
-    (5, "Managing Files and Sets", 43, 0.35, "partial",
+    (5, "Managing Files and Sets", 43, 0.38, "partial",
      ".suhina save/open, .als import, templates, several projects in tabs, missing-file locate and "
-     "relink. Missing project folders/collect, unused files, packing, .asd, decoding cache, set "
+     "relink, backups on an interval or before critical operations with the offer after a crash. "
+     "Missing project folders/collect, unused files, packing, .asd, decoding cache, set "
      "merging, file-reference view, export audio/video."),
-    (6, "Arrangement View", 22, 0.35, "partial",
+    (6, "Arrangement View", 22, 0.47, "partial",
      "Layout, zoom, transport, ruler/play start, play from the selected clip, clip drag+move, "
-     "overlap replace/stack, fades and fade shapes, grid snap. A clip's loop range is read and drawn but no command sets it. Missing "
-     "locators, the arrangement loop brace, time-signature changes, split, consolidate, crop, "
-     "crossfades, linked-track editing, the time commands."),
-    (7, "Session View", 13, 0.60, "partial",
-     "Slots, scenes, scene launch, stop buttons, track status, mixer strip, quantised launching; "
+     "overlap replace/stack, fades and fade shapes, grid snap, nested groups folded and unfolded, "
+     "tracks dragged into and out of groups, markers (locators: add, move, rename, delete, jump; imported from Live "
+     "Sets), the arrangement loop brace (draw, resize, move, on/off with Ctrl+L; playback wraps "
+     "sample-accurately; imported from Live Sets). A clip's loop range is read and drawn but no "
+     "command sets it. Missing previous/next marker, punch in/out, time-signature changes, split, "
+     "consolidate, crop, crossfades, linked-track editing, the time commands."),
+    (7, "Session View", 13, 0.62, "partial",
+     "Slots, scenes, scene launch, stop buttons, track status, mixer strip, quantised launching, "
+     "selecting a slot, copying clips between the arrangement and slots (keys, menus, a drag over "
+     "the view switch); "
      "scenes inserted, duplicated, deleted and renamed from a menu, with a tempo and time signature "
      "each. A launched clip is selected and the detail area shows its follow-action controls. "
-     "Missing capture-and-insert scene, select-on-launch options."),
+     "Missing capture-and-insert scene, moving clips between slots, select-on-launch options."),
     (8, "Clip View", 34, 0.15, "started",
      "Detail area shows clip properties and, for a MIDI clip in the Arrangement, a first piano roll "
      "(docs/spec/ui-clip-editor.md): keys, ruler, note grid, velocity lane, zoom and scroll, a toolbar of "
@@ -103,8 +110,9 @@ CHAPTERS = [
     (17, "Routing and I/O", 22, 0.10, "absent",
      "Only track output to main or a group (track.setOutput); track input is a model field read "
      "from .als. No monitoring, external audio/MIDI in-out, resampling, sidechain, multi-timbral."),
-    (18, "Mixing", 18, 0.50, "partial",
-     "Faders, pan, mute, solo (exclusive/Ctrl), groups as buses, master, latency compensation, "
+    (18, "Mixing", 18, 0.52, "partial",
+     "Faders, pan, mute, solo (exclusive/Ctrl), groups as buses nested up to 16 deep (solo and mute "
+     "through the levels), master, latency compensation, "
      "sends pre or post fader into return tracks that run their device chains (track.setSend, "
      "track.setSendMode, return.add/remove/rename, send knobs in the Session mixer), and level "
      "meters (peak, RMS, clip) per track, group, return and main, also over MCP; return tracks "
@@ -127,9 +135,9 @@ CHAPTERS = [
     (24, "Using Plug-Ins", 12, 0.64, "partial",
      "CLAP and VST3 hosted out of process, sandboxed, VST3 bundles on Windows, macOS and Linux, "
      "editors (Windows/X11), scans, latency "
-     "compensation (followed when a plug-in changes its latency while it plays), saved state, "
-     "VST2 read and matched to VST3, parameters set and automated from "
-     "the engine. Missing AU, VST2 hosting, "
+     "compensation (followed when a plug-in changes its latency while it plays), saved state "
+     "(a change in an editor counts as unsaved), VST2 read and matched to VST3, parameters set "
+     "and automated from the engine. Missing AU, VST2 hosting, "
      "configure mode, VST preset banks, sidechain parameters."),
     (25, "Instrument, Drum and Effect Racks", 20, 0.03, "absent",
      "A track's device chain is a single serial chain. No parallel chains, macros, key/velocity/"
@@ -164,9 +172,11 @@ CHAPTERS = [
     (36, "Using Push 2", 59, 0.00, "absent", "No control-surface support."),
     (37, "Synchronizing with Link, Tempo Follower, and MIDI", 9, 0.00, "absent",
      "No Link, no Tempo Follower, no MIDI clock sync."),
-    (38, "Computer Audio Resources and Strategies", 7, 0.35, "partial",
+    (38, "Computer Audio Resources and Strategies", 7, 0.40, "partial",
      "CPU-load meter, the program's RAM in the control bar, buffer-size choice, render-ahead "
-     "engine, plug-in deadline reporting, an 80 s / 58-warped-clip set opens in 0.4 s. Missing track freeze, disk-load meter."),
+     "engine, plug-in deadline reporting, real-time scheduling without setup (MMCSS Pro Audio, "
+     "SCHED_FIFO or rtkit), an 80 s / 58-warped-clip set opens in 0.4 s. Missing track freeze, "
+     "disk-load meter."),
     (39, "Audio Fact Sheet", 8, None, "n/a",
      "Not a feature list. Suhina renders 32-bit float and does not dither; no neutrality test suite."),
     (40, "MIDI Fact Sheet", 6, None, "n/a",

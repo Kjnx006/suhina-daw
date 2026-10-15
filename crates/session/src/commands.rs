@@ -4,8 +4,8 @@
 use serde_json::{Value, json};
 use suhina_engine::{ColumnStatus, LaunchCommand, MAX_START_BEAT, Quantization, Queued};
 use suhina_model::{
-    ArrangementLane, Channel, ChannelId, ChannelRole, Clip, FadeCurve, FadeShape, LaneData, LoopRange, Project, Scene,
-    Slot, TimeSignature, Track, TrackId,
+    ArrangementLane, Channel, ChannelId, ChannelRole, Clip, FadeCurve, FadeShape, LaneData, LoopRange, MAX_GROUP_DEPTH,
+    Marker, Project, Scene, Slot, TimeSignature, Track, TrackId,
 };
 
 use crate::{CommandError, Session, automation, devices, files, follow, meters, notes, preview};
@@ -147,6 +147,7 @@ const CURVE: Param = optional(
     ParamType::Number,
     "shape of the segment to the next point, -1 to 1: 0 a straight line (the default), above 0 fast first, below 0 slow first",
 );
+const MARKER: Param = param("index", ParamType::Integer, "marker index, from 0, as in project.markers");
 
 pub struct CommandSpec<T: 'static = Session> {
     /// Stable id in `area.verb` form; part of the public interface for agents.
@@ -254,7 +255,7 @@ static COMMANDS: &[CommandSpec] = &[
     },
     CommandSpec {
         id: "project.info",
-        label: "Summarise the open project: tempo, time signature, counts of tracks, scenes and clips, undo state",
+        label: "Summarise the open project: tempo, time signature, counts of tracks, scenes, clips and markers, undo state",
         params: &[],
         kind: CommandKind::Read,
         run: info,
@@ -279,6 +280,24 @@ static COMMANDS: &[CommandSpec] = &[
         params: &[param("bpm", ParamType::Number, "beats per minute, 20 to 999")],
         kind: CommandKind::Edit,
         run: set_tempo,
+    },
+    CommandSpec {
+        id: "transport.setLoop",
+        label: "Set the arrangement's loop region, the span playback repeats while looping is on",
+        params: &[
+            param("start", ParamType::Number, "where the loop starts, in beats from the beginning, 0 … 120000"),
+            param("end", ParamType::Number, "where it ends, in beats, after start and at most 120000"),
+            optional("enabled", ParamType::Bool, "true turns looping on, false off (default: as it is)"),
+        ],
+        kind: CommandKind::Edit,
+        run: set_loop,
+    },
+    CommandSpec {
+        id: "transport.setLoopEnabled",
+        label: "Turn looping on or off; on without a loop region first makes one over the first 4 bars",
+        params: &[optional("enabled", ParamType::Bool, "true turns looping on, false off (default: the other way)")],
+        kind: CommandKind::Edit,
+        run: set_loop_enabled,
     },
     CommandSpec {
         id: "track.setVolume",
@@ -314,6 +333,21 @@ static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: group_tracks,
+    },
+    CommandSpec {
+        id: "track.setGroup",
+        label: "Move a track (a group with its tracks) into a group track, or out of every group, and play into it",
+        params: &[
+            TRACK,
+            param("group", ParamType::Track, "a group track (id or name) to move into, or \"none\" for the top level"),
+            optional(
+                "index",
+                ParamType::Integer,
+                "its place among the tracks directly in that group (or at the top level), from 0; the end if left out",
+            ),
+        ],
+        kind: CommandKind::Edit,
+        run: set_group,
     },
     CommandSpec {
         id: "track.ungroup",
@@ -394,8 +428,16 @@ static COMMANDS: &[CommandSpec] = &[
     },
     CommandSpec {
         id: "clip.copy",
-        label: "Copy an arrangement clip, with what it plays, for clip.paste",
-        params: &[TRACK, param("index", ParamType::Integer, "clip index on the track, from project.clips")],
+        label: "Copy a clip, with what it plays, for clip.paste: an arrangement clip by index, or a clip slot's by scene",
+        params: &[
+            TRACK,
+            optional("index", ParamType::Integer, "arrangement clip index on the track, from project.clips"),
+            optional(
+                "scene",
+                ParamType::Integer,
+                "instead of index: the clip in this scene's slot, from 1, as in project.launcher",
+            ),
+        ],
         kind: CommandKind::Read,
         run: copy_clip,
     },
@@ -408,11 +450,20 @@ static COMMANDS: &[CommandSpec] = &[
     },
     CommandSpec {
         id: "clip.paste",
-        label: "Place the copied clip on a track, replacing what it covers unless stacked",
+        label: "Place the copied clip on a track's arrangement at start, replacing what it covers unless stacked, or in its clip slot at scene, replacing the slot's clip",
         params: &[
             TRACK,
-            param("start", ParamType::Number, "where it starts, in beats from the beginning, at least 0"),
-            optional("stack", ParamType::Bool, "true leaves clips under it as they are"),
+            optional(
+                "start",
+                ParamType::Number,
+                "where it starts in the arrangement, in beats from the beginning, at least 0",
+            ),
+            optional(
+                "scene",
+                ParamType::Integer,
+                "instead of start: the scene, from 1, whose slot on the track takes the clip",
+            ),
+            optional("stack", ParamType::Bool, "with start, true leaves clips under it as they are"),
         ],
         kind: CommandKind::Edit,
         run: paste_clip,
@@ -470,6 +521,51 @@ static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: move_clip,
+    },
+    CommandSpec {
+        id: "project.markers",
+        label: "List the arrangement's markers (named positions on the timeline) in beat order, with index, beat and name",
+        params: &[],
+        kind: CommandKind::Read,
+        run: markers,
+    },
+    CommandSpec {
+        id: "marker.add",
+        label: "Add a named marker on the arrangement's timeline",
+        params: &[
+            param("beat", ParamType::Number, "where, in beats from the beginning, 0 … 120000"),
+            optional("name", ParamType::Text, "the marker's name (default \"Marker n\")"),
+        ],
+        kind: CommandKind::Edit,
+        run: add_marker,
+    },
+    CommandSpec {
+        id: "marker.move",
+        label: "Move a marker to another beat; markers stay in beat order, so its index can change",
+        params: &[MARKER, param("beat", ParamType::Number, "the new beat, 0 … 120000")],
+        kind: CommandKind::Edit,
+        run: move_marker,
+    },
+    CommandSpec {
+        id: "marker.rename",
+        label: "Rename a marker",
+        params: &[MARKER, param("name", ParamType::Text, "the new name, not empty")],
+        kind: CommandKind::Edit,
+        run: rename_marker,
+    },
+    CommandSpec {
+        id: "marker.delete",
+        label: "Delete a marker",
+        params: &[MARKER],
+        kind: CommandKind::Edit,
+        run: delete_marker,
+    },
+    CommandSpec {
+        id: "marker.jump",
+        label: "Move the play start marker to a marker; while playing, playback jumps there at once",
+        params: &[MARKER],
+        kind: CommandKind::Transport,
+        run: jump_to_marker,
     },
     CommandSpec {
         id: "project.launcher",
@@ -1270,6 +1366,8 @@ fn info(session: &mut Session, _: &Value) -> Result<Value, CommandError> {
         "scenes": p.launcher.scenes.len(),
         "arrangement_clips": arrangement_clips,
         "launcher_clips": launcher_clips,
+        "markers": p.arrangement.markers.len(),
+        "loop": loop_value(p),
         "can_undo": session.can_undo(),
         "can_redo": session.can_redo(),
     }))
@@ -1357,6 +1455,52 @@ fn set_tempo(session: &mut Session, params: &Value) -> Result<Value, CommandErro
     Ok(json!({ "tempo_bpm": bpm }))
 }
 
+/// The loop region and whether it is on, as `transport.setLoop` and `project.info` report it.
+fn loop_value(p: &Project) -> Value {
+    match p.transport.loop_range {
+        Some(range) => json!({ "start": range.start, "end": range.end, "enabled": p.transport.loop_enabled }),
+        None => Value::Null,
+    }
+}
+
+/// `params.enabled`: true or false, or `None` when left out.
+fn optional_enabled(params: &Value) -> Result<Option<bool>, CommandError> {
+    match params.get("enabled") {
+        None | Some(Value::Null) => Ok(None),
+        Some(v) => v.as_bool().map(Some).ok_or_else(|| "enabled must be true or false".into()),
+    }
+}
+
+fn set_loop(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let (start, end) = (number(params, "start")?, number(params, "end")?);
+    if !(0.0..MAX_START_BEAT).contains(&start) {
+        return Err(format!("start must be from 0 and before {MAX_START_BEAT}, got {start}").into());
+    }
+    if !(end > start && end <= MAX_START_BEAT) {
+        return Err(format!("end must be after start ({start}) and at most {MAX_START_BEAT}, got {end}").into());
+    }
+    let enabled = optional_enabled(params)?;
+    let transport = &mut session.project.transport;
+    transport.loop_range = Some(LoopRange { start, end });
+    if let Some(enabled) = enabled {
+        transport.loop_enabled = enabled;
+    }
+    Ok(loop_value(&session.project))
+}
+
+fn set_loop_enabled(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let transport = &mut session.project.transport;
+    let enabled = optional_enabled(params)?.unwrap_or(!transport.loop_enabled);
+    if enabled && transport.loop_range.is_none() {
+        let signature = transport.time_signature;
+        let bar = f64::from(signature.numerator) * 4.0 / f64::from(signature.denominator.max(1));
+        let end = if bar.is_finite() && bar > 0.0 { (4.0 * bar).min(MAX_START_BEAT) } else { 16.0 };
+        transport.loop_range = Some(LoopRange { start: 0.0, end });
+    }
+    transport.loop_enabled = enabled;
+    Ok(loop_value(&session.project))
+}
+
 fn set_volume(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let db = number_or_neg_infinity(params, "db")?;
     if db > 6.0 {
@@ -1417,24 +1561,6 @@ fn channel_id_of(p: &Project, track: TrackId) -> Option<ChannelId> {
     p.tracks.iter().find(|t| t.id == track).and_then(|t| t.channel)
 }
 
-/// A track and every track inside it (for a group), in project order.
-fn with_descendants(p: &Project, track: TrackId) -> Vec<TrackId> {
-    let mut family = vec![track];
-    // Bounded by the track count, so a parent cycle in a malformed project cannot loop.
-    for _ in 0..p.tracks.len() {
-        let before = family.len();
-        for t in &p.tracks {
-            if t.parent.is_some_and(|parent| family.contains(&parent)) && !family.contains(&t.id) {
-                family.push(t.id);
-            }
-        }
-        if family.len() == before {
-            break;
-        }
-    }
-    p.tracks.iter().map(|t| t.id).filter(|id| family.contains(id)).collect()
-}
-
 pub(crate) fn group_tracks(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let p = &mut session.project;
     let members = track_list(p, params)?;
@@ -1443,6 +1569,11 @@ pub(crate) fn group_tracks(session: &mut Session, params: &Value) -> Result<Valu
     let parent = parents.first().copied().flatten();
     if parents.iter().any(|x| *x != parent) {
         return Err("the tracks to group must all be in the same group, or in none".into());
+    }
+    // The new group adds a level above every track it takes.
+    let deepest = members.iter().map(|&m| p.group_depth(m).unwrap_or(0) + p.nesting_below(m)).max().unwrap_or(0);
+    if deepest + 1 > MAX_GROUP_DEPTH {
+        return Err(format!("groups nest at most {MAX_GROUP_DEPTH} deep; this grouping would go deeper").into());
     }
     let name = match params.get("name") {
         None => "Group".to_string(),
@@ -1466,7 +1597,7 @@ pub(crate) fn group_tracks(session: &mut Session, params: &Value) -> Result<Valu
         automation: Vec::new(),
     });
     // The group takes the place of its first track; its tracks (with theirs) follow it.
-    let family: Vec<TrackId> = members.iter().flat_map(|m| with_descendants(p, *m)).collect();
+    let family: Vec<TrackId> = members.iter().flat_map(|m| p.with_descendants(*m)).collect();
     let first = p.tracks.iter().position(|t| family.contains(&t.id)).unwrap_or(p.tracks.len());
     let moved: Vec<Track> = p.tracks.iter().filter(|t| family.contains(&t.id)).cloned().collect();
     p.tracks.retain(|t| !family.contains(&t.id));
@@ -1510,6 +1641,79 @@ fn ungroup_track(session: &mut Session, params: &Value) -> Result<Value, Command
     Ok(json!({ "ungrouped": group.0 }))
 }
 
+/// Moves a track, with everything inside it, into a group or to the top level: it becomes the
+/// group's track at `index` among the group's own tracks, and its channel plays into the group.
+fn set_group(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p = &mut session.project;
+    let track = track_id(p, params)?;
+    let role_of = |p: &Project, t: TrackId| {
+        channel_id_of(p, t).and_then(|id| p.channels.iter().find(|c| c.id == id)).map(|c| c.role)
+    };
+    if matches!(role_of(p, track), Some(ChannelRole::Effect | ChannelRole::Master)) {
+        return Err("a return track cannot go into a group".into());
+    }
+    let group = match params.get("group") {
+        Some(Value::String(none)) if none.eq_ignore_ascii_case("none") => None,
+        Some(_) => Some(track_at(p, params, "group")?),
+        None => return Err("group must be a group track or \"none\"".into()),
+    };
+    let index = match params.get("index") {
+        None => None,
+        Some(v) => Some(v.as_u64().ok_or("index must be a whole number from 0")?),
+    };
+    let family = p.with_descendants(track);
+    let output = match group {
+        None => None,
+        Some(g) => {
+            let name = p.tracks.iter().find(|t| t.id == g).map(|t| t.name.clone()).unwrap_or_default();
+            if role_of(p, g) != Some(ChannelRole::Submix) {
+                return Err(format!("{name:?} is not a group track").into());
+            }
+            if family.contains(&g) {
+                return Err(format!("{name:?} is inside the track being moved, or is that track").into());
+            }
+            let depth = p.group_depth(g).unwrap_or(0) + 1 + p.nesting_below(track);
+            if depth > MAX_GROUP_DEPTH {
+                return Err(format!(
+                    "groups nest at most {MAX_GROUP_DEPTH} deep; moving into {name:?} would go deeper"
+                )
+                .into());
+            }
+            channel_id_of(p, g)
+        }
+    };
+
+    let block: Vec<Track> = p.tracks.iter().filter(|t| family.contains(&t.id)).cloned().collect();
+    p.tracks.retain(|t| !family.contains(&t.id));
+    // The group's own tracks, top-level returns aside, and where the block goes among them.
+    let is_return = |p: &Project, t: &Track| {
+        t.channel.and_then(|id| p.channels.iter().find(|c| c.id == id)).is_some_and(|c| c.role == ChannelRole::Effect)
+    };
+    let siblings: Vec<TrackId> =
+        p.tracks.iter().filter(|t| t.parent == group && !is_return(p, t)).map(|t| t.id).collect();
+    let index = index.map_or(siblings.len(), |i| usize::try_from(i).unwrap_or(usize::MAX).min(siblings.len()));
+    let position_of = |p: &Project, id: TrackId| p.tracks.iter().position(|t| t.id == id);
+    let at = match (siblings.get(index), index.checked_sub(1).and_then(|i| siblings.get(i)), group) {
+        (Some(&next), _, _) => position_of(p, next),
+        // After the last sibling and everything inside it.
+        (None, Some(&last), _) => p.with_descendants(last).last().and_then(|&t| position_of(p, t)).map(|i| i + 1),
+        (None, None, Some(g)) => position_of(p, g).map(|i| i + 1),
+        (None, None, None) => None,
+    }
+    .unwrap_or(p.tracks.len())
+    .min(p.tracks.len());
+    p.tracks.splice(at..at, block);
+    if let Some(t) = p.tracks.iter_mut().find(|t| t.id == track) {
+        t.parent = group;
+    }
+    if let Some(channel) = channel_id_of(p, track)
+        && let Some(c) = p.channels.iter_mut().find(|c| c.id == channel)
+    {
+        c.output = output;
+    }
+    Ok(json!({ "track": track.0, "group": group.map(|g| g.0), "position": at }))
+}
+
 /// Removes a track, its channel, its lanes and slots, and every reference to them.
 pub(crate) fn remove_track(p: &mut Project, track: TrackId, channel: ChannelId) {
     p.tracks.retain(|t| t.id != track);
@@ -1531,7 +1735,7 @@ fn move_track(session: &mut Session, params: &Value) -> Result<Value, CommandErr
     let p = &mut session.project;
     let track = track_id(p, params)?;
     let to = params.get("to").and_then(Value::as_u64).ok_or("to must be a whole number from 0")?;
-    let family = with_descendants(p, track);
+    let family = p.with_descendants(track);
     let block: Vec<Track> = p.tracks.iter().filter(|t| family.contains(&t.id)).cloned().collect();
     p.tracks.retain(|t| !family.contains(&t.id));
     let at = usize::try_from(to).unwrap_or(usize::MAX).min(p.tracks.len());
@@ -1732,10 +1936,20 @@ fn set_clip_fades(session: &mut Session, params: &Value) -> Result<Value, Comman
 }
 
 fn copy_clip(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
-    let (lane, index) = lane_and_index(&session.project, params)?;
-    let clip = session.project.arrangement.lanes.get(lane).and_then(|l| l.clips.get(index)).cloned();
-    let clip = clip.ok_or("the clip is missing")?;
-    let content = session.project.content(clip.content).cloned().ok_or("the clip's content is missing")?;
+    let p = &session.project;
+    let clip = match (params.get("index"), params.get("scene")) {
+        (Some(_), None) => {
+            let (lane, index) = lane_and_index(p, params)?;
+            p.arrangement.lanes.get(lane).and_then(|l| l.clips.get(index)).cloned().ok_or("the clip is missing")?
+        }
+        (None, Some(_)) => {
+            let (column, scene) = (column_index(p, params)?, scene_index(p, params)?);
+            let slot = p.launcher.columns.get(column).and_then(|c| c.slots.get(scene));
+            slot.and_then(|s| s.clip.clone()).ok_or_else(|| format!("the slot in scene {} is empty", scene + 1))?
+        }
+        _ => return Err("give either index (an arrangement clip) or scene (a clip slot)".into()),
+    };
+    let content = p.content(clip.content).cloned().ok_or("the clip's content is missing")?;
     let name = content.name.clone();
     session.clipboard = Some((clip, content));
     Ok(json!({ "copied": name }))
@@ -1746,12 +1960,30 @@ fn cut_clip(session: &mut Session, params: &Value) -> Result<Value, CommandError
     delete_clip(session, params)
 }
 
+/// Where `clip.paste` puts the copy: an arrangement beat, or a clip slot (scene from 0).
+enum PasteAt {
+    Beat(f64),
+    Slot(usize),
+}
+
 fn paste_clip(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let (clip, content) = session.clipboard.clone().ok_or("nothing has been copied")?;
-    let start = number(params, "start")?;
-    if start < 0.0 {
-        return Err(format!("start must be at least 0, got {start}").into());
-    }
+    let at = match (params.get("start"), params.get("scene")) {
+        (Some(_), None) => {
+            let start = number(params, "start")?;
+            if !(0.0..=MAX_START_BEAT).contains(&start) {
+                return Err(format!("start must be from 0 to {MAX_START_BEAT}, got {start}").into());
+            }
+            PasteAt::Beat(start)
+        }
+        (None, Some(_)) => {
+            if params.get("stack").is_some() {
+                return Err("stack is for the arrangement (start); a slot holds one clip".into());
+            }
+            PasteAt::Slot(scene_index(&session.project, params)?)
+        }
+        _ => return Err("give either start (a beat in the arrangement) or scene (a clip slot)".into()),
+    };
     let stack = match params.get("stack") {
         None => false,
         Some(v) => v.as_bool().ok_or("stack must be true or false")?,
@@ -1765,10 +1997,29 @@ fn paste_clip(session: &mut Session, params: &Value) -> Result<Value, CommandErr
         let what = if audio { "an audio clip" } else { "a MIDI clip" };
         return Err(format!("track {:?} cannot hold {what}", target.name).into());
     }
+    let column = match at {
+        PasteAt::Slot(_) => Some(column_index(p, params)?),
+        PasteAt::Beat(_) => None,
+    };
     // The copy plays its own content, so editing one does not change the other.
-    let id = suhina_model::ContentId(p.contents.iter().map(|c| c.id.0).max().unwrap_or(0) + 1);
+    let id = p.contents.iter().map(|c| c.id.0).max().unwrap_or(0).checked_add(1).ok_or("too many clips")?;
+    let id = suhina_model::ContentId(id);
     p.contents.push(suhina_model::ClipContent { id, ..content });
-    let placed = Clip { content: id, start, ..clip };
+    let start = match at {
+        PasteAt::Beat(start) => start,
+        PasteAt::Slot(_) => 0.0,
+    };
+    // Gain, warp and the loop travel with the content and the clip; fades are fitted, as when
+    // a clip is shortened, so a clip with odd fades still makes a valid project.
+    let mut placed = Clip { content: id, start, ..clip };
+    placed.fit_fades();
+    if let (PasteAt::Slot(scene), Some(column)) = (at, column) {
+        let slot =
+            p.launcher.columns.get_mut(column).and_then(|c| c.slots.get_mut(scene)).ok_or("the slot is missing")?;
+        let replaced = slot.clip.is_some();
+        slot.clip = Some(placed);
+        return Ok(json!({ "track": track.0, "scene": scene + 1, "replaced": replaced }));
+    }
     let lane = match p.arrangement.lanes.iter().position(|l| l.track == Some(track)) {
         Some(lane) => lane,
         None => {
@@ -1990,6 +2241,99 @@ fn content_at(clip: &Clip, beats: f64) -> f64 {
         Some(r) if r.end > r.start && at >= r.end => r.start + (at - r.start).rem_euclid(r.end - r.start),
         _ => at,
     }
+}
+
+fn markers(session: &mut Session, _: &Value) -> Result<Value, CommandError> {
+    let markers = &session.project().arrangement.markers;
+    Ok(Value::Array(
+        markers
+            .iter()
+            .enumerate()
+            .map(|(index, m)| json!({ "index": index, "beat": m.beat, "name": m.name }))
+            .collect(),
+    ))
+}
+
+/// `params.beat`, checked to be a beat a marker can be at.
+fn marker_beat(params: &Value) -> Result<f64, CommandError> {
+    let beat = number(params, "beat")?;
+    if !(0.0..=MAX_START_BEAT).contains(&beat) {
+        return Err(format!("beat must be between 0 and {MAX_START_BEAT}, got {beat}").into());
+    }
+    Ok(beat)
+}
+
+/// `params.index`, checked to name a marker.
+fn marker_index(p: &Project, params: &Value) -> Result<usize, CommandError> {
+    let index =
+        params.get("index").and_then(Value::as_u64).ok_or("index must be a whole number from project.markers")?;
+    let count = p.arrangement.markers.len();
+    usize::try_from(index)
+        .ok()
+        .filter(|i| *i < count)
+        .ok_or_else(|| format!("marker {index} does not exist; the arrangement has {count} markers").into())
+}
+
+fn add_marker(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let beat = marker_beat(params)?;
+    let markers = &mut session.project.arrangement;
+    let name = match params.get("name") {
+        None | Some(Value::Null) => {
+            // The first "Marker n" not in use, counting from how many there are.
+            let mut n = markers.markers.len() + 1;
+            while markers.markers.iter().any(|m| m.name == format!("Marker {n}")) {
+                n += 1;
+            }
+            format!("Marker {n}")
+        }
+        Some(v) => {
+            v.as_str().map(str::trim).filter(|n| !n.is_empty()).ok_or("name must be a text, not empty")?.to_string()
+        }
+    };
+    let index = markers.insert_marker(Marker::new(beat, name.clone()));
+    Ok(json!({ "index": index, "beat": beat, "name": name }))
+}
+
+fn move_marker(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let index = marker_index(&session.project, params)?;
+    let beat = marker_beat(params)?;
+    let arrangement = &mut session.project.arrangement;
+    if index >= arrangement.markers.len() {
+        return Err("the marker does not exist".into());
+    }
+    let mut marker = arrangement.markers.remove(index);
+    marker.beat = beat;
+    let name = marker.name.clone();
+    let index = arrangement.insert_marker(marker);
+    Ok(json!({ "index": index, "beat": beat, "name": name }))
+}
+
+fn rename_marker(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let name = params.get("name").and_then(Value::as_str).map(str::trim).filter(|n| !n.is_empty());
+    let name = name.ok_or("name must be a text, not empty")?.to_string();
+    let index = marker_index(&session.project, params)?;
+    let marker = session.project.arrangement.markers.get_mut(index).ok_or("the marker does not exist")?;
+    marker.name.clone_from(&name);
+    Ok(json!({ "index": index, "name": name }))
+}
+
+fn delete_marker(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let index = marker_index(&session.project, params)?;
+    let markers = &mut session.project.arrangement.markers;
+    if index >= markers.len() {
+        return Err("the marker does not exist".into());
+    }
+    let marker = markers.remove(index);
+    Ok(json!({ "deleted": index, "name": marker.name }))
+}
+
+fn jump_to_marker(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    // Without an engine there is nothing to jump; say so before looking at the marker.
+    session.player_mut()?;
+    let index = marker_index(session.project(), params)?;
+    let beat = session.project().arrangement.markers.get(index).map_or(0.0, |m| m.beat).clamp(0.0, MAX_START_BEAT);
+    send(session, LaunchCommand::SetPosition { beat })?;
+    Ok(json!({ "index": index, "start_beat": beat }))
 }
 
 fn launcher_grid(session: &mut Session, _: &Value) -> Result<Value, CommandError> {

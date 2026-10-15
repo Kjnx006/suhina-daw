@@ -112,8 +112,7 @@ command with undo. Behaviour, detectors and tests: [`docs/spec/audio-to-midi.md`
 ## Later, not ordered
 
 FL Studio projects (`.flp`), MIDI controllers and remote mapping (hardware controllers: scope in
-[ADR 0016](docs/decisions/0016-parity-target.md)), nested groups
-([#209](https://github.com/suhina-daw/suhina-daw/issues/209)), devices of an imported project that
+[ADR 0016](docs/decisions/0016-parity-target.md)), devices of an imported project that
 Suhina cannot run kept as placeholders and copied along with the project
 ([device import](docs/spec/device-import.md)), bridging Windows plug-ins.
 
@@ -205,6 +204,12 @@ From Live Sets we authored ourselves in Live 12.4 ([format spec](docs/spec/als-f
   change turned off is turned on again from its header; each edit one undo step through the
   `automation.*` commands ([#420](https://github.com/suhina-daw/suhina-daw/issues/420),
   [spec](docs/spec/automation.md#in-the-arrangement-view)).
+- Backups: each project with unsaved changes is copied to `.backup/` beside its file (a project
+  never saved: to the settings folder) every 5 minutes by default, at another interval, before
+  critical operations (closing, quitting, relinking, adding files, loading a plug-in, deleting a
+  track) or never, written on a background thread, the newest 20 kept; after a crash the
+  next start offers the backup back, to open as an unsaved project tied to its file
+  (`project.autosave`, Settings › General › Backups, [spec](docs/spec/backups.md)).
 - Still to do: more commands (notes, [#200](https://github.com/suhina-daw/suhina-daw/issues/200);
   clips), MCP resources.
 
@@ -223,6 +228,11 @@ From Live Sets we authored ourselves in Live 12.4 ([format spec](docs/spec/als-f
   ([#404](https://github.com/suhina-daw/suhina-daw/issues/404)).
 - A sample dropped into a slot loops over the whole file even when its tempo is not known (it
   plays at its own speed); `clip.setLoop` switches a slot clip's loop off to make a one-shot.
+- An arrangement clip goes into a clip slot, and a slot's clip onto the arrangement, as a copy
+  with its gain, warping, loop and fades: Copy and Paste in the right-click menus, Ctrl+C and
+  Ctrl+V on the selected clip or slot (`clip.copy` and `clip.paste` take `scene`), or a drag held
+  over the other view's name in the control bar until the view switches
+  ([spec](docs/spec/clip-launching.md) › Clips between the arrangement and the slots).
 - A metronome (`transport.setMetronome`, off by default): a click on every beat while the
   transport runs, higher on the first beat of a bar, following tempo edits and scene tempos.
   Count-in comes with recording.
@@ -296,10 +306,13 @@ From Live Sets we authored ourselves in Live 12.4 ([format spec](docs/spec/als-f
   which playback and renders follow to the frame (a value every 64 frames while it moves)
   ([#109](https://github.com/suhina-daw/suhina-daw/issues/109)). Their lanes are set by command;
   the Arrangement's lanes show built-in parameters only so far.
+- The render thread and the plug-in hosts' audio threads get real-time scheduling on Linux
+  without setup: `SCHED_FIFO` where the user has real-time rights, otherwise through rtkit, the
+  desktop's own service for it; on Windows they join MMCSS "Pro Audio". Where the system refuses,
+  Suhina plays on and says once that the sound may drop out under load.
 - Still to do: plug-ins of one process in one round trip
   ([#108](https://github.com/suhina-daw/suhina-daw/issues/108)), waiting for each chain's
-  plug-in as it answers ([#151](https://github.com/suhina-daw/suhina-daw/issues/151)), real-time
-  priority through MMCSS and rtkit ([#150](https://github.com/suhina-daw/suhina-daw/issues/150)),
+  plug-in as it answers ([#151](https://github.com/suhina-daw/suhina-daw/issues/151)),
   checking an imported Live Set with real plug-ins
   ([#112](https://github.com/suhina-daw/suhina-daw/issues/112)), Wayland and macOS editors, VST2
   hosting (not decided).
@@ -330,12 +343,24 @@ From Live Sets we authored ourselves in Live 12.4 ([format spec](docs/spec/als-f
   `suhina-cli play --launcher`; [spec](docs/spec/arrangement-editing.md) › Play position).
 - Clips move between tracks by dragging them up or down (`clip.move` with `to_track`); a MIDI
   clip then plays through the new track's instrument and effects.
+- **Markers** on the arrangement's timeline, in a row under the ruler: M adds one at the
+  playhead, a right-click on the ruler or the row adds one there; a click jumps to it, a drag
+  moves it, its menu renames or deletes it (`marker.add`, `marker.move`, `marker.rename`,
+  `marker.delete`, `marker.jump`, `project.markers`). Saved in the project file, and a Live Set's
+  locators import as markers ([spec](docs/spec/arrangement-editing.md#markers)).
+- **Loop region** in the arrangement: drag in the loop brace row under the ruler to draw it, drag
+  its ends or its middle to change it, click it or press Ctrl+L to turn looping on or off. While
+  on, playback repeats the span, wrapping on the exact sample (`transport.setLoop`,
+  `transport.setLoopEnabled`). Saved in the project file, and a Live Set's loop imports
+  ([spec](docs/spec/arrangement-editing.md#loop-region)).
 - **New, open and save:** Ctrl+T shows a dialog to make a new blank project, one from a template
   (the templates folder is a setting) or open one (a typed path or the recent ones); Ctrl+S saves
   as `.suhina` (asking for a name and folder the first time), Ctrl+Shift+S saves as, and File ›
   Save as template writes a copy to the templates folder. The tab and window title mark unsaved
   changes with a dot, and closing a project, opening another in its place or quitting with
   unsaved changes asks whether to save them.
+- A change made only in a plug-in's editor counts as an unsaved change: the dot appears within
+  about a minute, and closing or quitting asks whether to save it.
 - The **browser** (Ctrl+B shows and hides it, left or right of the view): search (Ctrl+F),
   category filters (All, Samples, MIDI, Instruments, Effects, Presets, Plug-ins), a sidebar of
   Pinned, Recent (by kind) and the folders the user added (a path, or a folder dropped on the
@@ -426,6 +451,11 @@ From Live Sets we authored ourselves in Live 12.4 ([format spec](docs/spec/als-f
 - Tracks: click a header to select it (Ctrl adds), Ctrl+G groups the selection, drag a header
   to move the track (a group moves with its tracks); right-click a header or a Session column for
   name, colour, group, ungroup and delete. Clips: right-click or Delete and Ctrl+D.
+- Groups inside groups, up to 16 levels ([#209](https://github.com/suhina-daw/suhina-daw/issues/209)):
+  the sound goes through every group's volume, mute and devices to the output, solo follows the
+  nesting, and a fold arrow on a group's header hides its tracks in both views. Drag a header
+  into a group, or use Move into group / Move out of group in its menu (`track.setGroup`); nested
+  groups are saved and read from Live Sets ([spec](docs/spec/arrangement-editing.md#groups-inside-groups)).
 - Waveforms in clips, the browser's preview and the sample map's tooltips are drawn by one
   renderer ([spec](docs/spec/waveforms.md)): peaks at three resolutions with RMS, computed once
   when a file is decoded; a filled, smoothed shape with a brighter RMS band; left and right
@@ -447,11 +477,16 @@ From Live Sets we authored ourselves in Live 12.4 ([format spec](docs/spec/als-f
   mode (off by default), and what plays now with its measured latency and underruns. A change
   reopens the output with the transport where it was and the plug-ins running; the engine
   renders in blocks of the buffer size, so the plug-ins' deadline follows it. A device that is
-  gone at start plays the default output, with a notice. Still to do: keeping the play marker
-  and launched clips across a reopen ([#178](https://github.com/suhina-daw/suhina-daw/issues/178)),
-  going back to the chosen device when it returns
-  ([#177](https://github.com/suhina-daw/suhina-daw/issues/177)), the ASIO driver's control panel
-  ([#176](https://github.com/suhina-daw/suhina-daw/issues/176)).
+  gone at start plays the default output, with a notice. Still to do: the ASIO driver's control
+  panel ([#176](https://github.com/suhina-daw/suhina-daw/issues/176)).
+- A new audio output is inaudible apart from the moment it takes to open: the play start marker
+  stays, launched clips play on from where they were, waiting launches wait again, and the
+  launch quantisation and a scene's tempo carry over
+  ([#178](https://github.com/suhina-daw/suhina-daw/issues/178)).
+- When the chosen audio device is unplugged or missing at start, the default output plays in its
+  place (Settings › Audio › Now says "until … is back"); Suhina looks every few seconds and moves
+  back to the chosen device when it is connected again, with a notice
+  ([#177](https://github.com/suhina-daw/suhina-daw/issues/177)).
 - Settings › Plug-ins: the folders scanned (add, remove), Scan and Rescan all in the background,
   and the plug-ins found and the files that failed.
 - Every key is the user's to change: Settings › Shortcuts and `keymap.json` bind any command

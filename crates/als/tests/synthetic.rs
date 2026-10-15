@@ -3,7 +3,7 @@
 use std::io::Write;
 
 use suhina_als::{AlsError, read_gzip, read_xml};
-use suhina_model::{ChannelRole, LaneData};
+use suhina_model::{ChannelRole, LaneData, LoopRange};
 
 fn mixer(volume: &str, pan: &str, on: &str, sends: &[&str]) -> String {
     let sends: String = sends
@@ -257,4 +257,144 @@ fn reads_plugins_and_placeholders() {
 
     assert_eq!(eq.kind, DeviceKind::Foreign { format: "als".into(), id: "Eq8".into() });
     assert!(!eq.enabled);
+}
+
+/// Locators become arrangement markers in beat order; one without a usable time is skipped with
+/// a warning, and a set without locators has no markers (`docs/spec/als-format.md` › Locators).
+#[test]
+fn reads_locators_as_markers() {
+    let set = |locators: &str| format!(r#"<Ableton><LiveSet><Tracks/>{locators}</LiveSet></Ableton>"#);
+    let locator = |id: u32, time: &str, name: &str| {
+        format!(
+            r#"<Locator Id="{id}"><LomId Value="0"/><Time Value="{time}"/><Name Value="{name}"/>
+               <Annotation Value=""/><IsSongStart Value="false"/></Locator>"#
+        )
+    };
+    let locators =
+        [locator(0, "32", "Chorus"), locator(1, "0", "Intro"), locator(2, "-4", "Early"), locator(3, "x", "")];
+    let import = read_xml(&set(&format!("<Locators><Locators>{}</Locators></Locators>", locators.concat()))).unwrap();
+    let markers: Vec<(f64, &str)> =
+        import.project.arrangement.markers.iter().map(|m| (m.beat, m.name.as_str())).collect();
+    assert_eq!(markers, [(0.0, "Intro"), (32.0, "Chorus")]);
+    assert_eq!(import.warnings.iter().filter(|w| w.contains("locator")).count(), 2, "{:?}", import.warnings);
+
+    assert!(read_xml(&set("")).unwrap().project.arrangement.markers.is_empty());
+    assert!(read_xml(&set("<Locators><Locators/></Locators>")).unwrap().project.arrangement.markers.is_empty());
+}
+
+/// The transport's loop region and its on/off are read; a region without a length, or one that
+/// does not end after it starts, is skipped with a warning (`docs/spec/als-format.md` ›
+/// Arrangement loop).
+#[test]
+fn reads_the_arrangement_loop() {
+    let set = |transport: &str| format!(r#"<Ableton><LiveSet><Tracks/>{transport}</LiveSet></Ableton>"#);
+    let transport = |on: &str, start: &str, length: &str| {
+        format!(
+            r#"<Transport><PhaseNudgeTempo Value="10"/><LoopOn Value="{on}"/><LoopStart Value="{start}"/>
+               <LoopLength Value="{length}"/><LoopIsSongStart Value="false"/><CurrentTime Value="0"/></Transport>"#
+        )
+    };
+    let read = |xml: &str| read_xml(&set(xml)).unwrap();
+
+    let on = read(&transport("true", "8", "16")).project.transport;
+    assert_eq!((on.loop_range, on.loop_enabled), (Some(LoopRange { start: 8.0, end: 24.0 }), true));
+    let off = read(&transport("false", "0", "4")).project.transport;
+    assert_eq!((off.loop_range, off.loop_enabled), (Some(LoopRange { start: 0.0, end: 4.0 }), false));
+
+    for bad in [transport("true", "8", "0"), transport("true", "-4", "8"), transport("true", "x", "8")] {
+        let import = read(&bad);
+        assert_eq!(import.project.transport.loop_range, None, "{bad}");
+        assert!(!import.project.transport.loop_enabled);
+        assert_eq!(import.warnings.iter().filter(|w| w.contains("loop")).count(), 1, "{:?}", import.warnings);
+    }
+    let none = read("").project.transport;
+    assert_eq!((none.loop_range, none.loop_enabled), (None, false));
+}
+
+/// A Live Set of the tracks `(kind, id, name, group id)`, each routed into its group when it has
+/// one ("-1" is none).
+fn grouped_set(tracks: &[(&str, &str, &str, &str)]) -> String {
+    let tracks: String = tracks
+        .iter()
+        .map(|(kind, id, name, group)| {
+            let target = if *group == "-1" { "AudioOut/Main" } else { "AudioOut/GroupTrack" };
+            format!(
+                r#"<{kind} Id="{id}"><Name><EffectiveName Value="{name}"/></Name><TrackGroupId Value="{group}"/>
+                   <DeviceChain><AudioOutputRouting><Target Value="{target}"/></AudioOutputRouting>{mixer}</DeviceChain>
+                   </{kind}>"#,
+                mixer = mixer("1", "0", "true", &[]),
+            )
+        })
+        .collect();
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<Ableton MajorVersion="5" MinorVersion="12.0_12402" Creator="Ableton Live 12.4.6">
+  <LiveSet><Tracks>{tracks}</Tracks>
+    <MainTrack><DeviceChain><Mixer><Tempo><Manual Value="120"/></Tempo></Mixer></DeviceChain></MainTrack>
+  </LiveSet>
+</Ableton>"#
+    )
+}
+
+#[test]
+fn reads_groups_inside_groups() {
+    let set = grouped_set(&[
+        ("GroupTrack", "20", "Band", "-1"),
+        ("GroupTrack", "21", "Drums", "20"),
+        ("MidiTrack", "22", "Kick", "21"),
+        ("AudioTrack", "23", "Vocal", "20"),
+        ("MidiTrack", "24", "Pad", "-1"),
+    ]);
+    let import = read_xml(&set).unwrap();
+    let p = &import.project;
+    let id = |name: &str| p.tracks.iter().find(|t| t.name == name).unwrap().id;
+    let output = |name: &str| {
+        let channel = p.tracks.iter().find(|t| t.name == name).unwrap().channel.unwrap();
+        let out = p.channels.iter().find(|c| c.id == channel).unwrap().output?;
+        p.tracks.iter().find(|t| t.channel == Some(out)).map(|t| t.name.clone())
+    };
+    assert_eq!(p.ancestors(id("Kick")), [id("Drums"), id("Band")]);
+    assert_eq!(p.group_depth(id("Vocal")), Some(1));
+    assert_eq!(p.group_depth(id("Pad")), Some(0));
+    assert_eq!(output("Kick").as_deref(), Some("Drums"));
+    assert_eq!(output("Drums").as_deref(), Some("Band"));
+    assert_eq!(output("Band"), None);
+    let roles: Vec<ChannelRole> =
+        ["Band", "Drums"].iter().map(|n| p.channels.iter().find(|c| c.name == *n).unwrap().role).collect();
+    assert_eq!(roles, [ChannelRole::Submix, ChannelRole::Submix]);
+    assert!(import.warnings.is_empty(), "{:?}", import.warnings);
+}
+
+#[test]
+fn groups_that_contain_each_other_or_nest_too_deep_still_open() {
+    // Two groups inside each other: one of them is taken out, with a warning.
+    let set = grouped_set(&[
+        ("GroupTrack", "20", "A", "21"),
+        ("GroupTrack", "21", "B", "20"),
+        ("MidiTrack", "22", "Kick", "21"),
+    ]);
+    let import = read_xml(&set).unwrap();
+    assert_eq!(import.project.validate(), Ok(()));
+    assert!(import.warnings.iter().any(|w| w.contains("contain each other")), "{:?}", import.warnings);
+    let a = import.project.tracks.iter().find(|t| t.name == "A").unwrap();
+    assert_eq!(a.parent, None);
+    assert_eq!(import.project.channels.iter().find(|c| c.name == "A").unwrap().output, None);
+
+    // Groups deeper than Suhina nests them: the deepest is taken out.
+    let ids: Vec<String> = (0..=suhina_model::MAX_GROUP_DEPTH + 1).map(|i| (100 + i).to_string()).collect();
+    let names: Vec<String> = (0..ids.len()).map(|i| format!("G{i}")).collect();
+    let tracks: Vec<(&str, &str, &str, &str)> = ids
+        .iter()
+        .enumerate()
+        .map(|(i, id)| ("GroupTrack", id.as_str(), names[i].as_str(), if i == 0 { "-1" } else { ids[i - 1].as_str() }))
+        .collect();
+    let import = read_xml(&grouped_set(&tracks)).unwrap();
+    assert_eq!(import.project.validate(), Ok(()));
+    assert!(import.warnings.iter().any(|w| w.contains("nest more than")), "{:?}", import.warnings);
+    let last = import.project.tracks.last().unwrap();
+    assert_eq!(last.parent, None);
+    assert_eq!(
+        import.project.group_depth(import.project.tracks[ids.len() - 2].id),
+        Some(suhina_model::MAX_GROUP_DEPTH)
+    );
 }

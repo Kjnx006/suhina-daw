@@ -1,6 +1,6 @@
 ---
 description: Measurements, states and tokens of every UI component, from the minimal v3 mockups
-read_when: widget sizes, clip slot states, value field, slider, knob, toggle, meter, track header levels, device panel, piano roll layout
+read_when: widget sizes, marker row, clip slot states, value field, slider, knob, toggle, meter, track header levels, device panel, piano roll layout
 type: spec
 status: draft
 last_verified: 2026-10-15
@@ -85,13 +85,13 @@ the view with the detail area, status bar.
 | Tab row | 22 px, `window.background`, shown while two or more projects are open (ADR 0007): one tab per project, name (with " •" while it has unsaved changes, as the window title has) and a 12 px × to close; the active tab `panel.background` with `text.primary`, others `text.secondary`; Ctrl+Tab and Ctrl+Shift+Tab move between them |
 | Control bar | 28 px, `panel.background`, a 1 px `border` under it. Left, 6 px apart: tempo (56 × 20 value field, `control.background`, 11 px mono right-aligned, dragged up or down), time signature (40 px, 11 px mono `text.secondary`, "4 / 4"), launch quantisation (64 px dropdown, 11 px mono). Centre: play and stop (28 × 20 each, 1 px apart), the position (64 × 20 on `window.background`, 11 px mono, "bar.beat.sixteenth"). Right: the CPU load (56 × 20 on `window.background`, only while an engine plays: "CPU" in 9 px `text.hint` left and the smoothed percentage in 10 px mono `text.secondary` right, over a 2 px-tall bar of the load, `meter.normal` fill, `meter.hot` from 80 %, in a `control.background` track; the audio thread's share of wall time inside the engine's render call, per mille smoothed over 0.2 s windows, published as an atomic), then the view switch at the right edge, 6 px from it. Left of the CPU load, 6 px apart, the RAM (76 × 20 on `window.background`, always shown: "RAM" in 9 px `text.hint` left, the program's resident memory in 10 px mono `text.secondary` right, "512 MB", "2.3 GB"). Right, left to right: RAM, CPU load, view switch; a block that would come within 6 px of the position is left out, the RAM first. (planned): metronome, record, loop |
 | Transport button | 28 × 20, `control.background`; play shows `control.activeBackground` while playing, its glyph in `accent`; stop is an 8 × 8 square in `text.primary`; record (planned) a 1.5 px red ring |
-| View switch | Text only, 11 px, right-aligned, 12 px apart: "Session", "Arrangement"; the current one `text.primary` with a 1 px underline, the other `text.secondary` |
+| View switch | Text only, 11 px, right-aligned, 12 px apart: "Session", "Arrangement"; the current one `text.primary` with a 1 px underline, the other `text.secondary`. While a clip is dragged over the other view's name, a 1 px `accent` outline 3 px around it; after 0.5 s the view switches |
 | Open prompt | When a project is dropped while another is open and the setting says Ask: a 32 px row on `panel.background` above the view: "Open x:" In a new tab, In place of y, Cancel, Remember (which sets the setting) |
 | Drop overlay | While a project file is dragged over the window: `window.background` at 45 % over the view and "Drop to open" in 13 px `text.primary`, fading in and out with the animations |
 | Browser | 300 px wide by default, dragged from 200 to 600 px by a 4 px handle at its inner edge (`border`, `border.strong` under the pointer); left of the view, or right (Settings › Interface › Browser); Ctrl+B and View › Show browser hide and show it. See Browser below |
 | Detail splitter | 6 px, `control.background`, a 32 × 2 grip in `text.hint` in the middle; the cursor shows which way it moves |
 | Detail area | Under the view, 200 px by default, resizable from 80 px to all but 160 px of the view, and at least as tall as the tallest open embedded plug-in editor; Shift+Tab hides and shows it. Shows the selected track's device chain; a selected clip shows its properties and, beside them, the chain of the track it is on: in a row (220 px per device), or stacked in a column beside the view (260 px by default, resizable) — Settings › Interface › Detail area. With nothing selected: "Select a track or a clip to see it here" in `text.hint` ("Select a track or a clip" in the stacked column) |
-| Status bar | 20 px, `panel.background`: the last message on the left (10 px, `text.secondary`, errors in the recording red), "N tracks · M scenes" on the right (10 px, `text.hint`). There is no separate info view |
+| Status bar | 20 px, `panel.background`: the last message on the left (10 px, `text.secondary`, errors in the recording red), "N tracks · M scenes" on the right (10 px, `text.hint`), followed by " · backed up 14:05" once the active project has been backed up in this run. There is no separate info view |
 
 ## Browser
 
@@ -146,6 +146,10 @@ Track colours: the track's own colour if it has one, else `track.1`–`track.4` 
 | Playing | `control.playingBackground`, text `#FFFFFF` | 6 × 6 track colour | 2 px `accent` progress line along the bottom |
 | Recording | (planned) `#3A2B2A`, text `#FFFFFF` | 6 px red dot | 2 px red progress line |
 
+The slot clicked last (on a track, not a group) is selected: a 1 px `text.primary` inset over
+whatever state it shows. A right-click opens its menu (Copy, Paste), and a clip in it can be
+dragged ([Session view](../spec/ui-session-view.md) › Between the views).
+
 ### Mixer strip (Session)
 
 72 px high, `panel.background`, 6 px padding, under every track and return column; the scene column's
@@ -166,14 +170,15 @@ part is empty (the main track's strip is planned). From top to bottom:
 ## Arrangement view
 
 The timeline on one side, the track header column on the other (right by default). From top to
-bottom: the ruler, the track lanes (scrolling), and fixed rows for the return tracks and the main
+bottom: the ruler, the loop brace row, the marker row, the track lanes (scrolling), and fixed rows for the return tracks and the main
 track along the bottom edge.
 
 | Part | Spec |
 |---|---|
 | Bar ruler | 20 px, `panel.background`; bar numbers in 10 px mono `text.secondary`, 3 px right of a 1 px `border`, labelled every 1, 2, 4 … bars so labels are at least 40 px apart. A click sets the play start marker (`transport.setPosition`) to the beat under the pointer, on the clip grid of that zoom, Alt for free ([spec](../spec/arrangement-editing.md) › Play position) |
 | Play start marker | A 9 × 6 px triangle in `text.primary`, pointing down, its tip on the ruler's lower edge at the marker's beat |
-| Loop brace | (planned) a 14 px row under the ruler; 6 px bar `control.activeBackground` with 1 px `text.hint` inset |
+| Marker row | 16 px under the ruler, `panel.background`, a 1 px `border` between them. Each marker: a 1 px `text.secondary` line at its beat and a tag to its right (`control.background`, `control.hoverBackground` hovered, `control.activeBackground` dragged) with its name in 10 px `text.value`, 3 px in; the tag is as wide as the name, 9–120 px, and ends 1 px before the next marker. Click jumps (`marker.jump`), drag moves (`marker.move`, on the ruler's grid, Alt for free), right-click opens its menu (name field and Rename, Jump to marker, Delete marker); a right-click on the ruler or an empty part of the row offers Add marker here ([spec](../spec/arrangement-editing.md#markers)) |
+| Loop brace | A 14 px row between the ruler and the marker row, `panel.background`, a 1 px `border` above and below. The brace: a 6 px bar, centred, from the loop start to the loop end; looping on: `control.activeBackground` with a 1 px `text.secondary` inset, off: `control.background` with a 1 px `text.hint` inset. Drag on the row draws a region (looping on), within 4 px of an end resizes it (the cursor shows resizing), the middle moves it (the cursor grabs), on the ruler's grid, Alt for free; a click on it or Ctrl+L turns looping on or off ([spec](../spec/arrangement-editing.md#loop-region)) |
 | Zoom and moving | 8 px per beat by default, 1–400 px; Ctrl and the wheel zoom around the pointer, Alt and the wheel make every track lane taller or shorter (within 20–400 px) keeping the lane under the pointer in place, the wheel scrolls; holding the middle button down over the timeline moves it freely both ways (the cursor grabs), also over a clip, which stays where it is: clips, fades, fields and headers are dragged with the left button only |
 | Grid lines | In the lanes and the fixed rows (not the empty space below the lanes): a 1 px `border` at each bar, and a 1 px `panel.background` line at each beat once beats are 10 px apart |
 | Lanes | Default height 48 px, the lower edge of a header resizes it (20–400 px); separated by 1 px `border.strong`; empty area `window.background`. Overlapping (stacked) clips share the lane in equal sub-rows |
@@ -196,7 +201,7 @@ a lane between 20 and 26 px shows the first row clipped.
 
 | Track height | Shows |
 |---|---|
-| ≥ 26 px | Row 1, 15 px: track on (30 px, the track number in 10 px mono), solo (18 px, "S"), a 6 px colour square, the name in 11 px; arm (planned) |
+| ≥ 26 px | Row 1, 15 px: track on (30 px, the track number in 10 px mono), solo (18 px, "S"), a 6 px colour square (on a group, a fold arrow in the track colour, 7 px, pointing down open and right folded), the name in 11 px; arm (planned). The row steps in 8 px per group the track is inside |
 | ≥ 48 px | Row 2, 6 px under row 1: the volume field (the rest of the row) and the pan field (46 px), 4 px apart |
 | ≥ 70 px | Routing, 4 px under row 2: "→" and the output dropdown ("Main" or a group track, `track.setOutput`); input and channel dropdowns and monitor In / Auto / Off (planned, with recording) |
 | ≥ 114 px | (planned) Send fields, one per return, labelled "Send A", "Send B", once the engine plays sends; routing then moves below them |
@@ -258,6 +263,9 @@ the list; each setting is a 34 px row with its name (11 px `text.primary`), a no
 |---|---|---|
 | General | When opening a project | Ask (default), New tab, Replace |
 | General | Projects folder, Templates folder | A 300 px field each; empty uses `Documents/Suhina/Projects` and `…/Templates`, shown as the hint |
+| General › Backups | Backups | A 260 px dropdown: Before critical operations, Every minute, Every 5 minutes (default), 10, 15, 30 or 60 minutes, Every 4 hours, Never ([spec](../spec/backups.md)) |
+| General › Backups | Clean up backups | On (default): the newest 20 backups of each project are kept; Off |
+| General › Backups | Last backup | The active project's newest backup, its time and file, as the row's note; "None written for this project yet" |
 | General › Dropping files | Several files | One track (default), One each; Ctrl while dropping does the other ([browser spec](../spec/browser.md) › Files) |
 | General › Dropping files | Warp mode | Rhythmic (default), Tonal, Texture, Smooth, High quality, Re-pitch: how a dropped sample with a known tempo is stretched |
 | General › Transport | Play from | Marker (default): Play and Space start from the play start marker; Selected clip: from the start of the clip selected in the Arrangement view, the marker moving there ([spec](../spec/arrangement-editing.md) › Play position) |
@@ -280,7 +288,7 @@ the list; each setting is a 34 px row with its name (11 px `text.primary`), a no
 | Audio › Output | Sample rate | The device's own (default), then the rates the device offers |
 | Audio › Output | Buffer size | Default (1024 frames), then the device's sizes with their length in ms |
 | Audio › Output | Exclusive mode | On, Off (default): WASAPI only; the note says when the device does not allow it |
-| Audio › Now | Output, Latency | Read only: the device in use, and its measured latency and underruns; "List devices again" (120 px) on the Output row. Changes on this page run `audio.setOutput` |
+| Audio › Now | Output, Latency | Read only: the device in use (", until X is back" when it plays in place of the chosen device X, which it goes back to once connected again), and its measured latency and underruns; "List devices again" (120 px) on the Output row. Changes on this page run `audio.setOutput` |
 
 **Interface › Theme**: the themes as 20 px rows in a list that scrolls after eight, the user's
 own first and then those that come with Suhina, the name on the left and the file name or
@@ -337,6 +345,12 @@ before closing it?" (or "opening another project in its place", "quitting") in 1
 `text.primary`, and Cancel, Don't save and Save (Enter) at the bottom right; Escape cancels.
 Quitting asks about each project with changes in turn; Save on a project without a file shows
 the save prompt first, and cancelling it cancels the close.
+
+On start, a backup a crash left that is newer than its project file shows a 520 px "Backup found"
+dialog in the same style ([spec](../spec/backups.md) › The offer on start): "Suhina closed before
+*name* was saved." and "A backup from *date time* is newer than the project file." in 11 px
+`text.primary`, and Ignore, Show the folder and Open the backup (Enter) at the bottom right, 120 ×
+18 px each; Escape and Close ignore it. Several backups are offered one after another.
 
 ## Device panel
 

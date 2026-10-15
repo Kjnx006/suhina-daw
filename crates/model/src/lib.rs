@@ -21,6 +21,11 @@ pub struct ChannelId(pub u32);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ContentId(pub u32);
 
+/// How deep groups nest: a track is inside at most this many groups (its parent, the parent's
+/// parent and so on). Deep enough for any real project, small enough that walking up a track's
+/// groups is always short.
+pub const MAX_GROUP_DEPTH: usize = 16;
+
 /// A Suhina project.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Project {
@@ -38,11 +43,28 @@ pub struct Project {
 pub struct Transport {
     pub tempo_bpm: f64,
     pub time_signature: TimeSignature,
+    /// The arrangement's loop region, in beats from the start: kept while looping is off, so
+    /// turning it on again repeats the same span ([`Transport::looping`]).
+    pub loop_range: Option<LoopRange>,
+    /// Whether playback repeats the loop region.
+    pub loop_enabled: bool,
 }
 
 impl Default for Transport {
     fn default() -> Self {
-        Self { tempo_bpm: 120.0, time_signature: TimeSignature { numerator: 4, denominator: 4 } }
+        Self {
+            tempo_bpm: 120.0,
+            time_signature: TimeSignature { numerator: 4, denominator: 4 },
+            loop_range: None,
+            loop_enabled: false,
+        }
+    }
+}
+
+impl Transport {
+    /// The span playback repeats: the loop region while looping is on and the region is valid.
+    pub fn looping(&self) -> Option<LoopRange> {
+        self.loop_range.filter(|r| self.loop_enabled && r.is_valid_region())
     }
 }
 
@@ -68,7 +90,8 @@ pub struct Track {
     pub content: ContentKinds,
     /// The mixer strip this track plays through, if any.
     pub channel: Option<ChannelId>,
-    /// The group track this track belongs to, if any.
+    /// The group track this track belongs to, if any. Groups nest: a group's own `parent` is
+    /// the group it is inside, at most [`MAX_GROUP_DEPTH`] levels deep and never in a cycle.
     pub parent: Option<TrackId>,
     pub extensions: Extensions,
 }
@@ -480,6 +503,14 @@ pub struct LoopRange {
     pub end: f64,
 }
 
+impl LoopRange {
+    /// Whether it can be the arrangement's loop region: finite, starting at 0 or later and
+    /// ending after it starts.
+    pub fn is_valid_region(&self) -> bool {
+        self.start.is_finite() && self.end.is_finite() && self.start >= 0.0 && self.end > self.start
+    }
+}
+
 /// What a launched clip does after it has played for its follow time: action A or action B,
 /// picked by chance with their weights (`docs/spec/clip-launching.md` › Follow actions).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -594,6 +625,41 @@ impl FollowKind {
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Arrangement {
     pub lanes: Vec<ArrangementLane>,
+    /// Named positions on the timeline, sorted by beat ([`Arrangement::sort_markers`]).
+    pub markers: Vec<Marker>,
+}
+
+impl Arrangement {
+    /// Puts the markers in order of their beats; markers on the same beat keep their order.
+    pub fn sort_markers(&mut self) {
+        self.markers.sort_by(|a, b| a.beat.total_cmp(&b.beat));
+    }
+
+    /// Adds a marker after any already on its beat and returns its index.
+    pub fn insert_marker(&mut self, marker: Marker) -> usize {
+        let at = self.markers.partition_point(|m| m.beat <= marker.beat);
+        self.markers.insert(at, marker);
+        at
+    }
+}
+
+/// A named position on the arrangement's timeline (a locator): playback can jump to it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Marker {
+    /// Beats from the start, at least 0.
+    pub beat: f64,
+    pub name: String,
+}
+
+impl Marker {
+    pub fn new(beat: f64, name: impl Into<String>) -> Self {
+        Self { beat, name: name.into() }
+    }
+
+    /// Whether the beat is a finite number, not negative.
+    pub fn is_valid(&self) -> bool {
+        self.beat.is_finite() && self.beat >= 0.0
+    }
 }
 
 /// A row of the arrangement. Bound to a track, or free (a row of a pattern playlist, whose clips
@@ -664,6 +730,14 @@ pub enum ValidationError {
         lane: usize,
         clip: usize,
     },
+    /// The arrangement marker at this index has a beat that is negative or not finite.
+    BadMarker(usize),
+    /// The transport's loop region is not finite, starts before 0 or does not end after it starts.
+    BadLoop,
+    /// Following this track's parents leads back to it.
+    GroupCycle(TrackId),
+    /// This track is inside more than [`MAX_GROUP_DEPTH`] groups.
+    GroupTooDeep(TrackId),
 }
 
 impl fmt::Display for ValidationError {
@@ -675,6 +749,10 @@ impl fmt::Display for ValidationError {
             Self::MissingTrack(id) => write!(f, "track {} does not exist", id.0),
             Self::MissingChannel(id) => write!(f, "channel {} does not exist", id.0),
             Self::MissingContent(id) => write!(f, "clip content {} does not exist", id.0),
+            Self::GroupCycle(id) => write!(f, "track {} is inside itself through its groups", id.0),
+            Self::GroupTooDeep(id) => {
+                write!(f, "track {} is inside more than {MAX_GROUP_DEPTH} nested groups", id.0)
+            }
             Self::BadFades { lane, clip } => {
                 write!(
                     f,
@@ -682,6 +760,8 @@ impl fmt::Display for ValidationError {
                      or a fade curve outside -1 to +1"
                 )
             }
+            Self::BadMarker(index) => write!(f, "arrangement marker {index} is not at a beat from 0 on"),
+            Self::BadLoop => write!(f, "the loop region does not start at a beat from 0 on and end after it starts"),
         }
     }
 }
@@ -720,6 +800,11 @@ impl Project {
             }
             if let Some(parent) = track.parent {
                 track_ref(parent, &mut errors);
+                match self.group_depth(track.id) {
+                    None => errors.push(ValidationError::GroupCycle(track.id)),
+                    Some(depth) if depth > MAX_GROUP_DEPTH => errors.push(ValidationError::GroupTooDeep(track.id)),
+                    Some(_) => {}
+                }
             }
         }
         for channel in &self.channels {
@@ -748,6 +833,14 @@ impl Project {
                 }
             }
         }
+        for (index, marker) in self.arrangement.markers.iter().enumerate() {
+            if !marker.is_valid() {
+                errors.push(ValidationError::BadMarker(index));
+            }
+        }
+        if self.transport.loop_range.is_some_and(|r| !r.is_valid_region()) {
+            errors.push(ValidationError::BadLoop);
+        }
         for column in &self.launcher.columns {
             track_ref(column.track, &mut errors);
             for clip in column.slots.iter().filter_map(|s| s.clip.as_ref()) {
@@ -756,6 +849,67 @@ impl Project {
         }
 
         if errors.is_empty() { Ok(()) } else { Err(errors) }
+    }
+
+    /// The groups `track` is inside, nearest first: its parent, the parent's parent and so on.
+    /// Stops at a parent that does not exist, and at a cycle (the track that would repeat is
+    /// left out), so it always ends.
+    pub fn ancestors(&self, track: TrackId) -> Vec<TrackId> {
+        let mut out = Vec::new();
+        let mut next = self.tracks.iter().find(|t| t.id == track).and_then(|t| t.parent);
+        while let Some(id) = next {
+            if id == track || out.contains(&id) || out.len() > self.tracks.len() {
+                break;
+            }
+            out.push(id);
+            next = self.tracks.iter().find(|t| t.id == id).and_then(|t| t.parent);
+        }
+        out
+    }
+
+    /// How many groups `track` is inside (0 at the top level); `None` when its parents lead
+    /// back to a track already passed, a cycle a valid project never has.
+    pub fn group_depth(&self, track: TrackId) -> Option<usize> {
+        let mut seen = vec![track];
+        let mut next = self.tracks.iter().find(|t| t.id == track).and_then(|t| t.parent);
+        while let Some(id) = next {
+            if seen.contains(&id) {
+                return None;
+            }
+            seen.push(id);
+            next = self.tracks.iter().find(|t| t.id == id).and_then(|t| t.parent);
+        }
+        Some(seen.len() - 1)
+    }
+
+    /// `track` and every track inside it at any depth (for a group), in project order. Bounded
+    /// by the track count, so a parent cycle in a malformed project cannot loop.
+    pub fn with_descendants(&self, track: TrackId) -> Vec<TrackId> {
+        let mut family = vec![track];
+        for _ in 0..self.tracks.len() {
+            let before = family.len();
+            for t in &self.tracks {
+                if t.parent.is_some_and(|parent| family.contains(&parent)) && !family.contains(&t.id) {
+                    family.push(t.id);
+                }
+            }
+            if family.len() == before {
+                break;
+            }
+        }
+        self.tracks.iter().map(|t| t.id).filter(|id| family.contains(id)).collect()
+    }
+
+    /// How many levels of groups hang under `track`: 0 for a track with nothing inside it, 1
+    /// for a group of plain tracks, 2 for a group holding a group, and so on.
+    pub fn nesting_below(&self, track: TrackId) -> usize {
+        let base = self.group_depth(track).unwrap_or(0);
+        self.with_descendants(track)
+            .iter()
+            .filter_map(|&t| self.group_depth(t))
+            .map(|d| d.saturating_sub(base))
+            .max()
+            .unwrap_or(0)
     }
 
     pub fn content(&self, id: ContentId) -> Option<&ClipContent> {
@@ -896,6 +1050,7 @@ mod tests {
                     track: Some(TrackId(1)),
                     clips: vec![clip(1, 0.0)],
                 }],
+                markers: Vec::new(),
             },
             launcher: Launcher {
                 scenes: vec![Scene::default(), Scene::default()],
@@ -936,6 +1091,7 @@ mod tests {
                     track: None,
                     clips: vec![clip(1, 0.0), clip(1, 4.0)],
                 }],
+                markers: Vec::new(),
             },
             ..Project::default()
         };
@@ -960,6 +1116,7 @@ mod tests {
                     track: Some(TrackId(5)),
                     clips: vec![clip(3, 0.0)],
                 }],
+                markers: Vec::new(),
             },
             ..Project::default()
         };
@@ -1042,6 +1199,7 @@ mod tests {
                     track: None,
                     clips: vec![with(1.0, 1.0), with(3.0, 3.0)],
                 }],
+                markers: Vec::new(),
             },
             ..Project::default()
         };
@@ -1062,9 +1220,97 @@ mod tests {
     }
 
     #[test]
+    fn the_loop_region_repeats_only_while_on_and_must_end_after_it_starts() {
+        let mut transport = Transport { loop_range: Some(LoopRange { start: 4.0, end: 8.0 }), ..Transport::default() };
+        assert_eq!(transport.looping(), None, "off: kept, not repeated");
+        transport.loop_enabled = true;
+        assert_eq!(transport.looping(), Some(LoopRange { start: 4.0, end: 8.0 }));
+
+        for bad in [(4.0, 4.0), (8.0, 4.0), (-1.0, 4.0), (0.0, f64::INFINITY), (f64::NAN, 1.0)] {
+            let project = Project {
+                transport: Transport {
+                    loop_range: Some(LoopRange { start: bad.0, end: bad.1 }),
+                    ..Transport::default()
+                },
+                ..Project::default()
+            };
+            assert_eq!(project.validate(), Err(vec![ValidationError::BadLoop]), "{bad:?}");
+            assert_eq!(Transport { loop_enabled: true, ..project.transport }.looping(), None);
+        }
+    }
+
+    #[test]
+    fn markers_stay_in_beat_order_and_must_be_at_a_beat_from_0() {
+        let mut arrangement = Arrangement::default();
+        assert_eq!(arrangement.insert_marker(Marker::new(8.0, "Chorus")), 0);
+        assert_eq!(arrangement.insert_marker(Marker::new(0.0, "Intro")), 0);
+        assert_eq!(arrangement.insert_marker(Marker::new(8.0, "Drop")), 2, "after the one already on beat 8");
+        let names: Vec<&str> = arrangement.markers.iter().map(|m| m.name.as_str()).collect();
+        assert_eq!(names, ["Intro", "Chorus", "Drop"]);
+        arrangement.markers[0].beat = 12.0;
+        arrangement.sort_markers();
+        let names: Vec<&str> = arrangement.markers.iter().map(|m| m.name.as_str()).collect();
+        assert_eq!(names, ["Chorus", "Drop", "Intro"]);
+
+        let project = Project {
+            arrangement: Arrangement {
+                lanes: Vec::new(),
+                markers: vec![Marker::new(0.0, "ok"), Marker::new(-1.0, "before"), Marker::new(f64::NAN, "nan")],
+            },
+            ..Project::default()
+        };
+        assert_eq!(project.validate(), Err(vec![ValidationError::BadMarker(1), ValidationError::BadMarker(2)]));
+    }
+
+    #[test]
     fn duplicate_ids_are_reported() {
         let project =
             Project { tracks: vec![track(1, 1), track(1, 1)], channels: vec![channel(1)], ..Project::default() };
         assert_eq!(project.validate(), Err(vec![ValidationError::DuplicateTrack(TrackId(1))]));
+    }
+    /// Tracks 1..=n, each inside the one before it.
+    fn chain_of_groups(n: u32) -> Project {
+        let tracks = (1..=n).map(|id| Track { parent: (id > 1).then(|| TrackId(id - 1)), ..track(id, id) }).collect();
+        Project { tracks, channels: (1..=n).map(channel).collect(), ..Project::default() }
+    }
+
+    #[test]
+    fn nested_groups_report_their_ancestors_depth_and_descendants() {
+        let project = chain_of_groups(4);
+        assert_eq!(project.ancestors(TrackId(4)), vec![TrackId(3), TrackId(2), TrackId(1)]);
+        assert_eq!(project.group_depth(TrackId(4)), Some(3));
+        assert_eq!(project.group_depth(TrackId(1)), Some(0));
+        assert_eq!(project.with_descendants(TrackId(2)), vec![TrackId(2), TrackId(3), TrackId(4)]);
+        assert_eq!(project.nesting_below(TrackId(2)), 2);
+        assert_eq!(project.nesting_below(TrackId(4)), 0);
+        assert_eq!(project.validate(), Ok(()));
+        // A track that does not exist is at the top level and holds nothing.
+        assert_eq!(project.ancestors(TrackId(9)), Vec::<TrackId>::new());
+        assert_eq!(project.with_descendants(TrackId(9)), vec![]);
+    }
+
+    #[test]
+    fn groups_may_nest_up_to_the_cap_and_no_deeper() {
+        let deepest = u32::try_from(MAX_GROUP_DEPTH).unwrap() + 1;
+        assert_eq!(chain_of_groups(deepest).validate(), Ok(()));
+        let too_deep = chain_of_groups(deepest + 1);
+        assert_eq!(too_deep.validate(), Err(vec![ValidationError::GroupTooDeep(TrackId(deepest + 1))]));
+    }
+
+    #[test]
+    fn a_group_cycle_is_reported_and_walking_it_ends() {
+        let mut project = chain_of_groups(3);
+        project.tracks[0].parent = Some(TrackId(3));
+        assert_eq!(project.group_depth(TrackId(2)), None);
+        assert_eq!(project.ancestors(TrackId(2)), vec![TrackId(1), TrackId(3)]);
+        assert_eq!(project.with_descendants(TrackId(1)).len(), 3);
+        let errors = project.validate().unwrap_err();
+        assert_eq!(errors.len(), 3, "{errors:?}");
+        assert!(errors.iter().all(|e| matches!(e, ValidationError::GroupCycle(_))));
+        // A track that is its own parent too.
+        let mut own = chain_of_groups(1);
+        own.tracks[0].parent = Some(TrackId(1));
+        assert_eq!(own.validate(), Err(vec![ValidationError::GroupCycle(TrackId(1))]));
+        assert_eq!(own.ancestors(TrackId(1)), vec![]);
     }
 }

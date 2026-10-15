@@ -2,6 +2,8 @@
 //! along the bottom (`docs/spec/ui-session-view.md`, sizes in `docs/design/components.md`).
 //! It draws a [`Grid`] and turns clicks into [`Action`]s; it never changes the project itself.
 
+use std::collections::BTreeSet;
+
 use egui::{Align2, Color32, Id, Pos2, Rect, Sense, StrokeKind, Ui, Vec2};
 use serde_json::json;
 use suhina_engine::model::TrackId;
@@ -11,11 +13,14 @@ use crate::grid::{Column, ColumnKind, Grid, SlotState};
 use crate::menus::{self, TrackMenu};
 use crate::meter::{self, Meters};
 use crate::motion;
+use crate::nesting::{self, Place};
 use crate::theme::{self, PAD, ROW};
 use crate::widgets::{self, Action, Drag};
 
 /// One row: a slot and the line under it.
 const PITCH: f32 = ROW + 1.0;
+/// Width of a group header's fold arrow.
+const FOLD_ARROW: f32 = 12.0;
 /// Mark sizes inside a slot.
 const CLIP_MARK: f32 = 6.0;
 const EMPTY_MARK: f32 = 3.0;
@@ -33,13 +38,21 @@ pub struct SessionViewState {
     /// The selected track (its header was clicked, or a clip on it selected); the detail area
     /// shows its devices.
     pub selected: Option<TrackId>,
-    /// The selected clip slot, its track and scene from 0: launching its clip selected it. The
-    /// detail area shows the clip's follow action.
+    /// The selected clip slot, its track and scene from 0: launching its clip or clicking it
+    /// selected it. The detail area shows the clip's follow action; Ctrl+C and Ctrl+V act on it.
     pub selected_slot: Option<(TrackId, usize)>,
+    /// Something has been copied, so a slot's menu can paste it; the window says so each frame.
+    pub can_paste: bool,
+    /// A clip slot whose drag started this frame (track, scene from 0): the window carries the
+    /// clip from there (`docs/spec/ui-session-view.md` › Between the views).
+    pub slot_drag: Option<(TrackId, usize)>,
     /// A column header being dragged to move its track, and where it was let go.
     track_drag: Option<TrackId>,
     track_drop: Option<(TrackId, f32)>,
     drag: Option<(TrackId, Control, f64)>,
+    /// Group tracks folded shut: their tracks' columns are hidden. The arrangement view's,
+    /// copied in while this view shows.
+    pub folded: BTreeSet<TrackId>,
     /// A drag from the browser over the window: the view says which target is under the
     /// pointer (`docs/spec/browser.md` › Dragging into the project).
     pub drop: Option<DropProbe>,
@@ -105,8 +118,15 @@ pub fn show(
     let returns_clip = Rect::from_min_max(Pos2::new(returns_x, area.top()), Pos2::new(scenes_x - 1.0, area.bottom()));
 
     // Scrolling: the body scrolls both ways; header and mixer follow the tracks sideways.
-    let content_width: f32 =
-        grid.columns.iter().filter(|c| c.kind != ColumnKind::Return).map(|c| column_width(c) + 1.0).sum();
+    // The tracks in their groups, and those a folded group hides.
+    let places: Vec<Place> = grid.columns.iter().filter(|c| c.kind != ColumnKind::Return).map(Column::place).collect();
+    let hidden = nesting::hidden(&places, &state.folded);
+    let content_width: f32 = grid
+        .columns
+        .iter()
+        .filter(|c| c.kind != ColumnKind::Return && !hidden.contains(&c.track))
+        .map(|c| column_width(c) + 1.0)
+        .sum();
     let content_height = (grid.scenes.len() as f32 + 1.0) * PITCH;
     if ui.rect_contains_pointer(area) {
         let delta = ui.input(|i| i.smooth_scroll_delta());
@@ -119,7 +139,10 @@ pub fn show(
     painter.hline(area.x_range(), header.bottom(), theme::hairline(theme::border_strong()));
     painter.hline(area.x_range(), mixer.top() - 1.0, theme::hairline(theme::border_strong()));
 
-    let bands = Bands { header, body, mixer, top: body.top() - state.scroll.y, scenes: grid.scenes.len() };
+    let groups =
+        grid.columns.iter().filter(|c| c.kind == ColumnKind::Group).map(|c| (c.track, c.name.clone())).collect();
+    let bands =
+        Bands { header, body, mixer, top: body.top() - state.scroll.y, scenes: grid.scenes.len(), places, groups };
     // Where each track column is this frame, for a dragged header to find its place.
     let mut spans: Vec<(&Column, egui::Rangef)> = Vec::new();
     let mut track_x = area.left() - state.scroll.x;
@@ -131,6 +154,9 @@ pub fn show(
             (&mut return_x, returns_clip)
         } else {
             track_number += 1;
+            if hidden.contains(&column.track) {
+                continue;
+            }
             (&mut track_x, tracks_clip)
         };
         let span = egui::Rangef::new(*x, *x + width);
@@ -160,10 +186,16 @@ pub fn show(
                 continue;
             }
             let header_rect = Rect::from_x_y_ranges(*span, header.y_range());
-            probe.offer(header_rect, DropTarget::Track(column.track));
+            if !probe.clip {
+                probe.offer(header_rect, DropTarget::Track(column.track));
+            }
             let column_body = Rect::from_x_y_ranges(*span, body.y_range()).intersect(tracks_clip);
             if column_body.contains(probe.pointer) {
                 let scene = row_of(probe.pointer.y).min(grid.scenes.len());
+                // A carried clip lands in a slot that is there; files may add a scene below.
+                if probe.clip && scene >= grid.scenes.len() {
+                    continue;
+                }
                 let top = bands.top + scene as f32 * PITCH;
                 let cell = Rect::from_x_y_ranges(*span, egui::Rangef::new(top, top + ROW)).intersect(column_body);
                 let target = if probe.files {
@@ -174,7 +206,7 @@ pub fn show(
                 probe.offer(if probe.files { cell } else { column_body }, target);
             }
         }
-        if empty.width() > 0.0 && empty.contains(probe.pointer) {
+        if !probe.clip && empty.width() > 0.0 && empty.contains(probe.pointer) {
             let scene = if probe.pointer.y > body.top() { row_of(probe.pointer.y).min(grid.scenes.len()) } else { 0 };
             probe.offer(empty, DropTarget::NewTracks { beat: None, scene: Some(scene) });
         }
@@ -187,8 +219,9 @@ pub fn show(
             );
         }
     }
-    // A header let go over a column moves its track there: before the column under the
-    // pointer, or after it from its right half; a group moves with its tracks.
+    // A header let go over a column moves its track there, into the column's group: before the
+    // column under the pointer, or after it from its right half; after an open group's header
+    // is into that group. A group moves with its tracks.
     let target_of = |x: f32| spans.iter().find(|(_, span)| span.contains(x)).map(|(c, span)| (*c, x > span.center()));
     if let Some(dragged) = state.track_drag
         && let Some(pointer) = ui.ctx().pointer_interact_pos()
@@ -201,18 +234,9 @@ pub fn show(
     }
     if let Some((dragged, x)) = state.track_drop.take()
         && let Some((target, after)) = target_of(x)
-        && let Some(index) = spans.iter().position(|(c, _)| c.track == dragged)
-        && let Some((source, _)) = spans.get(index)
-        && target.track != dragged
+        && let Some(action) = nesting::drop_action(&bands.places, dragged, target.track, after, &state.folded)
     {
-        let block = 1 + spans.iter().skip(index + 1).take_while(|(c, _)| c.depth > source.depth).count();
-        let mut to = target.position + usize::from(after);
-        if target.position > source.position {
-            to = to.saturating_sub(block);
-        }
-        if to != source.position {
-            actions.push(Action::new("track.move", json!({ "track": dragged.0, "to": to })));
-        }
+        actions.push(action);
     }
 
     if returns_width > 0.0 {
@@ -296,6 +320,9 @@ struct Bands {
     mixer: Rect,
     top: f32,
     scenes: usize,
+    /// Every track but the returns, in track order, and the group tracks with their names.
+    places: Vec<Place>,
+    groups: Vec<(TrackId, String)>,
 }
 
 /// One column: header, slots and stop button, mixer strip, and its separator, inside `clip`.
@@ -314,7 +341,7 @@ fn draw_column(
 ) {
     let id = Id::new(("session-column", column.track.0));
     let header = Rect::from_x_y_ranges(span, bands.header.y_range()).intersect(clip);
-    column_header(ui, painter, header, column, state, actions);
+    column_header(ui, painter, header, column, bands, state, actions);
     let body_clip = bands.body.intersect(clip);
     column_body(
         ui,
@@ -345,6 +372,7 @@ fn column_header(
     painter: &egui::Painter,
     rect: Rect,
     column: &Column,
+    bands: &Bands,
     state: &mut SessionViewState,
     actions: &mut Vec<Action>,
 ) {
@@ -366,11 +394,17 @@ fn column_header(
     response
         .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("Track {}", column.name)));
     response.context_menu(|ui| {
+        let into: Vec<(TrackId, String)> = nesting::move_targets(&bands.places, column.track)
+            .into_iter()
+            .filter_map(|g| bands.groups.iter().find(|(t, _)| *t == g).cloned())
+            .collect();
         let menu = TrackMenu {
             track: column.track,
             name: &column.name,
             is_group: column.kind == ColumnKind::Group,
             selection: &[],
+            into: &into,
+            out: nesting::out_of_group(&bands.places, column.track),
         };
         menus::track_menu(ui, &menu, actions);
     });
@@ -383,14 +417,18 @@ fn column_header(
     let strip = Rect::from_min_max(Pos2::new(rect.left(), rect.bottom() - 2.0), rect.max);
     painter.rect_filled(strip, 0.0, lane(rgb(column.color), column.mute));
     let color = if column.mute { theme::text_hint() } else { theme::text_primary() };
-    widgets::text_in(
-        painter,
-        rect.shrink2(Vec2::new(PAD, 0.0)),
-        Align2::LEFT_CENTER,
-        &column.name,
-        theme::ui_font(theme::TEXT),
-        color,
-    );
+    // Nested tracks step in a little; a group's name follows its fold arrow.
+    let mut text = rect.shrink2(Vec2::new(PAD, 0.0));
+    text.min.x += (column.depth as f32 * 4.0).min(text.width() / 2.0);
+    if column.kind == ColumnKind::Group {
+        let arrow = Rect::from_min_size(text.min, Vec2::new(FOLD_ARROW, text.height())).intersect(rect);
+        if arrow.is_positive() {
+            let id = Id::new(("session-fold", column.track.0));
+            nesting::fold_arrow(ui, painter, arrow, id, column.track, &column.name, color, &mut state.folded);
+        }
+        text.min.x = (text.min.x + FOLD_ARROW).min(text.max.x);
+    }
+    widgets::text_in(painter, text, Align2::LEFT_CENTER, &column.name, theme::ui_font(theme::TEXT), color);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -407,6 +445,9 @@ fn column_body(
     state: &mut SessionViewState,
     actions: &mut Vec<Action>,
 ) {
+    // A track's slots can be selected, copied, pasted into and dragged; a group's only launch.
+    let editable = column.kind == ColumnKind::Track;
+    let can_paste = state.can_paste;
     for (scene, slot) in column.slots.iter().enumerate() {
         let rect = Rect::from_x_y_ranges(
             span,
@@ -417,6 +458,12 @@ fn column_body(
         }
         let number = scene + 1;
         let response = match slot.state {
+            SlotState::Empty if editable => Some(widgets::button_area(
+                ui,
+                rect.intersect(clip),
+                id.with(scene),
+                format!("Empty slot on {} (scene {number})", column.name),
+            )),
             SlotState::Empty => None,
             SlotState::EmptyStop => Some(widgets::button_area(
                 ui,
@@ -426,24 +473,40 @@ fn column_body(
             )),
             _ => {
                 let name = if slot.name.is_empty() { "clip" } else { slot.name.as_str() };
-                Some(widgets::button_area(
-                    ui,
-                    rect.intersect(clip),
-                    id.with(scene),
-                    format!("Launch {name} on {} (scene {number})", column.name),
-                ))
+                let label = format!("Launch {name} on {} (scene {number})", column.name);
+                let sense = if editable { Sense::click_and_drag() } else { Sense::click() };
+                let response = ui.interact(rect.intersect(clip), id.with(scene), sense);
+                response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &label));
+                Some(response)
             }
         };
         let hover = response.as_ref().map_or(0.0, |r| widgets::hover(ui, r));
         let pulse = if slot.state == SlotState::Queued { motion::pulse(ui.ctx()) } else { 1.0 };
-        if response.is_some_and(|r| r.clicked()) {
-            actions.push(Action::new("clip.launch", json!({ "track": column.track.0, "scene": number })));
-            // A launched clip on a track is selected, so the detail area shows it.
-            if column.kind == ColumnKind::Track && !matches!(slot.state, SlotState::Empty | SlotState::EmptyStop) {
-                state.select_slot(column.track, scene);
+        let has_clip = !matches!(slot.state, SlotState::Empty | SlotState::EmptyStop);
+        let key = (column.track, scene);
+        if let Some(response) = &response {
+            if response.clicked() && slot.state != SlotState::Empty {
+                actions.push(Action::new("clip.launch", json!({ "track": column.track.0, "scene": number })));
+                // A launched clip on a track is selected, so the detail area shows it.
+                if column.kind == ColumnKind::Track && has_clip {
+                    state.select_slot(column.track, scene);
+                }
+            }
+            if editable {
+                if response.clicked() || response.secondary_clicked() {
+                    state.selected_slot = Some(key);
+                }
+                if has_clip && response.drag_started_by(egui::PointerButton::Primary) {
+                    state.selected_slot = Some(key);
+                    state.slot_drag = Some(key);
+                }
+                response.context_menu(|ui| menus::slot_menu(ui, column.track, number, has_clip, can_paste, actions));
             }
         }
         slot_cell(painter, rect, column, slot, hover, pulse, progress);
+        if state.selected_slot == Some(key) {
+            painter.rect_stroke(rect, 0.0, theme::hairline(theme::text_primary()), StrokeKind::Inside);
+        }
         painter.hline(span, rect.bottom() + 0.5, theme::hairline(theme::border()));
     }
 
