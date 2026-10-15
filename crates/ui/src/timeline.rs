@@ -99,6 +99,8 @@ pub struct Lane {
     pub position: usize,
     pub mute: bool,
     pub solo: bool,
+    /// Also heard on the cue output (`track.setCue`).
+    pub cue: bool,
     /// The track plays notes, so it can be armed (ADR 0017), and whether it is: the session
     /// knows, not the project, so [`Timeline::build`] leaves it false.
     pub armable: bool,
@@ -234,6 +236,7 @@ impl Timeline {
                 position,
                 mute: channel.is_some_and(|c| c.mute),
                 solo: channel.is_some_and(|c| c.solo),
+                cue: channel.is_some_and(|c| c.cue),
                 armable: kind == ColumnKind::Track && (track.content.notes || track.content.audio),
                 armed: false,
                 midi_input: track.midi_input.clone(),

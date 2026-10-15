@@ -78,8 +78,15 @@ suhina-cli mcp --read-root ./projects --write-root ./renders [--audio]
   `engine_block`, `exclusive`, `latency_ms` (engine to speaker, measured), `live` (a track is
   armed, so the engine keeps one block ahead instead of two), `live_latency_ms` (the longest a
   key on a MIDI controller takes to be heard), `underruns`, `failed` and `fallback` (it plays in
-  place of a chosen host or device that is not there). Without `--audio`, `audio.devices`
-  returns an error.
+  place of a chosen host or device that is not there), `channels` (opened) and `cue_pair`.
+  Without `--audio`, `audio.devices` returns an error.
+
+- **The cue (headphones).** `output.setCuePair {pair}` plays previews and the tracks whose cue
+  is on (`track.setCue {track, cue}`, an edit) on another pair of the same device's outputs
+  (1 is outputs 3/4; 0 plays them with the main output), reopening the output like
+  `audio.setOutput`; a pair the device lacks is refused. `output.setCueVolume {db}` sets their
+  level without reopening. `suhina-cli render --cue cue.wav` writes the cue beside the main mix
+  ([spec](spec/cue-output.md)).
 
 - **MIDI controllers.** With `--audio`, the server also opens every MIDI input port
   ([ADR 0017](decisions/0017-inputs-and-latency.md)). `midi.inputs` lists them with `enabled`,
@@ -133,6 +140,9 @@ suhina-cli mcp --read-root ./projects --write-root ./renders [--audio]
   ([clip launching](spec/clip-launching.md)). `clip.create {track, scene? | start?, length?,
   stack?}` makes an empty MIDI clip, a bar long by default, in an empty slot or at a beat
   ([arrangement editing](spec/arrangement-editing.md#making-an-empty-midi-clip)).
+  `clip.split {track, index, at}` cuts a clip in two at a song position; `clip.consolidate
+  {track, start, end}` turns a range of one track into one clip (audio is rendered to a file next
+  to the project, which must have been saved).
 
 - **Slot loops.** `clip.setLoop {track, scene, loop}` switches the loop of the clip in a slot: on,
   it repeats its whole length; off, it plays once. A file placed in a slot with `clip.addFiles`

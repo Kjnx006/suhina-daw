@@ -41,6 +41,7 @@ fn everything() -> Project {
         pan: -0.25,
         mute: id == 2,
         solo: false,
+        cue: id == 2,
         output: output.map(ChannelId),
         sends: Vec::new(),
         devices: Vec::new(),
@@ -256,6 +257,20 @@ fn every_part_of_a_project_survives_a_round_trip() {
     assert_eq!(from_json(&to_json(&project)), Ok(project));
 }
 
+/// A channel's cue is written only when on, so a project without one reads and writes as it
+/// did before the cue existed.
+#[test]
+fn the_cue_is_written_only_when_on() {
+    let text = to_json(&everything());
+    assert_eq!(text.matches("\"cue\"").count(), 1, "{text}");
+    let mut quiet = everything();
+    for channel in &mut quiet.channels {
+        channel.cue = false;
+    }
+    assert!(!to_json(&quiet).contains("\"cue\""));
+    assert_eq!(from_json(&to_json(&quiet)), Ok(quiet));
+}
+
 /// Mappings are written under the launcher with 1-based scenes, and left out when there are none.
 #[test]
 fn launch_mappings_are_written_with_their_targets() {
@@ -355,6 +370,7 @@ fn hostile_values_are_errors_not_crashes() {
         r#"{ "launcher": { "scenes": [ { "name": "A", "time_signature": "4/4" } ], "columns": [] } }"#,
         r#"{ "channels": [ { "id": 1, "role": "boss" } ] }"#,
         r#"{ "channels": [ { "id": 1, "pan": 3 } ] }"#,
+        r#"{ "channels": [ { "id": 1, "cue": "on" } ] }"#,
         r#"{ "channels": [ { "id": 1, "devices": [ { "kind": { "type": "vst9" } } ] } ] }"#,
         r#"{ "channels": [ { "id": 1, "devices": [ { "kind": { "type": "clap", "id": "x" }, "automation": [ { "points": [] } ] } ] } ] }"#,
         r#"{ "channels": [ { "id": 1, "devices": [ { "kind": { "type": "clap", "id": "x" }, "automation": [ { "param": "1", "points": [ { "beat": "one", "value": 1 } ] } ] } ] } ] }"#,

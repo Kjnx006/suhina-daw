@@ -8,7 +8,9 @@ use suhina_model::{
     Marker, MidiPort, Project, Scene, Slot, TimeSignature, Track, TrackId,
 };
 
-use crate::{CommandError, Session, automation, devices, files, follow, launch, mapping, meters, notes, preview};
+use crate::{
+    CommandError, Session, automation, devices, editing, files, follow, launch, mapping, meters, notes, preview,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandKind {
@@ -490,6 +492,28 @@ static COMMANDS: &[CommandSpec] = &[
         run: duplicate_clip,
     },
     CommandSpec {
+        id: "clip.split",
+        label: "Cut an arrangement clip in two at a song position; the second part plays on from where the clip was",
+        params: &[
+            TRACK,
+            param("index", ParamType::Integer, "clip index on the track, from project.clips"),
+            param("at", ParamType::Number, "where to cut, in beats from the beginning of the song, inside the clip"),
+        ],
+        kind: CommandKind::Edit,
+        run: editing::split_clip,
+    },
+    CommandSpec {
+        id: "clip.consolidate",
+        label: "Turn a range of one track into one clip: MIDI clips by joining their notes, audio clips by rendering them (no devices) to a new file next to the project",
+        params: &[
+            TRACK,
+            param("start", ParamType::Number, "where the range starts, in beats from the beginning, at least 0"),
+            param("end", ParamType::Number, "where the range ends, in beats, after start"),
+        ],
+        kind: CommandKind::Edit,
+        run: editing::consolidate,
+    },
+    CommandSpec {
         id: "track.setOutput",
         label: "Route a track's audio to the main output or into a group track",
         params: &[TRACK, param("to", ParamType::Track, "\"main\", or a group track (id or name) to play into")],
@@ -506,6 +530,13 @@ static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: set_solo,
+    },
+    CommandSpec {
+        id: "track.setCue",
+        label: "Turn a track's cue on or off: a cued track is also heard on the cue output (headphones, output.setCuePair), after its own volume and pan, while the main mix stays as it is",
+        params: &[TRACK, param("cue", ParamType::Bool, "true cues the track")],
+        kind: CommandKind::Edit,
+        run: set_cue,
     },
     CommandSpec {
         id: "clip.move",
@@ -1731,6 +1762,7 @@ pub(crate) fn group_tracks(session: &mut Session, params: &Value) -> Result<Valu
         pan: 0.0,
         mute: false,
         solo: false,
+        cue: false,
         output,
         sends: Vec::new(),
         devices: Vec::new(),
@@ -1944,7 +1976,7 @@ fn delete_track(session: &mut Session, params: &Value) -> Result<Value, CommandE
 }
 
 /// The lane of `params.track` and the clip index in it, checked.
-fn lane_and_index(p: &Project, params: &Value) -> Result<(usize, usize), CommandError> {
+pub(crate) fn lane_and_index(p: &Project, params: &Value) -> Result<(usize, usize), CommandError> {
     let track = track_id(p, params)?;
     let index = params.get("index").and_then(Value::as_u64).ok_or("index must be a whole number from project.clips")?;
     let lane =
@@ -2305,6 +2337,12 @@ fn set_solo(session: &mut Session, params: &Value) -> Result<Value, CommandError
     Ok(json!({ "solo": solo }))
 }
 
+fn set_cue(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let cue = params.get("cue").and_then(Value::as_bool).ok_or("cue must be true or false")?;
+    channel_param(session, params)?.cue = cue;
+    Ok(json!({ "cue": cue }))
+}
+
 fn set_midi_input(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let id = track_id(&session.project, params)?;
     let port = match params.get("port") {
@@ -2517,7 +2555,7 @@ pub(crate) fn make_room(clips: &mut Vec<Clip>, from: f64, to: f64) {
             kept.push(first);
         }
         if end > to {
-            let offset = content_at(&clip, to - start);
+            let offset = content_at(&clip, to - start, 1.0);
             let mut second = Clip { start: to, length: end - to, offset, ..clip };
             if split {
                 second.fade_in = 0.0;
@@ -2529,11 +2567,18 @@ pub(crate) fn make_room(clips: &mut Vec<Clip>, from: f64, to: f64) {
     *clips = kept;
 }
 
-/// Where in its content a clip is `beats` after it starts, following its loop.
-fn content_at(clip: &Clip, beats: f64) -> f64 {
-    let at = clip.offset + beats;
-    match clip.loop_range {
-        Some(r) if r.end > r.start && at >= r.end => r.start + (at - r.start).rem_euclid(r.end - r.start),
+/// Where in its content a clip is `beats` after it starts, moving `rate` content beats per beat
+/// and following its loop, as the engine plays it: a start marker at or past the loop end starts
+/// at the loop start.
+pub(crate) fn content_at(clip: &Clip, beats: f64, rate: f64) -> f64 {
+    let loop_range = clip.loop_range.filter(|r| r.start.is_finite() && r.end.is_finite() && r.end > r.start);
+    let from = match loop_range {
+        Some(r) if clip.offset >= r.end => r.start,
+        _ => clip.offset,
+    };
+    let at = from + beats * rate;
+    match loop_range {
+        Some(r) if at >= r.end => r.start + (at - r.end).rem_euclid(r.end - r.start),
         _ => at,
     }
 }
