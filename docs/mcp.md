@@ -73,7 +73,8 @@ suhina-cli mcp --read-root ./projects --write-root ./renders [--audio]
   `failed`. Without `--audio`, `audio.devices` returns an error.
 
 - **Play position.** `transport.setPosition {beats}` moves the play start marker, where
-  `transport.play` starts (a jump while playing). `transport.stop` returns the playhead to the
+  `transport.play` starts (a jump while playing). `transport.play {from: "clip", track, index}`
+  moves the marker to that arrangement clip's start and plays from there. `transport.stop` returns the playhead to the
   marker; with `return: "here"` the marker moves to where it stopped; stopping while stopped
   moves the marker to beat 0. `launcher.state` reports `start_beat`. In a `project_render`
   launch script, `transport.setPosition` then `transport.play` renders from that beat
