@@ -31,6 +31,8 @@ fn track(id: u32, notes: bool) -> Track {
         channel: Some(ChannelId(id)),
         parent: None,
         extensions: Extensions::default(),
+        audio_input: Default::default(),
+        midi_input: Default::default(),
     }
 }
 
@@ -52,6 +54,7 @@ fn sending(level: f64, pre_fader: bool, return_devices: Vec<Device>) -> Project 
         fade_out_curve: Default::default(),
         follow_action: Default::default(),
         extensions: Extensions::default(),
+        launch: Default::default(),
     };
     Project {
         tracks: vec![track(1, true), track(2, false), track(3, false)],
