@@ -186,6 +186,7 @@ Change this code, and check these documents.
 | `scripts/discord_merged.py` | [Releasing](releasing.md) |
 | `scripts/discord_post.py` | [Releasing](releasing.md) |
 | `scripts/discord_test_build.py` | [Releasing](releasing.md) |
+| `scripts/discord_test_build_backfill.py` | [Releasing](releasing.md) |
 | `scripts/parity/**` | [parity-live-12](research/parity-live-12.md) |
 | `scripts/release_notes.py` | [Releasing](releasing.md) |
 | `scripts/stems-fixture.py` | [Stems files](spec/stems-format.md) |
