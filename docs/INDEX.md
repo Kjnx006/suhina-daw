@@ -182,8 +182,10 @@ Change this code, and check these documents.
 | `presets/**` | [0014: Stock presets](decisions/0014-stock-presets.md) |
 | `scripts/branch_update.py` | [Releasing](releasing.md) |
 | `scripts/claim_bot_test.py` | [The claim bot](claim-bot.md) |
+| `scripts/discord_api.py` | [Releasing](releasing.md) |
 | `scripts/discord_merged.py` | [Releasing](releasing.md) |
 | `scripts/discord_post.py` | [Releasing](releasing.md) |
+| `scripts/discord_test_build.py` | [Releasing](releasing.md) |
 | `scripts/parity/**` | [parity-live-12](research/parity-live-12.md) |
 | `scripts/release_notes.py` | [Releasing](releasing.md) |
 | `scripts/stems-fixture.py` | [Stems files](spec/stems-format.md) |
