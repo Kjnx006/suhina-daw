@@ -30,7 +30,8 @@ The gaps that matter most, in the order [ADR 0016](docs/decisions/0016-parity-ta
 2. **Automation:** device, plug-in and mixer parameters first, then tempo
    ([#109](https://github.com/suhina-daw/suhina-daw/issues/109) for plug-in parameters).
 3. **Recording and inputs:** audio and MIDI recording, arming, monitoring, count-in.
-4. **Cue and level meters:** sends and return tracks play; the rest of the mixer follows.
+4. **Cue, and the rest of the mixer:** sends and return tracks play and level meters are done;
+   the cue output follows.
 5. **Arrangement editing:** the loop brace ([#98](https://github.com/suhina-daw/suhina-daw/issues/98)),
    locators ([#99](https://github.com/suhina-daw/suhina-daw/issues/99)), split and consolidate.
 6. **EQ and filter**, then bus compressor, delays and reverb (see the devices below).
@@ -399,6 +400,11 @@ From Live Sets we authored ourselves in Live 12.4 ([format spec](docs/spec/als-f
   while no engine plays) and the program's RAM in megabytes or gigabytes (its resident
   memory, measured once a second); Space plays and stops, Ctrl+Z and Ctrl+Shift+Z undo and
   redo. Every click is a command, the same the CLI and MCP run.
+- Level meters for every track, group and return and the main output, in the Session mixer and
+  the Arrangement headers: peak and RMS per side on the volume's dB scale, a held peak line and a
+  clip light a click turns off; `mixer.levels` reads them and `mixer.resetClip` resets them over
+  the CLI and MCP ([spec](docs/spec/level-meters.md),
+  [#397](https://github.com/suhina-daw/suhina-daw/issues/397)).
 - Solo buttons in the Session mixer and the Arrangement headers (`track.setSolo`): exclusive by
   default, Ctrl adds; the engine hears soloed tracks, their groups and the return tracks.
 - Send knobs in the Session mixer strip, one per return beside the pan knob: drag for the level,

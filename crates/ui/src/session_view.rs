@@ -9,6 +9,7 @@ use suhina_engine::model::TrackId;
 use crate::drop::{DropProbe, DropTarget};
 use crate::grid::{Column, ColumnKind, Grid, SlotState};
 use crate::menus::{self, TrackMenu};
+use crate::meter::{self, Meters};
 use crate::motion;
 use crate::theme::{self, PAD, ROW};
 use crate::widgets::{self, Action, Drag};
@@ -42,6 +43,8 @@ pub struct SessionViewState {
     /// A drag from the browser over the window: the view says which target is under the
     /// pointer (`docs/spec/browser.md` › Dragging into the project).
     pub drop: Option<DropProbe>,
+    /// The engine's levels this frame, for the mixer's meters.
+    pub meters: Meters,
 }
 
 impl SessionViewState {
@@ -239,6 +242,18 @@ pub fn show(
     );
     let main_mixer = Rect::from_x_y_ranges(scene_span, mixer.y_range());
     painter.rect_filled(main_mixer, 0.0, theme::panel_background());
+    let level = state.meters.main;
+    let at = strip_meter(main_mixer.left()).translate(Vec2::new(0.0, main_mixer.top() + PAD));
+    meter::show(ui, &painter.with_clip_rect(main_mixer), at, "Main", meter::Source::Main, &level, actions);
+}
+
+/// Where a mixer strip starting at `left` shows its meter: right of the pan knob, from the top
+/// of the knob row to the bottom of the values row (`docs/design/components.md` › Meter).
+fn strip_meter(left: f32) -> Rect {
+    Rect::from_min_size(
+        Pos2::new(left + PAD + theme::KNOB + PAD, 0.0),
+        Vec2::new(meter::WIDTH, theme::KNOB + 4.0 + 12.0),
+    )
 }
 
 /// The two buttons that add an empty track, at the top of the empty space after the tracks;
@@ -317,6 +332,9 @@ fn draw_column(
     let mixer_rect = Rect::from_x_y_ranges(span, bands.mixer.y_range());
     let mixer_painter = painter.with_clip_rect(bands.mixer.intersect(clip));
     mixer_strip(ui, &mixer_painter, mixer_rect, column, track_number, state, id, actions);
+    let level = state.meters.track(column.track);
+    let at = strip_meter(span.min).translate(Vec2::new(0.0, mixer_rect.top() + PAD));
+    meter::show(ui, &mixer_painter, at, &column.name, meter::Source::Track(column.track), &level, actions);
     // Column separator through header, grid and mixer.
     let full = egui::Rangef::new(bands.header.top(), bands.mixer.bottom());
     painter.with_clip_rect(clip).vline(span.max + 0.5, full, theme::hairline(theme::border_strong()));
@@ -668,10 +686,13 @@ fn send_knobs(
 ) -> Option<(String, f64)> {
     let track = column.track;
     let step = theme::KNOB + SEND_GAP;
-    let fit = ((inner.right() - pan.right()) / step).floor().max(0.0) as usize;
+    // The strip's meter stands right of the pan knob (see `strip_meter`); the sends follow it.
+    let first = theme::KNOB + PAD + meter::WIDTH + SEND_GAP;
+    let room = inner.right() - pan.left() - first - theme::KNOB;
+    let fit = if room < 0.0 { 0 } else { (room / step).floor() as usize + 1 };
     let mut sending = None;
     for (index, send) in column.sends.iter().take(fit).enumerate() {
-        let rect = pan.translate(Vec2::new(step * (index + 1) as f32, 0.0));
+        let rect = pan.translate(Vec2::new(first + step * index as f32, 0.0));
         let letter = send.name.chars().next().map(String::from).unwrap_or_default();
         let control = Control::Send(send.target);
         let mode = if send.pre_fader { "pre" } else { "post" };

@@ -3,7 +3,7 @@ description: How much of Ableton Live 12's documented functionality Suhina has t
 read_when: Asking where the project stands against Live, planning parity work, or deciding which milestone closes which gap.
 type: plan
 status: draft
-last_verified: 2026-10-13
+last_verified: 2026-10-15
 covers:
   - scripts/parity/**
 ---
@@ -70,7 +70,7 @@ documentation and UI). The scope decision it leads to is
 | Weighting each chapter by its numbered sections instead of its pages | **17 %** (the two weightings agree) |
 | Numbered manual sections | **344**, of which **111 (32 %)** sit in chapters Suhina has not started at all |
 | Built-in devices | **8** (7 effects, 1 instrument) against Live's 63 (42 audio effects, 8 MIDI effects, 13 instruments) |
-| Commands | **125**, every one reachable from the UI, the CLI and MCP |
+| Commands | **128**, every one reachable from the UI, the CLI and MCP |
 | Still absent as whole features | MIDI Tools, MPE, Grooves, Tuning, Recording, Comping, Racks, Clip Envelopes, MIDI effects, Push, Link, video, accessibility |
 <!-- parity:end -->
 
@@ -136,7 +136,7 @@ documented behaviour that exists today.
 | 15 | Using Tuning Systems | 9 | 0 % | absent | No .scl/.ascl tuning systems. |
 | 16 | Launching Clips | 12 | 48 % | partial | Launch quantisation (none, 8 bars..1/32, triplets), scenes, stop, loop, back to arrangement, warped launched clips, follow actions (A/B by chance, linked or timed, jump to a slot; by command and in the detail area). Missing launch modes, legato, velocity amount, clip offset/nudge, follow-action multiplier and scene follow actions. |
 | 17 | Routing and I/O | 22 | 10 % | absent | Only track output to main or a group (track.setOutput); track input is a model field read from .als. No monitoring, external audio/MIDI in-out, resampling, sidechain, multi-timbral. |
-| 18 | Mixing | 18 | 45 % | partial | Faders, pan, mute, solo (exclusive/Ctrl), groups as buses, master, latency compensation, sends pre or post fader into return tracks that run their device chains (track.setSend, track.setSendMode, return.add/remove/rename, send knobs in the Session mixer). Missing crossfader, cue, meters, track delay, send fields in the Arrangement headers. |
+| 18 | Mixing | 18 | 50 % | partial | Faders, pan, mute, solo (exclusive/Ctrl), groups as buses, master, latency compensation, sends pre or post fader into return tracks that run their device chains (track.setSend, track.setSendMode, return.add/remove/rename, send knobs in the Session mixer), and level meters (peak, RMS, clip) per track, group, return and main, also over MCP; return tracks imported and drawn. Missing crossfader, cue, track delay, send fields in the Arrangement headers. |
 | 19 | Recording New Clips | 13 | 0 % | absent | No audio or MIDI recording, no arm, no overdub, no count-in, no capture MIDI. |
 | 20 | Bounce to Audio | 6 | 15 % | partial | Whole-project offline render to 32-bit float WAV (CLI/MCP), from an open project with its running plug-ins' state as heard; no per-track or group bounce, no paste. |
 | 21 | Comping | 6 | 0 % | absent | No take lanes, no comping. |
@@ -172,7 +172,7 @@ documented behaviour that exists today.
 | Views and editing (ch 6-10, 16) | 140 | 32 % |
 | Browser, files, project (ch 4, 5) | 103 | 43 % |
 | Devices (ch 23-25, 29-31) | 338 | 14 % |
-| Mixing, routing, I/O (ch 17, 18, 38) | 47 | 27 % |
+| Mixing, routing, I/O (ch 17, 18, 38) | 47 | 29 % |
 | Automation, envelopes (ch 26, 27) | 35 | 28 % |
 | Generative/transform (ch 11-15) | 67 | 0 % |
 | Recording, bounce, comp (ch 19-22) | 33 | 3 % |
@@ -347,7 +347,7 @@ or does something Live does not:
 | MIDI tools, MPE, grooves, tuning | 67 (ch 11-15) | 0 % | transformation and generative tools, MPE editing, groove pool, tuning systems |
 | Automation and clip envelopes | 35 (ch 26, 27) | 28 % | drawing and recording automation lanes, send and tempo automation, clip envelopes |
 | Recording, bounce, comping | 33 (ch 19-22) | 3 % | audio and MIDI recording, arming, overdub, count-in, take lanes, per-track bounce |
-| Mixing, routing, I/O | 47 (ch 17, 18, 38) | 27 % | crossfader, cue, meters, inputs and monitoring, resampling |
+| Mixing, routing, I/O | 47 (ch 17, 18, 38) | 29 % | crossfader, cue, meters, inputs and monitoring, resampling |
 | Outside a DAW's own scope | 175 (ch 28, 32-37, 41) | 1 % | video, Max for Live, Push 1 and 2, Link, accessibility - ADR 0016 leaves most of this out |
 <!-- parity:end -->
 
@@ -367,12 +367,12 @@ Two observations the numbers make plain:
 | Reading Live Sets, `.suhina`, project files | M1, M3 |
 | Playback, audio clips, time-stretching | M2, M5 |
 | Commands, CLI, MCP, undo | M3 |
-| Clip launching, scenes, quantisation, follow actions | M4 (follow actions still to do) |
+| Clip launching, scenes, quantisation, follow actions | M4 (launch modes and scene follow actions still to do) |
 | CLAP and VST3 hosting, latency, editors | M6 |
 | Other formats (DAWproject, `.flp`) | M7 |
 | Session and Arrangement views, browser, sample map, settings, installers | M8 |
 | Automation, MIDI controllers and Push, patch devices, ARA | "Later, not ordered" |
-| Sends and returns | done (Next, item 4, with cue and meters to follow) |
+| Sends and returns, level meters | done (Next, item 4, with cue to follow) |
 | Audio to MIDI, stem separation | own section of the roadmap |
 | **Recording (ch 19), comping (ch 21), bounce (ch 20), racks (ch 25), automation (ch 26), clip envelopes (ch 27), MIDI effects (ch 30), MIDI tools (ch 11), MPE (ch 12), grooves (ch 14), tuning (ch 15), MIDI remote (ch 34), Link and sync (ch 37), video (ch 28), accessibility (ch 41)** | **nothing, or "later, not ordered" at best** |
 
@@ -399,8 +399,8 @@ whether a DAW is usable without it.
 4. **Automation** (ch 26-27): device and mixer parameters first (the command layer
    and the model make this cheap), then tempo. Their envelopes now play and are edited by
    command (#109, #395); the lanes view in the arrangement is what is left before tempo.
-5. **Meters and cue** (part of ch 18): sends and returns play since October 2026; meters and
-   cue are the rest of this item.
+5. **Cue** (part of ch 18): sends and returns play and level meters are done; the cue output is
+   the rest of this item.
 6. **Arrangement editing: locators, the loop brace, split, consolidate** (ch 6):
    small commands, large workflow gain, and two of them are already open issues (#98, #99).
 

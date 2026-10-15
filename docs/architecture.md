@@ -165,7 +165,10 @@ The main thread and the audio thread share nothing mutable. They talk in two dir
   `PreviewMonitor` (whether a preview plays, and where) and a `CpuMonitor` (the audio
   thread's share of wall time spent inside the render call, smoothed over 0.2 s windows
   and kept in per mille; nothing while offline renders run flat out), both of which
-  `launcher.state` reports too — the control bar draws the CPU load from it.
+  `launcher.state` reports too — the control bar draws the CPU load from it; and a
+  `MeterMonitor` (each track's and the main output's peak and RMS level per side and clip
+  indicator, measured every block by the `meters` module and stored as atomics; read by
+  `mixer.levels` and the window's meters, [spec](spec/level-meters.md)).
 
 ## Commands
 
@@ -254,6 +257,7 @@ renderer without a deadline.
   and returns run, with plug-ins, sends and latency compensation; lanes play on devices and
   track mixers since #395, and `device.*` commands edit the chains.
 - **Plug-ins:** consecutive plug-ins of a chain that share a host process in one round trip per
-  block; a VST3 editor that follows automation; editors on Wayland and macOS (ADR 0006).
-- **UI:** the detail area (device chain, the rest of the clip editor), meters, and the commands they still
+  block; plug-in parameters as automation; a VST3 editor that follows automation; editors on
+  Wayland and macOS (ADR 0006).
+- **UI:** the detail area (device chain, the rest of the clip editor), and the commands they still
   need (arm) (M8). The browser's open questions are in its spec › Not decided yet.

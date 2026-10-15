@@ -493,6 +493,13 @@ impl Chain {
         }
     }
 
+    /// The first `frames` frames of the block's output, before the track's gains, once
+    /// [`Chain::finish`] has run.
+    pub(crate) fn output(&self, frames: usize) -> &[f32] {
+        let end = (frames.min(MAX_BLOCK) * 2).min(self.buffer.len());
+        self.buffer.get(..end).unwrap_or_default()
+    }
+
     /// Sets parameter `param` of the device at `position` among the channel's devices, as a
     /// parameter message does (ADR 0005, amendment). Never allocates.
     /// For a plug-in, `param` is its parameter id, and the value goes at the start of the next
