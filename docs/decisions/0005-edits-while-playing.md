@@ -54,7 +54,8 @@ clip; devices (ADR 0004) will add many more parameters.
    Sounding note voices ring on, on their track's chain in the new graph. A track's device
    chain keeps its running devices when the new graph has the same devices on the same track,
    with the new parameter values, so instrument notes and effect tails carry on (ADR 0004
-   decision 9). The launcher's runtime is copied column by column (a
+   decision 9), and its sends keep the sound in their delay lines when they go to the same
+   returns with the same latency (decision 11). The launcher's runtime is copied column by column (a
    column or slot that no longer exists is dropped). A playing launched clip whose prepared
    audio is unchanged keeps its stretch voice (moved from the old graph to the new); otherwise
    the new voice is moved to the clip's position.

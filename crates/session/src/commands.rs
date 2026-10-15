@@ -121,6 +121,7 @@ const CONTINUE: Param = optional(
      when no other edit came between (one drag, one step)",
 );
 const DEVICE: Param = param("device", ParamType::Integer, "device index on the track, from 0, as in track.devices");
+const RETURN: Param = param("return", ParamType::Track, "return track id or name, from project.tracks");
 const SCENE: Param = param("scene", ParamType::Integer, "scene number, from 1, as in project.launcher");
 /// A note command's clip: an arrangement clip by index, or a launcher clip by scene.
 const CLIP_INDEX: Param =
@@ -961,6 +962,45 @@ static COMMANDS: &[CommandSpec] = &[
         run: devices::restart,
     },
     CommandSpec {
+        id: "track.setSend",
+        label: "Set how much of a track goes to a return track (its send); the return runs its devices over what it is sent",
+        params: &[
+            TRACK,
+            RETURN,
+            param("level", ParamType::Decibels, "send level in dB, at most +6; \"-inf\" or below -150 is silence"),
+        ],
+        kind: CommandKind::Edit,
+        run: crate::sends::set_send,
+    },
+    CommandSpec {
+        id: "track.setSendMode",
+        label: "Take a track's send to a return before its volume and pan (pre) or after them (post, the default)",
+        params: &[TRACK, RETURN, param("mode", ParamType::Text, "\"pre\" or \"post\"")],
+        kind: CommandKind::Edit,
+        run: crate::sends::set_send_mode,
+    },
+    CommandSpec {
+        id: "return.add",
+        label: "Add a return track, after every other track, playing into the main channel; tracks reach it through sends",
+        params: &[optional("name", ParamType::Text, "its name (default: A Return, B Return and so on)")],
+        kind: CommandKind::Edit,
+        run: crate::sends::add_return,
+    },
+    CommandSpec {
+        id: "return.remove",
+        label: "Remove a return track and every send to it",
+        params: &[RETURN],
+        kind: CommandKind::Edit,
+        run: crate::sends::remove_return,
+    },
+    CommandSpec {
+        id: "return.rename",
+        label: "Rename a return track",
+        params: &[RETURN, param("name", ParamType::Text, "the new name, not empty")],
+        kind: CommandKind::Edit,
+        run: crate::sends::rename_return,
+    },
+    CommandSpec {
         id: "note.list",
         label: "List a MIDI clip's notes: index, time and length in beats, key (60 is C3), velocity 1 to 127",
         params: &[TRACK, CLIP_INDEX, CLIP_SCENE],
@@ -1167,6 +1207,7 @@ fn tracks(session: &mut Session, _: &Value) -> Result<Value, CommandError> {
                     "pan": channel.map(|c| c.pan),
                     "mute": channel.map(|c| c.mute),
                     "devices": channel.map(|c| c.devices.iter().map(|d| d.name.clone()).collect::<Vec<_>>()),
+                    "sends": channel.map(|c| crate::sends::sends_json(p, c)),
                     "arrangement_clips": clips,
                 })
             })
@@ -1385,7 +1426,7 @@ fn ungroup_track(session: &mut Session, params: &Value) -> Result<Value, Command
 }
 
 /// Removes a track, its channel, its lanes and slots, and every reference to them.
-fn remove_track(p: &mut Project, track: TrackId, channel: ChannelId) {
+pub(crate) fn remove_track(p: &mut Project, track: TrackId, channel: ChannelId) {
     p.tracks.retain(|t| t.id != track);
     p.channels.retain(|c| c.id != channel);
     for c in &mut p.channels {

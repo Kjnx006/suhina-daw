@@ -16,6 +16,7 @@ mod preview;
 mod projects;
 mod rack;
 mod relink;
+mod sends;
 mod soundmap;
 
 use std::fmt;
