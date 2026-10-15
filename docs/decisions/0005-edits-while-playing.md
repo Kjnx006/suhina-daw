@@ -55,8 +55,12 @@ clip; devices (ADR 0004) will add many more parameters.
    chain keeps its running devices when the new graph has the same devices on the same track,
    with the new parameter values, so instrument notes and effect tails carry on (ADR 0004
    decision 9), and its sends keep the sound in their delay lines when they go to the same
-   returns with the same latency (decision 11). The launcher's runtime is copied column by column (a
-   column or slot that no longer exists is dropped). A playing launched clip whose prepared
+   returns with the same latency (decision 12). The launcher's runtime is copied column by column (a
+   column or slot that no longer exists is dropped). Slots carry over by index, except when the
+   edit (or its undo) inserted or removed one scene: the session finds that with
+   `SceneShift::between` and sends it with the graph (`Controller::update_with_scenes`), so a
+   playing or queued clip moves with its row and a removed row's clips stop. A time signature a
+   launched scene set stays across the swap, like its tempo, unless the project's own changed. A playing launched clip whose prepared
    audio is unchanged keeps its stretch voice (moved from the old graph to the new); otherwise
    the new voice is moved to the clip's position. Level meters keep their levels and clip
    indicators while each meter slot plays the same track as before; a slot that now holds

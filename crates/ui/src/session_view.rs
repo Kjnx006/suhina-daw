@@ -778,6 +778,10 @@ fn scene_column(
         if response.clicked() {
             actions.push(Action::new("scene.launch", json!({ "scene": scene.number })));
         }
+        // A click in the menu's text fields keeps it open; its buttons close it.
+        egui::Popup::context_menu(&response)
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+            .show(|ui| menus::scene_menu(ui, &scene.menu(grid.scenes.len() == 1), actions));
         let hover = motion::mix(theme::control_background(), theme::control_hover(), widgets::hover(ui, &response));
         let playing = motion::toward(ui.ctx(), response.id.with("playing"), scene.playing, motion::VALUE);
         let fill = motion::mix(hover, theme::control_playing(), playing);
@@ -786,6 +790,9 @@ fn scene_column(
         let mut name = scene.name.clone();
         if let Some(tempo) = scene.tempo_bpm {
             name = format!("{name} {tempo:.0}").trim().to_string();
+        }
+        if let Some(ts) = scene.time_signature {
+            name = format!("{name} {}/{}", ts.numerator, ts.denominator).trim().to_string();
         }
         let number = scene.number.to_string();
         widgets::text_in(
