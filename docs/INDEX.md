@@ -56,6 +56,7 @@ after every merge; do not edit by hand. Find a document by what you are about to
 | [NKS preset files](spec/nks-format.md) | spec | planned | NKS, nksf, nksfx, Native Instruments presets, preset previews, .previews folder, NISI, NICA, PLID, PCHK, MessagePack, Komplete Kontrol presets, plug-in state chunk | What is known of Native Instruments preset files (.nksf, .nksfx) and their audio previews, from public sources, and what must be observed on our own files before Suhina reads them |
 | [Plug-ins in the browser](spec/plugin-browsing.md) | spec | current | plug-in views, browser plug-ins, group by type, vendor, flat list, sorting, columns, VST3 sub-categories, CLAP features, favourites, tags | How the browser shows installed plug-ins: grouped by vendor or by type, or as one flat list with sortable columns; and how each format's own categories map to Suhina's groups |
 | [Sample map](spec/sample-map.md) | spec | draft | sample map, similarity, sound map, browse by sound, t-SNE, UMAP, point cloud, grid layout, similar samples, kick snare hat categories, audio features, MFCC, NKS, preset previews, soundmap commands | How the sample map behaves: samples laid out by how they sound, coloured by kind, as a cloud or a grid, previewed by pointing, dragged into the project; NKS preset previews in the same map |
+| [Key inputs and plug-in buses](spec/sidechain.md) | spec | planned | sidechain, key input, key source, tap point, pre FX, post FX, post fader, routing, aux input, aux output, multi-out, multiple outputs, bus, audio port, region version, protocol version, VST2 bus, device input | Planned key inputs - a device whose detector reads another channel's signal (sidechain), the tap points it can read from, and the plug-in bus model (aux audio in and out) that carries the same idea across the sandbox boundary |
 | [Stems files](spec/stems-format.md) | spec | draft | stems, stem file, .stem.mp4, .stem.m4a, Traktor stems, NI stems, master track, mastering_dsp, MP4 boxes, edit list, AAC priming, multitrack audio file, DJ, remix | Stems files (.stem.mp4, .stem.m4a): an MP4 with the master and its stems as audio tracks, stem names, colours and mastering settings in moov/udta/stem; what Suhina reads and how it maps the mastering to its compressor and limiter |
 | [The .suhina project file](spec/suhina-format.md) | spec | current | .suhina layout, .locr, project file fields, writing a project file by hand or from an agent, format version, base64 state | The layout of Suhina's own project file (.suhina; .locr from before still read), field by field, with what a reader accepts |
 | [UI: clip editor (MIDI)](spec/ui-clip-editor.md) | spec | planned | piano roll, clip editor, velocity lane, zoom, detail area height, note editing | Functional spec of the MIDI clip editor: resizable detail area, zoom, regions and editing |
@@ -103,21 +104,23 @@ Change this code, and check these documents.
 | `crates/automation/src/server.rs` | [Architecture](architecture.md), [0007: Several open projects](decisions/0007-several-open-projects.md), [MCP server](mcp.md) |
 | `crates/automation/src/workspace.rs` | [MCP server](mcp.md) |
 | `crates/device-api/**` | [0004: Built-in effects and instruments](decisions/0004-built-in-devices.md) |
+| `crates/device-api/src/lib.rs` | [Key inputs and plug-in buses](spec/sidechain.md) |
 | `crates/device-registry/**` | [0004: Built-in effects and instruments](decisions/0004-built-in-devices.md) |
 | `crates/device-registry/src/lib.rs` | [0014: Stock presets](decisions/0014-stock-presets.md) |
 | `crates/dsp/**` | [0004: Built-in effects and instruments](decisions/0004-built-in-devices.md) |
 | `crates/engine/src/ahead.rs` | [Architecture](architecture.md), [0003: Time-stretching and stretch modes](decisions/0003-time-stretching.md), [0005: Edits while playing](decisions/0005-edits-while-playing.md) |
 | `crates/engine/src/audio.rs` | [0003: Time-stretching and stretch modes](decisions/0003-time-stretching.md), [Arrangement editing](spec/arrangement-editing.md) |
-| `crates/engine/src/buses.rs` | [0004: Built-in effects and instruments](decisions/0004-built-in-devices.md) |
-| `crates/engine/src/chain.rs` | [0004: Built-in effects and instruments](decisions/0004-built-in-devices.md), [0005: Edits while playing](decisions/0005-edits-while-playing.md), [0006: Plug-in hosting](decisions/0006-plug-in-hosting.md), [Device groups](spec/device-groups.md) |
+| `crates/engine/src/buses.rs` | [0004: Built-in effects and instruments](decisions/0004-built-in-devices.md), [Key inputs and plug-in buses](spec/sidechain.md) |
+| `crates/engine/src/chain.rs` | [0004: Built-in effects and instruments](decisions/0004-built-in-devices.md), [0005: Edits while playing](decisions/0005-edits-while-playing.md), [0006: Plug-in hosting](decisions/0006-plug-in-hosting.md), [Device groups](spec/device-groups.md), [Key inputs and plug-in buses](spec/sidechain.md) |
 | `crates/engine/src/cpu.rs` | [Architecture](architecture.md), [MCP server](mcp.md), [UI: main window and Session view](spec/ui-session-view.md) |
 | `crates/engine/src/launcher.rs` | [Architecture](architecture.md), [0005: Edits while playing](decisions/0005-edits-while-playing.md), [Arrangement editing](spec/arrangement-editing.md), [Clip launching](spec/clip-launching.md) |
 | `crates/engine/src/lib.rs` | [0005: Edits while playing](decisions/0005-edits-while-playing.md) |
-| `crates/engine/src/plugin.rs` | [0005: Edits while playing](decisions/0005-edits-while-playing.md), [0006: Plug-in hosting](decisions/0006-plug-in-hosting.md) |
+| `crates/engine/src/plugin.rs` | [0005: Edits while playing](decisions/0005-edits-while-playing.md), [0006: Plug-in hosting](decisions/0006-plug-in-hosting.md), [Key inputs and plug-in buses](spec/sidechain.md) |
 | `crates/engine/src/preview.rs` | [0011: Previewing, and audio added to a playing project](decisions/0011-preview-and-added-audio.md), [Browser](spec/browser.md) |
 | `crates/engine/src/stretch.rs` | [0003: Time-stretching and stretch modes](decisions/0003-time-stretching.md) |
 | `crates/engine/src/swap.rs` | [Architecture](architecture.md), [0005: Edits while playing](decisions/0005-edits-while-playing.md), [0011: Previewing, and audio added to a playing project](decisions/0011-preview-and-added-audio.md) |
 | `crates/ipc/**` | [0006: Plug-in hosting](decisions/0006-plug-in-hosting.md) |
+| `crates/ipc/src/region.rs` | [Key inputs and plug-in buses](spec/sidechain.md) |
 | `crates/library/**` | [0012: The file library: an index on disk, watched](decisions/0012-file-library.md), [Browser](spec/browser.md) |
 | `crates/library/src/find.rs` | [Missing files](spec/missing-files.md) |
 | `crates/library/src/store.rs` | [Plug-ins in the browser](spec/plugin-browsing.md) |
@@ -129,18 +132,21 @@ Change this code, and check these documents.
 | `crates/media/src/stems_tests.rs` | [Stems files](spec/stems-format.md) |
 | `crates/media/src/tempo.rs` | [Browser](spec/browser.md) |
 | `crates/media/tests/data/**` | [Stems files](spec/stems-format.md) |
-| `crates/model/src/lib.rs` | [0001: A DAW-neutral project model](decisions/0001-daw-neutral-model.md), [Arrangement editing](spec/arrangement-editing.md), [Device groups](spec/device-groups.md) |
+| `crates/model/src/lib.rs` | [0001: A DAW-neutral project model](decisions/0001-daw-neutral-model.md), [Arrangement editing](spec/arrangement-editing.md), [Device groups](spec/device-groups.md), [Key inputs and plug-in buses](spec/sidechain.md) |
 | `crates/output/src/devices.rs` | [Architecture](architecture.md), [0018: A Windows audio driver of Suhina's own](decisions/0018-own-windows-audio-driver.md) |
 | `crates/output/src/exclusive.rs` | [Architecture](architecture.md), [0018: A Windows audio driver of Suhina's own](decisions/0018-own-windows-audio-driver.md) |
 | `crates/output/src/lib.rs` | [Architecture](architecture.md), [0006: Plug-in hosting](decisions/0006-plug-in-hosting.md) |
 | `crates/plugin-host/**` | [0006: Plug-in hosting](decisions/0006-plug-in-hosting.md) |
+| `crates/plugin-host/src/clap.rs` | [Key inputs and plug-in buses](spec/sidechain.md) |
+| `crates/plugin-host/src/vst3.rs` | [Key inputs and plug-in buses](spec/sidechain.md) |
 | `crates/plugins/**` | [0006: Plug-in hosting](decisions/0006-plug-in-hosting.md) |
+| `crates/plugins/src/protocol.rs` | [Key inputs and plug-in buses](spec/sidechain.md) |
 | `crates/project-file` | [0010: Suhina's own project files (.suhina)](decisions/0010-project-files.md) |
 | `crates/project-file/src/lib.rs` | [Arrangement editing](spec/arrangement-editing.md), [The .suhina project file](spec/suhina-format.md) |
 | `crates/session/src/audio.rs` | [Architecture](architecture.md), [0002: Every action is a command](decisions/0002-commands.md), [MCP server](mcp.md) |
 | `crates/session/src/blank.rs` | [0010: Suhina's own project files (.suhina)](decisions/0010-project-files.md) |
 | `crates/session/src/commands.rs` | [0002: Every action is a command](decisions/0002-commands.md), [Arrangement editing](spec/arrangement-editing.md) |
-| `crates/session/src/devices.rs` | [0002: Every action is a command](decisions/0002-commands.md), [0004: Built-in effects and instruments](decisions/0004-built-in-devices.md), [0006: Plug-in hosting](decisions/0006-plug-in-hosting.md), [Device groups](spec/device-groups.md) |
+| `crates/session/src/devices.rs` | [0002: Every action is a command](decisions/0002-commands.md), [0004: Built-in effects and instruments](decisions/0004-built-in-devices.md), [0006: Plug-in hosting](decisions/0006-plug-in-hosting.md), [Device groups](spec/device-groups.md), [Key inputs and plug-in buses](spec/sidechain.md) |
 | `crates/session/src/files.rs` | [0003: Time-stretching and stretch modes](decisions/0003-time-stretching.md), [0011: Previewing, and audio added to a playing project](decisions/0011-preview-and-added-audio.md), [Arrangement editing](spec/arrangement-editing.md), [Browser](spec/browser.md), [Stems files](spec/stems-format.md) |
 | `crates/session/src/lib.rs` | [0002: Every action is a command](decisions/0002-commands.md), [0005: Edits while playing](decisions/0005-edits-while-playing.md), [0010: Suhina's own project files (.suhina)](decisions/0010-project-files.md), [0011: Previewing, and audio added to a playing project](decisions/0011-preview-and-added-audio.md) |
 | `crates/session/src/library.rs` | [0002: Every action is a command](decisions/0002-commands.md), [0012: The file library: an index on disk, watched](decisions/0012-file-library.md), [Browser](spec/browser.md), [Plug-ins in the browser](spec/plugin-browsing.md) |
@@ -185,6 +191,7 @@ Change this code, and check these documents.
 | `crates/ui/themes/**` | [Design brief](design/brief.md) |
 | `devices/**` | [0004: Built-in effects and instruments](decisions/0004-built-in-devices.md) |
 | `devices/*/Cargo.toml` | [Architecture](architecture.md) |
+| `devices/compressor/src/lib.rs` | [Key inputs and plug-in buses](spec/sidechain.md) |
 | `devices/fm-synth/src/patch.rs` | [DX7 voice data](spec/dx7-voice-format.md) |
 | `presets/**` | [0014: Stock presets](decisions/0014-stock-presets.md) |
 | `scripts/branch_update.py` | [Releasing](releasing.md) |
