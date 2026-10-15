@@ -25,6 +25,7 @@ mod rack;
 mod relink;
 mod sends;
 mod soundmap;
+mod tempo;
 
 use std::fmt;
 use std::path::{Path, PathBuf};

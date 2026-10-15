@@ -708,12 +708,13 @@ fn show_lanes(ui: &mut Ui, timeline: &Timeline, state: &mut ArrangementViewState
     let grid = Grid::new(state.grid, state.beat_width, bar_beats);
     let last_beat = f64::from((state.scroll.x + time.width()) / state.beat_width);
 
-    // Ruler: bar numbers, a line at each labelled bar.
+    // Ruler: bar numbers through the time-signature changes, a line at each labelled bar.
     painter.rect_filled(ruler, 0.0, theme::panel_background());
+    let meter = &timeline.meter;
     let bar_width = bar_beats as f32 * state.beat_width;
     let label_every = [1u32, 2, 4, 8, 16, 32, 64].into_iter().find(|n| *n as f32 * bar_width >= 40.0).unwrap_or(128);
-    let first_bar = (first_beat / bar_beats).floor() as u32;
-    let last_bar = (last_beat / bar_beats).ceil() as u32;
+    let first_bar = meter.position(first_beat).bar;
+    let last_bar = meter.position(last_beat).bar.saturating_add(1);
     let ruler_painter = painter.with_clip_rect(ruler);
     // The grid covers the tracks and the fixed rows, not the empty space below the tracks.
     let tracks_bottom = (lanes_area.top() - state.scroll.y + content_height).min(lanes_area.bottom());
@@ -725,27 +726,63 @@ fn show_lanes(ui: &mut Ui, timeline: &Timeline, state: &mut ArrangementViewState
         if bar % label_every != 0 {
             continue;
         }
-        let x = x_of(f64::from(bar) * bar_beats).round() + 0.5;
+        let x = x_of(meter.bar_start(bar)).round() + 0.5;
         ruler_painter.vline(x, ruler.y_range(), theme::hairline(theme::border()));
         let label = Rect::from_min_max(Pos2::new(x + 3.0, ruler.top()), Pos2::new(x + 40.0, ruler.bottom()));
         widgets::text_in(
             &ruler_painter,
             label,
             Align2::LEFT_CENTER,
-            &(bar + 1).to_string(),
+            &(u64::from(bar) + 1).to_string(),
             theme::mono_font(theme::TEXT_SMALL),
             theme::text_secondary(),
         );
     }
     // Grid in the lanes: a line at every step of the grid the control bar's value sets, coarser
-    // when zoomed out; bar lines stronger than the lines between them.
-    let max_lines = (time.width() / MIN_GRID_SPACING).ceil().max(1.0) as usize * 2 + 4;
-    for (beat, on_bar) in grid.lines(first_beat, last_beat, max_lines) {
-        let x = x_of(beat).round() + 0.5;
-        let stroke = theme::hairline(if on_bar { theme::border() } else { theme::panel_background() });
-        for band in grid_bands.iter().filter(|b| b.span() > 0.0) {
-            grid_painter.vline(x, *band, stroke);
+    // when zoomed out; bar lines stronger than the lines between them. When the time signature
+    // changes, the bars come from the meter instead: a line at every bar and, zoomed in, at
+    // every beat.
+    if meter.is_constant() {
+        let max_lines = (time.width() / MIN_GRID_SPACING).ceil().max(1.0) as usize * 2 + 4;
+        for (beat, on_bar) in grid.lines(first_beat, last_beat, max_lines) {
+            let x = x_of(beat).round() + 0.5;
+            let stroke = theme::hairline(if on_bar { theme::border() } else { theme::panel_background() });
+            for band in grid_bands.iter().filter(|b| b.span() > 0.0) {
+                grid_painter.vline(x, *band, stroke);
+            }
         }
+    } else {
+        for bar in first_bar..=last_bar {
+            let start = meter.bar_start(bar);
+            let this_bar_beats = meter.position(start).bar_beats;
+            let x = x_of(start).round() + 0.5;
+            for band in grid_bands.iter().filter(|b| b.span() > 0.0) {
+                if bar_width >= 6.0 || bar % label_every == 0 {
+                    grid_painter.vline(x, *band, theme::hairline(theme::border()));
+                }
+                if state.beat_width >= 10.0 {
+                    for beat in 1..this_bar_beats.ceil() as u32 {
+                        let x = x_of(start + f64::from(beat)).round() + 0.5;
+                        grid_painter.vline(x, *band, theme::hairline(theme::panel_background()));
+                    }
+                }
+            }
+        }
+    }
+    // Tempo and time-signature changes: a line in the accent colour and what changes, after
+    // room for the bar number.
+    for mark in timeline.marks.iter().filter(|m| m.beat >= first_beat - 64.0 && m.beat <= last_beat) {
+        let x = x_of(mark.beat).round() + 0.5;
+        ruler_painter.vline(x, ruler.y_range(), theme::hairline(theme::accent()));
+        let label = Rect::from_min_max(Pos2::new(x + 30.0, ruler.top()), Pos2::new(x + 140.0, ruler.bottom()));
+        widgets::text_in(
+            &ruler_painter,
+            label,
+            Align2::LEFT_CENTER,
+            &mark.text,
+            theme::mono_font(theme::TEXT_TINY),
+            theme::accent(),
+        );
     }
     painter.hline(area.x_range(), ruler.bottom() + 0.5, theme::hairline(theme::border()));
     painter.rect_filled(loop_row, 0.0, theme::panel_background());
