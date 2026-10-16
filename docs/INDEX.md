@@ -290,6 +290,7 @@ Change this code, and check these documents.
 | `crates/ui/src/automation_lanes.rs` | [Components](design/components.md), [Automation](spec/automation.md) |
 | `crates/ui/src/browser.rs` | [Architecture](architecture.md), [Browser](spec/browser.md), [Plug-ins in the browser](spec/plugin-browsing.md) |
 | `crates/ui/src/browser_view.rs` | [Components](design/components.md), [Keyboard shortcuts](shortcuts.md), [Browser](spec/browser.md), [Plug-ins in the browser](spec/plugin-browsing.md) |
+| `crates/ui/src/colour_picker.rs` | [Components](design/components.md), [Arrangement editing](spec/arrangement-editing.md), [UI: main window and Session view](spec/ui-session-view.md) |
 | `crates/ui/src/detail_view.rs` | [Components](design/components.md), [Suhina device graph (`.sd`)](spec/sd-device-format.md), [Custom device panels](spec/sdk-custom-ui.md), [UI: clip editor (MIDI piano roll)](spec/ui-clip-editor.md), [UI: main window and Session view](spec/ui-session-view.md) |
 | `crates/ui/src/device_canvas.rs` | [Custom device panels](spec/sdk-custom-ui.md) |
 | `crates/ui/src/drop.rs` | [Arrangement editing](spec/arrangement-editing.md), [Browser](spec/browser.md) |
@@ -337,6 +338,7 @@ Change this code, and check these documents.
 | `crates/ui/tests/mixer_strip.rs` | [UI: main window and Session view](spec/ui-session-view.md) |
 | `crates/ui/tests/open_recent.rs` | [Components](design/components.md) |
 | `crates/ui/tests/recording.rs` | [Recording](spec/recording.md) |
+| `crates/ui/tests/track_colour.rs` | [Components](design/components.md), [UI: main window and Session view](spec/ui-session-view.md) |
 | `crates/ui/tests/waveforms.rs` | [Waveforms](spec/waveforms.md) |
 | `crates/ui/themes/**` | [Design brief](design/brief.md) |
 | `devices/**` | [0004: Built-in effects and instruments](decisions/0004-built-in-devices.md) |
