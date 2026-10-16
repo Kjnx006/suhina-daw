@@ -79,7 +79,7 @@ after every merge; do not edit by hand. Find a document by what you are about to
 | [UI: main window and Session view](spec/ui-session-view.md) | spec | draft | Session view, main window layout, clip slot behaviour, scene launch, launch keys, mapping mode, Map button, Ctrl+M, mixer section, browser structure | Functional spec of the main window and the Session view: regions, clip slots, scenes, launch keys and their mapping mode, I/O, mixer, browser |
 | [Waveforms](spec/waveforms.md) | spec | current | waveform, peaks, RMS, waveform drawing, zoom, samples, stereo lanes, dB scale, clip waveform, preview waveform, sample map tooltip, frame budget | How waveforms are computed and drawn in clips, the browser's preview and the sample map's tooltips: peak levels with RMS, lanes per channel, the shape, samples close up, the dB scale, the frame budget |
 | [Window zoom](spec/window-zoom.md) | spec | current | zoom, UI zoom, window zoom, interface size, scale, Ctrl+Plus, Ctrl+Minus, Cmd+Plus, bigger text, high-DPI, zoom display | Zooming the whole window (every panel, text and control larger or smaller), its keys, limits and how it is remembered |
-| [The claim bot](claim-bot.md) | howto | current | claim, /claim, /claim @user, claim for someone else, on behalf, /unclaim, /hold, /ready, claim bot, project board, PROJECT_TOKEN, status automation, good first issue, lapsed claim, duplicate pull request, feature not agreed, project sync, board out of date, cards missing from the board | How the claim bot moves an issue's card on the project board, holds work, and is set up |
+| [The claim bot](claim-bot.md) | howto | current | claim, /claim, /claim @user, claim for someone else, on behalf, /unclaim, /hold, /ready, claim bot, project board, PROJECT_TOKEN, status automation, good first issue, lapsed claim, duplicate pull request, feature not agreed, project sync, board out of date, cards missing from the board, Touches, overlapping work, overlap, blocked by, blocked, dependency, Depends on, stacked pull requests, merge order | How the claim bot moves an issue's card on the project board, holds work, refuses blocked work, lists overlapping work, and how the Depends on check orders pull requests |
 | [How to check it](how-to-check.md) | howto | current | how to check it, test steps, QA steps, how to test, pull request description, manual testing, reviewer steps, check a change | How to write a pull request's "How to check it" section, steps a newcomer can follow from the test build to check a change in what Suhina does |
 | [Releasing](releasing.md) | howto | current | release, version, release candidate, tag, binaries, release workflow, nightly, past nightlies, development build, download, test build, pull request build, try a pull request, merge queue, merge group, update branch, merging many pull requests, batch build, Discord announcement, Discord bot, testing forum, merged thread, release notes, changelog | How versions are numbered, how release builds, the nightly and test builds of pull requests are made, and how many pull requests are merged through the merge queue |
 | [Keyboard shortcuts](shortcuts.md) | howto | current | shortcuts, keys, keymap, keymap.json, keymap preset, Draw-first, Select-first, Mouse-first, mouse switches, right click deletes, left click draws, Alt right plays, rebind, cut copy paste, duplicate, mute clips, hotkeys, quantise, Ctrl+U, piano roll keys, tool keys, number keys choose a tool, arrow keys, select all, mute tool key | Keyboard shortcuts in the desktop app: the default keys, the keymap presets, the keymap file and how to change them |
@@ -100,6 +100,7 @@ Change this code, and check these documents.
 | `.github/pull_request_template.md` | [How to check it](how-to-check.md) |
 | `.github/workflows/ci.yml` | [Releasing](releasing.md) |
 | `.github/workflows/claim.yml` | [The claim bot](claim-bot.md) |
+| `.github/workflows/depends-on.yml` | [The claim bot](claim-bot.md) |
 | `.github/workflows/discord.yml` | [Releasing](releasing.md) |
 | `.github/workflows/parity-notice.yml` | [parity-live-12](research/parity-live-12.md) |
 | `.github/workflows/project-sync.yml` | [The claim bot](claim-bot.md) |
@@ -288,6 +289,7 @@ Change this code, and check these documents.
 | `presets/**` | [0014: Stock presets](decisions/0014-stock-presets.md) |
 | `scripts/branch_update.py` | [Releasing](releasing.md) |
 | `scripts/claim_bot_test.py` | [The claim bot](claim-bot.md) |
+| `scripts/depends_on_test.py` | [The claim bot](claim-bot.md) |
 | `scripts/discord_api.py` | [Releasing](releasing.md) |
 | `scripts/discord_merged.py` | [Releasing](releasing.md) |
 | `scripts/discord_post.py` | [Releasing](releasing.md) |
