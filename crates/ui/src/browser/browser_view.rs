@@ -39,11 +39,21 @@ pub const FOOTER: f32 = 20.0;
 const FILTER_PAD: f32 = 7.0;
 const FILTER_GAP: f32 = 2.0;
 const DOT: f32 = 6.0;
+/// A row's tag dot answers a hover with a hit area this wide, 4 pt larger than the dot itself.
+/// Adjacent dots sit one hit area apart, so their areas touch but never overlap: a pointer
+/// nearer one dot cannot answer with the next dot's tag.
+const DOT_HIT: f32 = DOT + 4.0;
 const PLAY: f32 = 22.0;
 /// The List | Map switch above the results.
 const MODE_SWITCH: f32 = 22.0;
 /// A row of the tag editor.
 const EDITOR_ROW: f32 = 26.0;
+
+/// The center of a row's tag dot `index`, `5` pt right of the item's name. Two dots are
+/// [`DOT_HIT`] apart, the width of their hit area, so the areas never overlap.
+fn tag_dot_center(name_end: f32, index: usize, y: f32) -> Pos2 {
+    Pos2::new(name_end + 5.0 + index as f32 * DOT_HIT, y)
+}
 
 /// What the window has to do for the browser.
 #[derive(Debug, Default)]
@@ -661,7 +671,7 @@ fn results_view(
         };
         let name_space = (name_right - meta_width - x).max(0.0);
         let item_tags = projects.file_library_mut().item_tags(&row.item.key);
-        let dots = item_tags.len() as f32 * (DOT + 2.0);
+        let dots = item_tags.len() as f32 * DOT_HIT;
         let color = if selected { theme::text_primary() } else { theme::text_value() };
         let galley = widgets::fitted(&painter, &row.item.name, font.clone(), color, (name_space - dots).max(0.0));
         let name_pos = Pos2::new(x, rect.center().y - galley.size().y / 2.0);
@@ -669,8 +679,21 @@ fn results_view(
         painter.galley(name_pos, galley, color);
         for (i, name) in item_tags.iter().enumerate() {
             if let Some(tag) = tags.iter().find(|t| t.name == *name) {
-                let center = Pos2::new(name_end + 5.0 + i as f32 * (DOT + 2.0), rect.center().y);
+                let center = tag_dot_center(name_end, i, rect.center().y);
                 painter.circle_filled(center, DOT / 2.0, tag_color(&tag.color));
+                // The dot answers a hover with its tag's name: a tooltip, the status bar, and
+                // an accessible label.
+                let dot = ui
+                    .interact(
+                        Rect::from_center_size(center, Vec2::splat(DOT_HIT)),
+                        Id::new(("browser-tag-dot", &row.item.key, name.as_str())),
+                        Sense::hover(),
+                    )
+                    .on_hover_text(format!("Tag {name}"));
+                dot.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("Tagged {name}")));
+                if dot.hovered() {
+                    out.status = Some(Status::Hint(format!("Tag {name}")));
+                }
             }
         }
         if !meta.is_empty() {
@@ -1234,18 +1257,11 @@ fn preview_strip(
     }
 }
 
-/// The browser's tag editor, over the results' bottom, opened by the footer's Edit tags
-/// button: every tag in a list — its colour, its name (typed to rename), how many items
-/// carry it and Remove, with a confirm; the last row adds one. A click on a row filters
-/// by it, as the footer's dots do ([browser](browser.md) › Colour tags).
 /// The browser's tag editor, the popup right above the footer's Edit tags button: every tag
-/// in a list — its colour, its name (typed to rename), how many
-/// items carry it and Remove, with a confirm; the last row adds one. A click on a row filters
-/// by it, as the footer's dots do ([browser](browser.md) › Colour tags).
-/// The browser's tag editor, the popup right above the footer's Edit tags button: every tag
-/// in a list — its colour, its name (typed to rename), how many
-/// items carry it and Remove, with a confirm; the last row adds one. Its checkbox filters by
-/// the tag, as the footer's dots do ([browser](browser.md) › Colour tags).
+/// in a list — its colour, its name (typed to rename), how many items carry it and Remove,
+/// with a confirm; the last row adds one. Its checkbox filters by the tag, as the footer's
+/// dots do, or with items selected applies the tag to them, as a row's Tag menu does
+/// ([browser](browser.md) › Colour tags).
 fn tag_editor(ui: &mut Ui, area: Rect, state: &mut BrowserState, projects: &mut Projects, out: &mut BrowserOut) {
     let painter = ui.painter_at(area);
     painter.rect_filled(area, 0.0, theme::window_background());
@@ -1508,6 +1524,14 @@ fn footer_view(
         }
         let response = widgets::button_area(ui, rect, Id::new(("browser-tag", &tag.name)), format!("Tag {}", tag.name))
             .on_hover_text(&tag.name);
+        if response.hovered() {
+            // The tag's name and how many items carry it, in the status bar. The count is read
+            // where the tags are kept, not from the editor's `tag_counts`: that is absent until
+            // the editor opens and stale after an item row's Tag menu changes a tag.
+            let items = projects.file_library_mut().tagged_count(&tag.name);
+            out.status =
+                Some(Status::Hint(format!("Tag {} — {} item{}", tag.name, items, if items == 1 { "" } else { "s" })));
+        }
         let on = state.tag_filter.contains(&tag.name);
         if response.clicked() {
             if on {
@@ -1613,4 +1637,27 @@ pub fn resize_handle(ui: &Ui, handle: Rect, width: f32, left: bool) -> Option<f3
 /// The active project's session.
 fn active(projects: &Projects) -> Option<&suhina_session::Session> {
     projects.active().and_then(|id| projects.get(id))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Two dots of a row tag the same item, so their centers are close: their hit areas must
+    /// touch at most, or a pointer inside one would fall in the other too and answer with the
+    /// wrong tag (egui gives the last-added of two overlapping widgets the input).
+    #[test]
+    fn adjacent_tag_dots_have_hit_areas_that_do_not_overlap() {
+        let (first, second) = (tag_dot_center(100.0, 0, 40.0), tag_dot_center(100.0, 1, 40.0));
+        let (a, b) =
+            (Rect::from_center_size(first, Vec2::splat(DOT_HIT)), Rect::from_center_size(second, Vec2::splat(DOT_HIT)));
+        assert_eq!(b.left(), a.right(), "neighbouring areas touch: {a:?} and {b:?}");
+        // Nothing inside a dot's area falls in its neighbour's: a point just right of the
+        // first dot's edge is the first's only, so egui's hit test cannot pick the wrong one.
+        for point in [first, Pos2::new(a.right() - 0.5, first.y), Pos2::new(a.left() + 0.5, first.y)] {
+            assert!(a.contains(point) && !b.contains(point), "{point:?} is in both hit areas");
+        }
+        // The area still holds the dot drawn inside it, and is larger than the dot.
+        assert!(a.width() > DOT && a.height() > DOT);
+    }
 }
