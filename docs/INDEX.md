@@ -287,53 +287,58 @@ Change this code, and check these documents.
 | `crates/stretch/src/lib.rs` | [0003: Time-stretching and stretch modes](decisions/0003-time-stretching.md) |
 | `crates/ui/Cargo.toml` | [0009: egui for the UI; familiar workflow, Suhina's own look](decisions/0009-ui-toolkit-and-look.md) |
 | `crates/ui/src/app.rs` | [0020: Latency: what the number is, and where it is shown](decisions/0020-latency-and-its-readout.md), [Arrangement editing](spec/arrangement-editing.md), [UI: main window and Session view](spec/ui-session-view.md) |
-| `crates/ui/src/arrangement_view.rs` | [Components](design/components.md), [Arrangement editing](spec/arrangement-editing.md) |
-| `crates/ui/src/automation_lanes.rs` | [Components](design/components.md), [Automation](spec/automation.md) |
+| `crates/ui/src/app/loading_dialog.rs` | [Components](design/components.md) |
+| `crates/ui/src/app/missing_files.rs` | [Architecture](architecture.md), [Components](design/components.md), [Missing files](spec/missing-files.md) |
+| `crates/ui/src/app/project_dialog.rs` | [Components](design/components.md), [About Suhina](spec/about.md), [Backups](spec/backups.md) |
+| `crates/ui/src/app/splash.rs` | [Components](design/components.md) |
+| `crates/ui/src/app/start_panel.rs` | [Components](design/components.md) |
+| `crates/ui/src/arrangement.rs` | [Architecture](architecture.md) |
+| `crates/ui/src/arrangement/arrangement_view.rs` | [Components](design/components.md), [Arrangement editing](spec/arrangement-editing.md) |
+| `crates/ui/src/arrangement/automation_lanes.rs` | [Components](design/components.md), [Automation](spec/automation.md) |
+| `crates/ui/src/arrangement/timeline.rs` | [Components](design/components.md), [Arrangement editing](spec/arrangement-editing.md) |
 | `crates/ui/src/browser.rs` | [Architecture](architecture.md), [Browser](spec/browser.md), [Plug-ins in the browser](spec/plugin-browsing.md) |
-| `crates/ui/src/browser_view.rs` | [Components](design/components.md), [Keyboard shortcuts](shortcuts.md), [Browser](spec/browser.md), [Plug-ins in the browser](spec/plugin-browsing.md) |
-| `crates/ui/src/colour_picker.rs` | [Components](design/components.md), [Arrangement editing](spec/arrangement-editing.md), [UI: main window and Session view](spec/ui-session-view.md) |
-| `crates/ui/src/detail_view.rs` | [Components](design/components.md), [Suhina device graph (`.sd`)](spec/sd-device-format.md), [Custom device panels](spec/sdk-custom-ui.md), [UI: clip editor (MIDI piano roll)](spec/ui-clip-editor.md), [UI: main window and Session view](spec/ui-session-view.md) |
-| `crates/ui/src/device_canvas.rs` | [Custom device panels](spec/sdk-custom-ui.md) |
-| `crates/ui/src/drop.rs` | [Arrangement editing](spec/arrangement-editing.md), [Browser](spec/browser.md) |
-| `crates/ui/src/follow_view.rs` | [Components](design/components.md), [UI: main window and Session view](spec/ui-session-view.md) |
-| `crates/ui/src/grid.rs` | [Design brief](design/brief.md), [UI: main window and Session view](spec/ui-session-view.md) |
-| `crates/ui/src/keymap.rs` | [Keyboard shortcuts](guide/keyboard-shortcuts.md), [Keyboard shortcuts](shortcuts.md), [Arrangement editing](spec/arrangement-editing.md), [UI: main window and Session view](spec/ui-session-view.md), [Window zoom](spec/window-zoom.md) |
-| `crates/ui/src/launch_keys.rs` | [UI: main window and Session view](spec/ui-session-view.md) |
+| `crates/ui/src/browser/browser_view.rs` | [Components](design/components.md), [Keyboard shortcuts](shortcuts.md), [Browser](spec/browser.md), [Plug-ins in the browser](spec/plugin-browsing.md) |
+| `crates/ui/src/browser/sample_map.rs` | [Sample map](spec/sample-map.md) |
+| `crates/ui/src/browser/sample_map_crowd.rs` | [Sample map](spec/sample-map.md) |
+| `crates/ui/src/browser/sample_map_panel.rs` | [Sample map](spec/sample-map.md) |
+| `crates/ui/src/detail.rs` | [Architecture](architecture.md) |
+| `crates/ui/src/detail/detail_view.rs` | [Components](design/components.md), [Suhina device graph (`.sd`)](spec/sd-device-format.md), [Custom device panels](spec/sdk-custom-ui.md), [UI: clip editor (MIDI piano roll)](spec/ui-clip-editor.md), [UI: main window and Session view](spec/ui-session-view.md) |
+| `crates/ui/src/detail/device_canvas.rs` | [Custom device panels](spec/sdk-custom-ui.md) |
+| `crates/ui/src/detail/follow_view.rs` | [Components](design/components.md), [UI: main window and Session view](spec/ui-session-view.md) |
+| `crates/ui/src/detail/midi_tools.rs` | [UI: clip editor (MIDI piano roll)](spec/ui-clip-editor.md) |
+| `crates/ui/src/detail/piano_roll.rs` | [UI: clip editor (MIDI piano roll)](spec/ui-clip-editor.md) |
+| `crates/ui/src/detail/piano_roll_gestures.rs` | [UI: clip editor (MIDI piano roll)](spec/ui-clip-editor.md) |
+| `crates/ui/src/detail/piano_roll_ghosts.rs` | [UI: clip editor (MIDI piano roll)](spec/ui-clip-editor.md) |
+| `crates/ui/src/detail/piano_roll_grid.rs` | [UI: clip editor (MIDI piano roll)](spec/ui-clip-editor.md) |
+| `crates/ui/src/detail/piano_roll_ruler.rs` | [UI: clip editor (MIDI piano roll)](spec/ui-clip-editor.md) |
+| `crates/ui/src/detail/piano_roll_scale.rs` | [UI: clip editor (MIDI piano roll)](spec/ui-clip-editor.md) |
+| `crates/ui/src/interaction.rs` | [Architecture](architecture.md) |
+| `crates/ui/src/interaction/colour_picker.rs` | [Components](design/components.md), [Arrangement editing](spec/arrangement-editing.md), [UI: main window and Session view](spec/ui-session-view.md) |
+| `crates/ui/src/interaction/drop.rs` | [Arrangement editing](spec/arrangement-editing.md), [Browser](spec/browser.md) |
+| `crates/ui/src/interaction/grid.rs` | [Design brief](design/brief.md), [UI: main window and Session view](spec/ui-session-view.md) |
+| `crates/ui/src/interaction/menus.rs` | [Arrangement editing](spec/arrangement-editing.md), [Clip launching](spec/clip-launching.md) |
+| `crates/ui/src/interaction/pick.rs` | [Components](design/components.md) |
+| `crates/ui/src/kit.rs` | [Architecture](architecture.md) |
+| `crates/ui/src/kit/logo.rs` | [Components](design/components.md) |
+| `crates/ui/src/kit/meter.rs` | [Components](design/components.md), [Level meters](spec/level-meters.md) |
+| `crates/ui/src/kit/motion.rs` | [Components](design/components.md) |
+| `crates/ui/src/kit/theme.rs` | [0009: egui for the UI; familiar workflow, Suhina's own look](decisions/0009-ui-toolkit-and-look.md), [Design brief](design/brief.md), [Components](design/components.md) |
+| `crates/ui/src/kit/waveform.rs` | [Components](design/components.md), [Waveforms](spec/waveforms.md) |
+| `crates/ui/src/kit/waveform/tests.rs` | [Waveforms](spec/waveforms.md) |
+| `crates/ui/src/kit/widgets.rs` | [Components](design/components.md), [Cue output](spec/cue-output.md), [UI: main window and Session view](spec/ui-session-view.md) |
 | `crates/ui/src/lib.rs` | [Architecture](architecture.md) |
-| `crates/ui/src/loading_dialog.rs` | [Components](design/components.md) |
-| `crates/ui/src/logo.rs` | [Components](design/components.md) |
-| `crates/ui/src/menus.rs` | [Arrangement editing](spec/arrangement-editing.md), [Clip launching](spec/clip-launching.md) |
-| `crates/ui/src/meter.rs` | [Components](design/components.md), [Level meters](spec/level-meters.md) |
-| `crates/ui/src/midi_tools.rs` | [UI: clip editor (MIDI piano roll)](spec/ui-clip-editor.md) |
-| `crates/ui/src/missing_files.rs` | [Architecture](architecture.md), [Components](design/components.md), [Missing files](spec/missing-files.md) |
-| `crates/ui/src/mixer_strip.rs` | [Components](design/components.md), [UI: main window and Session view](spec/ui-session-view.md) |
-| `crates/ui/src/motion.rs` | [Components](design/components.md) |
-| `crates/ui/src/piano_roll.rs` | [UI: clip editor (MIDI piano roll)](spec/ui-clip-editor.md) |
-| `crates/ui/src/piano_roll_gestures.rs` | [UI: clip editor (MIDI piano roll)](spec/ui-clip-editor.md) |
-| `crates/ui/src/piano_roll_ghosts.rs` | [UI: clip editor (MIDI piano roll)](spec/ui-clip-editor.md) |
-| `crates/ui/src/piano_roll_grid.rs` | [UI: clip editor (MIDI piano roll)](spec/ui-clip-editor.md) |
-| `crates/ui/src/piano_roll_ruler.rs` | [UI: clip editor (MIDI piano roll)](spec/ui-clip-editor.md) |
-| `crates/ui/src/piano_roll_scale.rs` | [UI: clip editor (MIDI piano roll)](spec/ui-clip-editor.md) |
-| `crates/ui/src/pick.rs` | [Components](design/components.md) |
-| `crates/ui/src/project_dialog.rs` | [Components](design/components.md), [About Suhina](spec/about.md), [Backups](spec/backups.md) |
-| `crates/ui/src/record_controls.rs` | [Recording](spec/recording.md) |
-| `crates/ui/src/sample_map.rs` | [Sample map](spec/sample-map.md) |
-| `crates/ui/src/sample_map_crowd.rs` | [Sample map](spec/sample-map.md) |
-| `crates/ui/src/sample_map_panel.rs` | [Sample map](spec/sample-map.md) |
-| `crates/ui/src/session_view.rs` | [Components](design/components.md), [Browser](spec/browser.md), [UI: main window and Session view](spec/ui-session-view.md) |
+| `crates/ui/src/session.rs` | [Architecture](architecture.md) |
+| `crates/ui/src/session/launch_keys.rs` | [UI: main window and Session view](spec/ui-session-view.md) |
+| `crates/ui/src/session/mixer_strip.rs` | [Components](design/components.md), [UI: main window and Session view](spec/ui-session-view.md) |
+| `crates/ui/src/session/record_controls.rs` | [Recording](spec/recording.md) |
+| `crates/ui/src/session/session_view.rs` | [Components](design/components.md), [Browser](spec/browser.md), [UI: main window and Session view](spec/ui-session-view.md) |
+| `crates/ui/src/session/slot_launch.rs` | [UI: main window and Session view](spec/ui-session-view.md) |
 | `crates/ui/src/settings.rs` | [Arrangement editing](spec/arrangement-editing.md), [The Settings window](spec/ui-settings.md), [Window zoom](spec/window-zoom.md) |
-| `crates/ui/src/settings_rows.rs` | [The Settings window](spec/ui-settings.md) |
-| `crates/ui/src/settings_view.rs` | [0020: Latency: what the number is, and where it is shown](decisions/0020-latency-and-its-readout.md), [Design brief](design/brief.md), [Components](design/components.md), [Keyboard shortcuts](guide/keyboard-shortcuts.md), [Keyboard shortcuts](shortcuts.md), [The Settings window](spec/ui-settings.md), [Window zoom](spec/window-zoom.md) |
-| `crates/ui/src/slot_launch.rs` | [UI: main window and Session view](spec/ui-session-view.md) |
-| `crates/ui/src/splash.rs` | [Components](design/components.md) |
-| `crates/ui/src/start_panel.rs` | [Components](design/components.md) |
-| `crates/ui/src/theme.rs` | [0009: egui for the UI; familiar workflow, Suhina's own look](decisions/0009-ui-toolkit-and-look.md), [Design brief](design/brief.md), [Components](design/components.md) |
-| `crates/ui/src/themes.rs` | [Design brief](design/brief.md), [Components](design/components.md) |
-| `crates/ui/src/timeline.rs` | [Components](design/components.md), [Arrangement editing](spec/arrangement-editing.md) |
-| `crates/ui/src/view_settings.rs` | [Components](design/components.md), [UI: main window and Session view](spec/ui-session-view.md) |
-| `crates/ui/src/waveform.rs` | [Components](design/components.md), [Waveforms](spec/waveforms.md) |
-| `crates/ui/src/waveform/tests.rs` | [Waveforms](spec/waveforms.md) |
-| `crates/ui/src/widgets.rs` | [Components](design/components.md), [Cue output](spec/cue-output.md), [UI: main window and Session view](spec/ui-session-view.md) |
+| `crates/ui/src/settings/keymap.rs` | [Keyboard shortcuts](guide/keyboard-shortcuts.md), [Keyboard shortcuts](shortcuts.md), [Arrangement editing](spec/arrangement-editing.md), [UI: main window and Session view](spec/ui-session-view.md), [Window zoom](spec/window-zoom.md) |
+| `crates/ui/src/settings/settings_rows.rs` | [The Settings window](spec/ui-settings.md) |
+| `crates/ui/src/settings/settings_view.rs` | [0020: Latency: what the number is, and where it is shown](decisions/0020-latency-and-its-readout.md), [Design brief](design/brief.md), [Components](design/components.md), [Keyboard shortcuts](guide/keyboard-shortcuts.md), [Keyboard shortcuts](shortcuts.md), [The Settings window](spec/ui-settings.md), [Window zoom](spec/window-zoom.md) |
+| `crates/ui/src/settings/themes.rs` | [Design brief](design/brief.md), [Components](design/components.md) |
+| `crates/ui/src/settings/view_settings.rs` | [Components](design/components.md), [UI: main window and Session view](spec/ui-session-view.md) |
 | `crates/ui/tests/automation_lanes.rs` | [Automation](spec/automation.md) |
 | `crates/ui/tests/launch_keys.rs` | [UI: main window and Session view](spec/ui-session-view.md) |
 | `crates/ui/tests/meters.rs` | [Level meters](spec/level-meters.md) |
