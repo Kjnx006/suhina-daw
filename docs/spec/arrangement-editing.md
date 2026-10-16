@@ -130,7 +130,7 @@ selects it; it stacks when the MIDI stacking setting is on. A double-click on a 
 clip's own. In the Session view a double-click on an empty slot makes one there
 ([Session view](ui-session-view.md) › Clip slots).
 
-Both double-clicks follow one setting, Settings › Interface › **Double-click makes a clip** (On by
+Both double-clicks follow one setting, Settings › Arrangement › **Double-click makes a clip** (On by
 default, saved as `double_click_clip`). Off, a double-click on an empty spot of a lane, or on an
 empty slot, does nothing: no clip, and the selection stays as the first click left it.
 `clip.create` sent any other way (the command line, MCP) is not affected.
@@ -560,7 +560,7 @@ half, and below the header of an open group is into that group, first. Within th
 drop is a `track.move`; into another group, or out to the top level, it is a `track.setGroup`.
 After a folded group is after everything inside it.
 
-While the piano roll is pulled to the top with **Edited track** (Settings › General › Piano roll),
+While the piano roll is pulled to the top with **Edited track** (Settings › Clip editor › Piano roll),
 the view shows only its ruler, loop brace and marker rows and the edited track's lane, whole and
 lit (the view is as tall as those rows and the lane, so the lane's notes show as they do
 elsewhere), with no return tracks and no main track, and is not scrolled; its scroll position is back when the view is whole again
@@ -594,7 +594,7 @@ the value with `continue`, so the drag is one undo step.
 one step (1 dB, or 0.02 of pan), Shift makes it ten times finer, and the view stays where it is.
 The same holds for a clip's gain field and for the Session mixer's values.
 
-**Mixer controls** (Settings › Interface › Arrangement) chooses how a track's volume and pan are
+**Mixer controls** (Settings › Session and mixer) chooses how a track's volume and pan are
 drawn: **Field** (default), the bar and the centre bar this view has always had, or **Knob**, a
 small knob with its value beside it, as the Session mixer's pan knob. Either way the control is
 dragged and rolled over the same.

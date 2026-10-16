@@ -355,38 +355,24 @@ fn the_duplicate_setting_in_the_menu_moves_the_key() {
 }
 
 #[test]
-fn settings_general_scrolls_to_the_workflow_rows() {
+fn settings_clip_editor_shows_the_workflow_rows() {
     let mut renderer = engine();
     let mut h = piano_app(&mut renderer);
     h.key_press_modifiers(Modifiers::COMMAND, Key::Comma);
     h.run();
-    h.get_by_label("Settings page: General").click();
+    h.get_by_label("Settings page: Clip editor").click();
     h.run();
+    // The workflow rows are on the Clip editor page (scrolling a long page: settings_window.rs).
     let last = "Double-click on a note: Nothing";
-    let before = h.get_by_label(last).rect();
-    assert!(before.bottom() > SIZE.1, "the last row starts out of view at this height: {before:?}");
-    // The wheel over the page scrolls it until the last row is in view, and no further.
-    let over = pos2(SIZE.0 / 2.0, SIZE.1 / 2.0);
-    for _ in 0..20 {
-        h.hover_at(over);
-        h.input_mut().events.push(egui::Event::MouseWheel {
-            unit: egui::MouseWheelUnit::Point,
-            delta: egui::vec2(0.0, -120.0),
-            modifiers: Modifiers::NONE,
-            phase: egui::TouchPhase::Move,
-        });
-        h.run();
-    }
-    let after = h.get_by_label(last).rect();
-    assert!(after.bottom() <= SIZE.1, "scrolled into view: {after:?}");
-    assert!(after.top() > SIZE.1 / 2.0, "but not past the page's end: {after:?}");
+    let rect = h.get_by_label(last).rect();
+    assert!(rect.bottom() <= SIZE.1, "the last row is in view: {rect:?}");
     h.get_by_label(last).click();
     h.run();
     assert!(!h.state().keymap().workflow().double_click_deletes, "and its row works there");
     assert_eq!(h.state().keymap().preset(), Preset::Custom);
 }
 
-/// Renders the piano roll with its workflow menu open, and Settings › General with the workflow
+/// Renders the piano roll with its workflow menu open, and Settings › Clip editor with the workflow
 /// rows, to `target/ui-snapshots/`, for looking at:
 /// `cargo test -p suhina-ui --test piano_roll_workflow -- --ignored`.
 #[test]
@@ -421,7 +407,7 @@ fn render_the_workflow_menu_and_settings() {
     h.run();
     h.key_press_modifiers(Modifiers::COMMAND, Key::Comma);
     h.run();
-    h.get_by_label("Settings page: General").click();
+    h.get_by_label("Settings page: Clip editor").click();
     h.run();
     h.render().unwrap().save(out.join("workflow-settings.png")).unwrap();
 }

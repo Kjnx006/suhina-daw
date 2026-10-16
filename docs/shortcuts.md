@@ -49,7 +49,7 @@ can be changed while editing ([spec](spec/ui-clip-editor.md) › Workflow modes)
 | **Mouse-first** | working with the mouse | the four mouse switches below are all on, so the left button draws in the Select tool, the right button deletes a note (a drag deletes the notes it passes over), Shift+right slices the notes under a short drag, and Alt (Option on macOS) with the right button held plays the clip from the point under the pointer; duplicate is **Ctrl+D** |
 
 Every behaviour that differs between the presets is a **workflow setting** of its own, a row in
-Settings › General › Piano roll and an entry in the toolbar's workflow menu: **Click on empty
+Settings › Clip editor › Workflow and an entry in the toolbar's workflow menu: **Click on empty
 grid**, **Right click on a note**, **Shift+right drag**, **Alt+right button**, **Duplicate key**,
 **Double-click on empty grid** and **Double-click on a note**. Changing one makes the mode
 **Custom** and keeps the others; choosing a preset again fills them all in. They are kept in
@@ -93,7 +93,7 @@ status bar.
 
 | Action | Keys |
 |---|---|
-| Play or stop (`transport.toggle`; Play starts from the play start marker or the selected clip, as Settings › General › Play from says; Stop goes back to the marker or stays, as Settings › General › Stop says) | Space |
+| Play or stop (`transport.toggle`; Play starts from the play start marker or the selected clip, as Settings › Transport › Play from says; Stop goes back to the marker or stays, as Settings › Transport › Stop says) | Space |
 | Play from the start of the clip selected in the Arrangement view, whatever the setting (`transport.playFromSelection`; from the marker when no clip is selected) | Shift+Space |
 | Switch between Session and Arrangement (`view.toggle`) | Tab |
 | Show or hide the detail area (`view.detail`) | Shift+Tab |

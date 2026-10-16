@@ -1366,7 +1366,7 @@ impl App {
                 ui.scope_builder(egui::UiBuilder::new().max_rect(prompt), |ui| self.missing.bar(ui, prompt));
             }
             // With the detail area across the full width, the browser takes its side of what is
-            // left above it (Settings › Interface › Detail area › Layout).
+            // left above it (Settings › Detail area › Detail area layout).
             let full_width = grid.is_some()
                 && self.settings.view.detail_layout == crate::view_settings::DetailLayout::FullWidth
                 && self.settings.device_layout != DeviceLayout::Stack;
@@ -2361,7 +2361,7 @@ impl App {
         };
         let tag_limit = self.projects.file_library_mut().tag_limit();
         self.about.audio_live = self.session().and_then(Session::player).and_then(suhina_session::Player::output_info);
-        if self.page.page == settings_view::Page::Audio {
+        if self.page.shows_devices() {
             // The latency and underruns change while it plays, and controllers come and go.
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(250));
             if self.midi_listed.is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(2)) {

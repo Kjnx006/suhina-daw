@@ -792,7 +792,7 @@ fn tool_of(action: &str) -> Option<Tool> {
 /// What the window tells the piano roll about the settings that change what it does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Options {
-    /// How large the toolbar is drawn: Settings › General › Piano roll › Toolbar size.
+    /// How large the toolbar is drawn: Settings › Clip editor › Piano roll › Toolbar size.
     pub toolbar_size: ToolbarSize,
     /// The workflow settings: what clicks, right-clicks and double-clicks do (› Workflow modes in
     /// `docs/spec/ui-clip-editor.md`).
@@ -1341,7 +1341,7 @@ pub fn show(
         state.selected.retain(|i| *i < clip.notes.len());
     }
     // The toolbar along the top; the editor under it. The toolbar's height follows Settings ›
-    // General › Piano roll › Toolbar size, and never takes more than the room the editor has.
+    // Clip editor › Piano roll › Toolbar size, and never takes more than the room the editor has.
     let band = (TOOLBAR * scale).min(area.height());
     let toolbar_rect = Rect::from_min_max(area.min, Pos2::new(area.right(), area.top() + band));
     let whole = area;

@@ -67,7 +67,7 @@ pub struct SessionViewState {
     /// changes its value instead of scrolling the view.
     pub(crate) value_areas: Vec<Rect>,
     /// The volume as a knob beside the pan knob instead of a plain value
-    /// (Settings › Interface › Arrangement › Mixer controls).
+    /// (Settings › Session and mixer › Mixer controls).
     pub knobs: bool,
     /// A drag from the browser over the window: the view says which target is under the
     /// pointer (`docs/spec/browser.md` › Dragging into the project).
@@ -89,7 +89,7 @@ pub struct SessionViewState {
     /// A column's name or channel strip was double-clicked: the window shows that track's devices
     /// (`docs/spec/ui-clip-editor.md` › Where it opens).
     pub open_devices: Option<TrackId>,
-    /// A double-click on an empty slot does nothing (Settings › Interface › Double-click makes a
+    /// A double-click on an empty slot does nothing (Settings › Arrangement › Double-click makes a
     /// clip is off); by default it makes an empty MIDI clip.
     pub double_click_does_nothing: bool,
 }
