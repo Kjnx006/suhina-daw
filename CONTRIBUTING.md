@@ -50,6 +50,10 @@
   (`.coderabbit.yaml`) and shows a **CodeRabbit** check beside CI. Its comments are suggestions, not requirements: answer or resolve
   them, and leave DSP and real-time behaviour to the tests and renders. The check is never red and
   never required. Comment `@coderabbitai review` to run it again.
+- **Asking for a review:** ask a maintainer (**Reviewers** on the pull request). Comments by
+  `suhina-bot[bot]` are a maintainer's agent's feedback, posted for them; the bot takes no
+  requests, and neither it nor CodeRabbit approves anything: a pull request goes in on a
+  maintainer's `ready to merge` label.
 - **Pull request description:** use the sections of `.github/pull_request_template.md`, all of them;
   one line is enough where nothing applies. `.github/workflows/pr-description.yml` warns about a
   missing section (`scripts/pr_description.py`); it never fails.
@@ -153,7 +157,10 @@ request. An agent searches for an existing issue before it opens one, and for an
 before it opens one; it continues work that is open rather than starting it again. An agent run
 by someone with write access opens issues through the
 [Open issue](.github/workflows/open-issue.yml) workflow, so they show the bot `suhina-bot[bot]` as
-their author rather than that person (`AGENTS.md` › Tasks has the commands). The rules in
+their author rather than that person, and posts the feedback it wrote onto a pull request's
+conversation through the [Comment on pull request](.github/workflows/comment-pr.yml) workflow, so it
+is the bot's comment and not that person's; it is a comment, not a GitHub review, and approves or
+blocks nothing (`AGENTS.md` › Tasks has the commands). The rules in
 [AI-assisted contributions](#ai-assisted-contributions) apply to what the agent wrote.
 
 ## Trying a pull request
