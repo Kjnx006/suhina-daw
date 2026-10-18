@@ -3,7 +3,7 @@ description: A data-only versioned graph format and Rust SDK for community-autho
 read_when: .sd, Suhina device SDK, device graph, community device, graph effect
 type: decision
 status: current
-last_verified: 2026-10-15
+last_verified: 2026-10-19
 covers:
   - crates/device-sdk/Cargo.toml
   - crates/device-sdk/src/lib.rs
