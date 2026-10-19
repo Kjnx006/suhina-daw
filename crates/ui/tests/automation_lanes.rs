@@ -804,6 +804,11 @@ fn render_the_lanes() {
     harness.run();
     harness.get_by_label("Show automation of Drums").click();
     harness.run();
+    // A lane without points: the mute's faint line.
+    if let Some(add) = harness.get_all_by_label("Add an automation lane to Drums").last() {
+        add.click();
+    }
+    harness.run();
     let one = harness.get_by_label("Volume point 2 on Drums").rect().center();
     click_at(&mut harness, one);
     harness.remove_cursor();
@@ -812,4 +817,61 @@ fn render_the_lanes() {
     let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/ui-snapshots");
     std::fs::create_dir_all(&out).unwrap_or_else(|e| panic!("{e}"));
     image.save(out.join("automation-lanes.png")).unwrap_or_else(|e| panic!("{e}"));
+}
+
+#[test]
+fn a_click_near_the_envelope_adds_a_point_on_it() {
+    let mut harness = with_lanes();
+    // A level segment: the second point, added on the line held after the first, keeps its value.
+    add_point(&mut harness, 100.0);
+    add_point(&mut harness, 300.0);
+    let (points, _) = volume(&harness);
+    assert_eq!(points.len(), 2, "{points:?}");
+    assert_eq!(points[0].value, points[1].value);
+    // A click a little under the line, between them, adds a point on it: still level.
+    let rect = lane(&harness);
+    click_at(&mut harness, Pos2::new(rect.left() + 200.0, rect.center().y + 3.0));
+    let (points, _) = volume(&harness);
+    assert_eq!(points.len(), 3, "{points:?}");
+    assert!(points.iter().all(|p| p.value == points[0].value), "{points:?}");
+    // Further from the line, a point goes where the pointer is.
+    click_at(&mut harness, Pos2::new(rect.left() + 400.0, rect.top() + 6.0));
+    let (points, _) = volume(&harness);
+    assert!(points[3].value > points[0].value, "{points:?}");
+}
+
+#[test]
+fn a_lane_without_points_adds_one_on_the_parameters_value() {
+    let mut harness = with_lanes();
+    harness.get_by_label("Add an automation lane to Drums").click();
+    harness.run();
+    let set = {
+        let project = harness.state().session().map(|s| s.project().clone());
+        let channel = project.as_ref().and_then(|p| {
+            let id = p.tracks.iter().find(|t| t.name == "Drums").and_then(|t| t.channel);
+            p.channels.iter().find(|c| Some(c.id) == id).cloned()
+        });
+        channel.map_or(0.0, |c| c.pan)
+    };
+    // The faint line sits at the pan's value; a click just off it adds a point on it.
+    let rect = harness.get_by_label("Pan automation on Drums").rect();
+    let y = rect.bottom() - 4.0 - ((set as f32 + 1.0) / 2.0) * (rect.height() - 8.0);
+    click_at(&mut harness, Pos2::new(rect.left() + 100.0, y + 3.0));
+    let (points, _) = pan(&harness);
+    assert_eq!(points.len(), 1, "{points:?}");
+    assert_eq!(points[0].value, set);
+}
+
+#[test]
+fn alt_drags_a_point_off_the_grid() {
+    let mut harness = with_lanes();
+    add_point(&mut harness, 100.0);
+    let point = harness.get_by_label("Volume point 1 on Drums").rect().center();
+    // 36 points is four and a half beats: the grid (a bar) would take it to beat 16.
+    harness.event(egui::Event::ModifiersChanged(Modifiers::ALT));
+    drag(&mut harness, point, vec2(36.0, 0.0));
+    harness.event(egui::Event::ModifiersChanged(Modifiers::NONE));
+    let (points, _) = volume(&harness);
+    assert_eq!(points.len(), 1);
+    assert!((points[0].beat - 16.5).abs() < 0.2, "{points:?}");
 }
