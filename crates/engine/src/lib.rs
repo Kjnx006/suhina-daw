@@ -6,6 +6,8 @@
 //! so the same `process` call can later run on the audio thread.
 
 mod ahead;
+pub use assets::DeviceAssets;
+mod assets;
 mod audio;
 mod automation;
 #[cfg(test)]
@@ -28,6 +30,9 @@ mod fade_tests;
 mod follow;
 #[cfg(test)]
 mod follow_tests;
+mod group;
+#[cfg(test)]
+mod group_tests;
 mod input;
 #[cfg(test)]
 mod input_tests;
@@ -41,6 +46,8 @@ mod meters;
 #[cfg(test)]
 mod meters_tests;
 mod metronome;
+#[cfg(test)]
+mod midi_effect_tests;
 mod plugin;
 mod plugin_params;
 #[cfg(test)]
@@ -56,6 +63,7 @@ mod record_tests;
 mod sends;
 #[cfg(test)]
 mod sends_tests;
+mod sine;
 mod stretch;
 mod swap;
 mod tempo;
@@ -75,6 +83,7 @@ use audio::{AudioEvent, Fades};
 use chain::{CHAIN_INPUT_GAIN, Chain, MAX_BLOCK, run_as_answered};
 pub use cpu::CpuMonitor;
 pub use cue::MAX_CUE_GAIN;
+pub use group::{GROUP_PARAMS, SILENT_DB, group_param_index, group_param_values};
 pub use input::MAX_INPUT_CHANNELS;
 use launcher::Launcher;
 pub use launcher::{
@@ -86,6 +95,7 @@ pub use live::{
     port_id,
 };
 pub use meters::{Level, MAX_METERED_TRACKS, MeterMonitor, PEAK_FALL_DB_PER_SECOND, RMS_SECONDS};
+pub use metronome::ClickSound;
 use plugin::{DEADLINE_SHARE, Delay};
 pub use plugin::{
     Followed, Joint, MAX_JOINED, OFFLINE_TIMEOUT, PluginDevice, PluginProcessor, PluginSlotInfo, Plugins, Sent,
@@ -96,7 +106,7 @@ pub use preview::{PreviewMonitor, PreviewNote, PreviewNotes, preview_notes};
 pub use record::{RECORD_CHUNK, RECORD_CHUNKS, RECORD_NOTES, RecordReceiver, RecordedAudio, RecordedNote};
 use stretch::StretchVoice;
 pub use suhina_device_api::NoteEvent as DeviceEvent;
-use suhina_device_api::ProcessContext;
+use suhina_device_api::{MusicalScale, ProcessContext};
 pub use suhina_model as model;
 use suhina_model::{ChannelId, ChannelRole, Clip, ContentLane, LaneData, Project, TempoMap, TrackId};
 pub use track_render::render_track;
@@ -188,6 +198,13 @@ struct NoteEvent {
     bus: u32,
     /// The track's meter slot.
     meter: u32,
+    /// The scale of the note's clip, for the MIDI effects that follow it.
+    scale: Option<MusicalScale>,
+}
+
+/// A clip's scale as the devices get it.
+pub(crate) fn musical_scale(scale: Option<suhina_model::Scale>) -> Option<MusicalScale> {
+    scale.and_then(|scale| MusicalScale::new(scale.root(), scale.mode.semitones()))
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -283,6 +300,8 @@ pub struct Renderer {
     running: bool,
     /// What the graph was built from, so a controller can build the next one (ADR 0005).
     audio: Arc<AudioPool>,
+    /// The file-backed devices' files, for the next graph (docs/spec/nam-amp-and-cab.md).
+    assets: Arc<DeviceAssets>,
     swap: swap::SwapState,
     /// Stretch underruns counted by graphs swapped out.
     underruns_before: u64,
@@ -321,7 +340,18 @@ impl Renderer {
 
     /// A renderer that also plays audio clips whose files are in `audio`.
     pub fn with_audio(project: &Project, audio: &AudioPool, sample_rate: u32) -> Result<Self, RenderError> {
-        Self::with_plugins(project, audio, sample_rate, Plugins::new())
+        Self::with_assets(project, audio, &DeviceAssets::new(), sample_rate)
+    }
+
+    /// A renderer whose file-backed devices run the parsed models and decoded IRs `assets`
+    /// holds, by each device's stored path ([docs/spec/nam-amp-and-cab.md]).
+    pub fn with_assets(
+        project: &Project,
+        audio: &AudioPool,
+        assets: &DeviceAssets,
+        sample_rate: u32,
+    ) -> Result<Self, RenderError> {
+        Self::with_assets_plugins(project, audio, assets, sample_rate, Plugins::new())
     }
 
     /// A renderer whose plug-in devices run in the processors `plugins` holds (ADR 0006).
@@ -329,9 +359,22 @@ impl Renderer {
         project: &Project,
         audio: &AudioPool,
         sample_rate: u32,
+        plugins: Plugins,
+    ) -> Result<Self, RenderError> {
+        Self::with_assets_plugins(project, audio, &DeviceAssets::new(), sample_rate, plugins)
+    }
+
+    /// A renderer whose plug-in devices run in the processors `plugins` holds, and whose
+    /// file-backed devices run the parsed models and decoded IRs `assets` holds, by each
+    /// device's stored path ([docs/spec/nam-amp-and-cab.md]).
+    pub fn with_assets_plugins(
+        project: &Project,
+        audio: &AudioPool,
+        assets: &DeviceAssets,
+        sample_rate: u32,
         mut plugins: Plugins,
     ) -> Result<Self, RenderError> {
-        let graph = Graph::build(project, audio, sample_rate, &mut plugins)?;
+        let graph = Graph::build(project, audio, assets, sample_rate, &mut plugins)?;
         graph.launcher.monitor.running.store(true, std::sync::atomic::Ordering::Relaxed);
         let mut meters = meters::MeterWriter::new(sample_rate);
         meters.assign(graph.levels.tracks());
@@ -356,6 +399,7 @@ impl Renderer {
             start_beat: 0.0,
             running: true,
             audio: Arc::new(audio.clone()),
+            assets: Arc::new(assets.clone()),
             swap: swap::SwapState::default(),
             underruns_before: 0,
             metronome: metronome::Metronome::new(sample_rate),
@@ -388,6 +432,20 @@ impl Renderer {
         plugins: Plugins,
     ) -> Result<Self, RenderError> {
         let mut renderer = Self::with_plugins(project, audio, sample_rate, plugins)?;
+        renderer.running = false;
+        renderer.graph.launcher.monitor.running.store(false, std::sync::atomic::Ordering::Relaxed);
+        Ok(renderer)
+    }
+
+    /// [`Renderer::with_assets`], with the transport stopped.
+    pub fn stopped_with_assets(
+        project: &Project,
+        audio: &AudioPool,
+        assets: &DeviceAssets,
+        sample_rate: u32,
+        plugins: Plugins,
+    ) -> Result<Self, RenderError> {
+        let mut renderer = Self::with_assets_plugins(project, audio, assets, sample_rate, plugins)?;
         renderer.running = false;
         renderer.graph.launcher.monitor.running.store(false, std::sync::atomic::Ordering::Relaxed);
         Ok(renderer)
@@ -649,6 +707,7 @@ impl Renderer {
         let at = self.running.then(|| self.time());
         let time = self.time();
         for chain in &mut self.graph.chains {
+            chain.transport(self.running, time, context.tempo);
             chain.automate(at, frames);
             chain.automate_mix(time, frames, self.running);
         }
@@ -689,6 +748,7 @@ impl Renderer {
                         column: event.column,
                         bus: event.bus,
                         meter: event.meter,
+                        scale: event.scale,
                     };
                     let Self { voices, graph, position, sample_rate, .. } = self;
                     start_note(voices, &mut graph.chains, frame, *position, *sample_rate, end, start);
@@ -885,6 +945,8 @@ pub(crate) struct NoteStart {
     pub(crate) column: u32,
     pub(crate) bus: u32,
     pub(crate) meter: u32,
+    /// The scale of the note's clip.
+    pub(crate) scale: Option<MusicalScale>,
 }
 
 /// The chain behind `bus`, or `None` for the output.
@@ -906,6 +968,7 @@ pub(crate) fn start_note(
     note: NoteStart,
 ) {
     if let Some(chain) = bus_chain(chains, note.bus).filter(|c| c.instrument) {
+        chain.set_scale(frame, note.scale);
         chain.note_on(frame, position, note.key, note.velocity, end);
         return;
     }
@@ -944,10 +1007,11 @@ pub(crate) fn route(project: &Project, chains: &[Chain], track: TrackId) -> Opti
 
 impl Graph {
     /// Builds the graph for `project`: validates it and prepares every event and voice. Allocates;
-    /// call it off the audio thread.
+    /// call it off the audio thread. The file-backed devices' files come from `assets`.
     pub(crate) fn build(
         project: &Project,
         audio: &AudioPool,
+        assets: &crate::DeviceAssets,
         sample_rate: u32,
         plugins: &mut Plugins,
     ) -> Result<Box<Self>, RenderError> {
@@ -980,7 +1044,7 @@ impl Graph {
         };
         // Device chains, group buses and latency compensation: every track is heard as late as
         // the path whose devices delay it most.
-        let (chains, latency) = buses::build(project, sample_rate, plugins, column_of);
+        let (chains, latency) = buses::build(project, audio, sample_rate, plugins, column_of, assets);
         let mut events = Vec::new();
         let mut audio_events = Vec::new();
         let mut stretch_events = Vec::new();
@@ -999,6 +1063,7 @@ impl Graph {
                             content_lane,
                             &tempo,
                             (track, gain_left, gain_right, column, bus, meter),
+                            musical_scale(content.scale),
                             &mut events,
                         ),
                         LaneData::Audio(region) => {
@@ -1136,8 +1201,7 @@ pub fn render_offline_with_audio(
     render_offline_with_plugins(project, audio, sample_rate, block_frames, Plugins::new())
 }
 
-/// Like [`render_offline_with_audio`], with plug-in devices running in `plugins`. The same
-/// `process` as playback, waiting for each plug-in instead of a real-time deadline.
+/// Like [`render_offline_with_audio`], with plug-in devices running in `plugins`.
 pub fn render_offline_with_plugins(
     project: &Project,
     audio: &AudioPool,
@@ -1145,7 +1209,21 @@ pub fn render_offline_with_plugins(
     block_frames: usize,
     plugins: Plugins,
 ) -> Result<Vec<f32>, RenderError> {
-    let mut renderer = Renderer::with_plugins(project, audio, sample_rate, plugins)?;
+    render_offline_with_assets(project, audio, &DeviceAssets::new(), sample_rate, block_frames, plugins)
+}
+
+/// A renderer whose file-backed devices run the parsed models and decoded IRs `assets` holds,
+/// and whose plug-in devices run in the processors `plugins`. The same `process` as playback,
+/// waiting for each plug-in instead of a real-time deadline.
+pub fn render_offline_with_assets(
+    project: &Project,
+    audio: &AudioPool,
+    assets: &DeviceAssets,
+    sample_rate: u32,
+    block_frames: usize,
+    plugins: Plugins,
+) -> Result<Vec<f32>, RenderError> {
+    let mut renderer = Renderer::with_assets_plugins(project, audio, assets, sample_rate, plugins)?;
     renderer.set_offline(true);
     // The whole arrangement, once: a render does not repeat the loop region.
     renderer.set_follow_loop(false);
@@ -1163,17 +1241,20 @@ pub fn render_offline_with_plugins(
 /// Renders the whole arrangement offline like [`render_offline_with_plugins`], and the cue bus
 /// beside it: the main mix and the cue, both interleaved stereo of the same length. `cue_gain`
 /// is the cue volume (linear) and `separate` whether the cue has outputs of its own (then the
-/// preview is heard only on the cue, as on the device).
+/// preview is heard only on the cue, as on the device). The file-backed devices run what
+/// `assets` holds ([docs/spec/nam-amp-and-cab.md]).
+#[allow(clippy::too_many_arguments)]
 pub fn render_offline_with_cue(
     project: &Project,
     audio: &AudioPool,
+    assets: &DeviceAssets,
     sample_rate: u32,
     block_frames: usize,
     plugins: Plugins,
     cue_gain: f32,
     separate: bool,
 ) -> Result<(Vec<f32>, Vec<f32>), RenderError> {
-    let mut renderer = Renderer::with_plugins(project, audio, sample_rate, plugins)?;
+    let mut renderer = Renderer::with_assets_plugins(project, audio, assets, sample_rate, plugins)?;
     renderer.set_offline(true);
     renderer.handle(LaunchCommand::SetCue { gain: Some(cue_gain), separate: Some(separate) });
     let total = usize::try_from(renderer.length())
@@ -1309,6 +1390,7 @@ fn collect_notes(
     lane: &ContentLane,
     map: &TempoMap,
     (track, gain_left, gain_right, column, bus, meter): (TrackId, f32, f32, u32, u32, u32),
+    scale: Option<MusicalScale>,
     events: &mut Vec<NoteEvent>,
 ) {
     let LaneData::Notes(notes) = &lane.data else { return };
@@ -1346,6 +1428,7 @@ fn collect_notes(
                 column,
                 bus,
                 meter,
+                scale,
             });
         }
     };
@@ -1448,6 +1531,7 @@ mod tests {
             fade_out_curve: Default::default(),
             follow_action: Default::default(),
             launch: Default::default(),
+            color: None,
             extensions: Extensions::default(),
         }
     }

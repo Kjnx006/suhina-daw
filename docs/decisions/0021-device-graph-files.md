@@ -72,6 +72,15 @@ authoring fields are accepted.
 
 ## Consequences
 
+- Rust authors may use the additive `author::GraphBuilder` and standard `CustomControl`
+  constructors instead of manipulating vectors directly. Builder handles are scoped to one
+  append-only graph, connection errors are reported during authoring, and `finish` still uses
+  the existing full validator. These helpers emit the same `.sd` data; they add neither an
+  executable language nor an alternative runtime. See [checked authoring](../device-sdk.md#checked-rust-authoring).
+  Numeric control setters and parameter-derived formatting are likewise authoring-only;
+  shared local group origins flatten to the same absolute panel bounds without serializing
+  a layout tree or changing draw/focus order.
+
 - SDK authors compose effects, MIDI effects and monophonic instruments from supported primitives and distribute one self-contained
   `.sd` file, with generated parameter UI and a read-only node list.
 - Node contracts are available in the SDK's JSON catalog and the read command `devices.sdNodes`
@@ -95,6 +104,12 @@ An optional data-only [custom canvas](../spec/sdk-custom-ui.md) now packages emb
 images, vector drawing expressions and parameter input bindings. Authors program these with Rust
 SDK types; the file contains no executable extension. The UI caches parsed scenes and bounded
 image textures, performs decoding with allocation limits, and sends edits through `device.setParam`.
+
+Stock devices ship as generated, validated `.sd` definitions with their parameter
+contracts and SDK panels. The `native_device` node wraps a trusted registered
+implementation; it cannot load executable code or participate in arbitrary primitive
+graphs. The host verifies its role and parameter contract before preparation.
+See [stock bundles](../spec/stock-device-bundle.md).
 
 ## Amendment: device panels for built-in devices (2026-10-19)
 

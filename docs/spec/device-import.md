@@ -1,6 +1,6 @@
 ---
 description: How a device stored in a Live Set is brought into Suhina: the three import levels, how each Suhina device is learnt and mapped, and which Live device maps to which Suhina device
-read_when: device import, importing devices, device mapping, placeholder device, Operator, Live device to Suhina device, which device imports into what, golden renders of imported sets
+read_when: device import, importing devices, importing MIDI effects, device mapping, placeholder device, Operator, Live device to Suhina device, which device imports into what, golden renders of imported sets
 type: spec
 status: current
 last_verified: 2026-10-13
@@ -22,7 +22,10 @@ used.
 - **Observed with:** Live 12.4.6, as in [`als-format.md`](als-format.md).
 - **Test files:** the device series of the corpus ([`als-corpus.md`](als-corpus.md)): series 3
   (devices, plug-ins) and series 6 (Utility, Auto Pan-Tremolo, EQ Three, Vinyl Distortion,
-  Overdrive). Only the Utility files are imported and checked so far.
+  Overdrive). The Utility files are imported and checked; the Delay and Reverb are checked
+  against the behaviour-run sets of the device notes (their specs, Known differences). The MIDI
+  effects were learnt from a parameter dump, a saved set and a calibration set instead
+  ([`als-format.md`](als-format.md) › MIDI effects).
 
 The Suhina devices themselves, what they do and how far they are, are in
 [`ROADMAP.md`](../../ROADMAP.md) › Built-in effects and instruments. This document is the format side: which
@@ -70,6 +73,8 @@ comes in as it (otherwise as a placeholder):
 | Imports from Live | Suhina device | DSP from | Status |
 |---|---|---|---|
 | Utility, Auto Pan | utility, auto-pan | own | DSP done; import done for Utility, planned for Auto Pan |
+| Pitch (MIDI effect) | pitch ([spec](pitch.md)) | own | done; import done (the step widths wait for the step buttons) |
+| Arpeggiator, CC Control, Chord, Note Length, Random, Scale, Velocity (MIDI effects) | not yet | | placeholder: notes pass on to the instrument unchanged. How each is stored is written down ([`als-format.md`](als-format.md) › MIDI effects), so each import can be written as its device lands |
 | EQ Three | three-band DJ EQ with kills | own crossovers (Linkwitz-Riley) | DSP done; import planned |
 | Vinyl Distortion | vinyl distortion | own, oversampled | DSP done; import planned |
 | Overdrive | overdrive | own, oversampled | DSP done; import planned |
@@ -77,8 +82,10 @@ comes in as it (otherwise as a placeholder):
 | Glue Compressor | bus compressor | own, Airwindows (MIT) for reference | planned |
 | Limiter | limiter: brickwall, 1.5 ms lookahead | own | DSP done; import planned |
 | Multiband Dynamics | multiband dynamics, upward and downward | own crossovers and detectors | planned |
-| Delay, Echo | delays | own delay lines | planned |
-| Reverb, Hybrid Reverb | algorithmic and convolution reverb | Dragonfly Reverb (GPL-3.0), own convolution | planned |
+| Delay | delay ([spec](delay.md)) | own delay lines | DSP done; import done |
+| Echo | modulation delay | own delay lines | planned |
+| Reverb | reverb ([spec](reverb.md)) | own | DSP done; import done |
+| Hybrid Reverb | convolution and algorithmic reverb | own convolution, the reverb | planned |
 | Saturator, Roar | multi-stage saturation | own, oversampled | planned |
 | EQ Eight, Auto Filter | EQ, filter | own (`dsp` filters) | planned |
 | Operator | FM synth | MSFA (Apache-2.0) via Dexed | DX7-style engine done; Operator's algorithms, waveforms and filter, and import, planned |

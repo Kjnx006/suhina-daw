@@ -21,6 +21,11 @@ covers:
 
 # Browser
 
+A single sample dropped on a Sampler waveform replaces that instrument's source
+through `device.loadSample`; it creates no clip or track. This applies to browser
+items and files dragged from the operating system. MIDI and multi-file drops are
+not accepted by the waveform. Other drop targets keep their existing behavior.
+
 The panel at the side of the main window where samples, MIDI files, presets, built-in
 instruments and effects and installed plug-ins are found, previewed and dragged into the
 project.
@@ -105,15 +110,17 @@ the Pinned place, the recent projects and the folders hold any kind and keep the
 
 **No search text:** a tree. With no place selected its top level is:
 
-- *Instruments* (built-in instruments), *Effects* (built-in effects), *Plug-ins* (installed
-  plug-ins in a folder per vendor, *Unknown vendor* last), then each added folder.
+- *Instruments* (built-in instruments), *Effects* (built-in effects), *MIDI Effects* (built-in
+  MIDI effects, such as [the pitch effect](pitch.md)), *Plug-ins* (installed plug-ins in a folder
+  per vendor, *Unknown vendor* last), then each added folder.
 
 With a place selected the tree is that place: the folder's contents, the pinned items or the
 recent group's items (a flat list).
 
 **The category filter** narrows what the tree shows: Samples, MIDI and Presets show files of
 that kind and the folders that hold any (by the index; a folder not indexed yet is shown);
-Instruments and Effects show only those built-in effects and instruments, `.sd` AudioEffects, and plug-ins with that role
+Instruments and Effects show only those built-in effects and instruments (Effects with the
+built-in MIDI effects), `.sd` AudioEffects, and plug-ins with that role
 (a plug-in with the *instrument* feature counts as an instrument); Plug-ins shows only
 plug-ins. All shows everything.
 
@@ -181,9 +188,9 @@ with the part played so far brighter and a playhead.
 - A file that cannot be read shows "Cannot preview: <reason>" in the strip and nothing plays.
   The status bar says so too, and says why when nothing can preview at all: there is no audio
   output here, or the active project has no audio output.
-- **With no project open** the browser works as with one: browsing, searching, the sample map
-  and previews. Previews then play through an output of their own, opened on the chosen device
-  at the first preview and closed before a project opens its output, so only one is ever open
+- **With no project open** the start panel stands alone and the browser is hidden; it shows
+  again once a project is open (#632). The engine can still preview with no project, through an
+  output of its own opened at the first preview and closed before a project opens its output
   ([ADR 0011](../decisions/0011-preview-and-added-audio.md) › Previews with no project open).
   Adding to a track needs a project.
 
@@ -391,7 +398,7 @@ the CLI can do the same.
 
 | Command | Params | Does |
 |---|---|---|
-| `track.add` | `kind?` (`audio`, `midi`), `name?`, `after?`, `device?`, `sd?`, `preset?`, `voice?` | adds a track with its mixer channel, clip slots for every scene and an Arrangement lane, after track `after` or at the end of the regular tracks; with `device` (a built-in id or a plug-in from `plugins.list`), `sd` or `preset`, the device too, and `kind` follows from it; `.sd` instruments and MIDI effects create MIDI tracks |
+| `track.add` | `kind?` (`audio`, `midi`), `name?`, `after?`, `device?`, `sd?`, `preset?`, `voice?` | adds a track with its mixer channel, clip slots for every scene and an Arrangement lane, after track `after` or at the end of the regular tracks; with `device` (a built-in id or a plug-in from `plugins.list`), `sd` or `preset`, the device too, and `kind` follows from it; `.sd` and built-in instruments and MIDI effects create MIDI tracks |
 | `clip.addFiles` | `paths`, `track?`, `start?`, `scene?`, `separate?`, `stack?`, `warp?` | places samples, MIDI files and Stems files as in *Files*: on `track` (or new tracks when it is missing; a Stems file's group goes into `track` when it is a group), from beat `start` in the Arrangement or from `scene` (1-based) in the Session (exactly one of the two); `separate` gives each clip a track; `warp` is the stretch mode for samples with a known tempo (`rhythmic` by default); returns the clips, the new tracks, the Stems groups (`groups`) and what was `skipped` |
 | `device.add` | adds `preset?` and `voice?` (1–32) | the built-in effect or instrument with a preset's values |
 
@@ -433,3 +440,12 @@ the user chooses the browser's folders ([`mcp.md`](../mcp.md)).
 - Previewing in time with the project, and hot-swapping a device or sample by double-click.
 - Key detection by analysis.
 - A system file dialog for adding a folder (today a path is typed or a folder dropped).
+
+Stock instrument and effect entries come from the embedded build-time `.sd` bundle.
+Availability does not depend on resource files beside the executable. Imported native
+wrappers preserve their SDK definitions in the project; see
+[stock bundles](stock-device-bundle.md).
+
+A single audio file dropped onto an empty MIDI track (header, slot, arrangement lane or empty device area)
+adds Sampler and loads its source without creating an audio clip. Tracks with devices
+are left intact. A pending file drop is cancelled when another project is active.

@@ -13,11 +13,14 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+pub mod author;
 pub mod editor;
 mod graph;
 mod midi;
+mod native;
 mod nodes;
 mod runtime;
+pub mod sampler;
 pub mod ui;
 pub use midi::PreparedMidiEffect;
 pub use nodes::{FilterMode, NODE_CATALOG, NodeInfo, NodeKind, PortInfo, Waveform, node_reference_markdown};
@@ -31,7 +34,7 @@ pub const MAX_FILE_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_NODES: usize = 128;
 pub const MAX_CONNECTIONS: usize = MAX_NODES * 5;
 pub const MAX_DELAY_FRAMES: usize = 2_000_000;
-pub const MAX_PARAMETERS: usize = 128;
+pub const MAX_PARAMETERS: usize = 256;
 pub const MAX_DEVICE_MIGRATIONS: usize = 128;
 const MAX_TEXT_BYTES: usize = 128;
 
@@ -574,6 +577,31 @@ impl DeviceGraph {
 }
 
 impl Parameter {
+    pub fn options(mut self, options: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.ui.options = options.into_iter().map(Into::into).collect();
+        self
+    }
+
+    pub fn linked(mut self, peer: impl Into<String>, enabled_by: impl Into<String>) -> Self {
+        self.ui.link = Some(ParameterLink { peer: peer.into(), enabled_by: enabled_by.into() });
+        self
+    }
+
+    pub fn unit(mut self, unit: impl Into<String>) -> Self {
+        self.unit = unit.into();
+        self
+    }
+
+    pub fn control(mut self, control: ParameterControl) -> Self {
+        self.control = control;
+        self
+    }
+
+    pub fn smoothing_ms(mut self, milliseconds: f64) -> Self {
+        self.smoothing_ms = milliseconds;
+        self
+    }
+
     /// Clamp hostile values and preserve discrete parameter semantics.
     pub fn clamp(&self, value: f64) -> f64 {
         let value = if value.is_finite() { value.clamp(self.min, self.max) } else { self.default };

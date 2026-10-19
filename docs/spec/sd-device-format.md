@@ -25,6 +25,12 @@ covers:
 
 # Suhina device graph (`.sd`)
 
+The Rust `author::GraphBuilder` convenience API writes this same format through `DeviceGraph`.
+Its node and port handles exist only while authoring, are never serialized, and cannot bypass
+validation. Parameter/UI constructors likewise configure the existing fields. Using these
+helpers alone changes neither the file schema version nor the device revision. See the
+[authoring guide](../device-sdk.md#checked-rust-authoring).
+
 An `.sd` file describes a device as data. It contains no Rust source, executable code or external
 assets. The Rust SDK builds and validates the graph, writes the JSON file and can prepare the
 supported graph for audio processing.
@@ -76,7 +82,7 @@ missing required inputs and cycles are rejected with node/port diagnostics. Only
 of sample_delay/delay breaks a cycle; its input is written after all current-frame evaluations.
 Delay time is an ordinary dependency, so a cycle through it is rejected.
 
-File size is capped at 2 MiB, graphs at 128 nodes, 640 connections and 128 parameters.
+File size is capped at 2 MiB, graphs at 128 nodes, 640 connections and 256 parameters.
 Shared delay history is capped at 2,000,000 stereo frames and validated at 384 kHz, before
 allocating history. Accepted graphs fit all supported rates (8..384 kHz). Non-finite signals
 become zero and finite results are limited to the f32 range after every node.
@@ -186,7 +192,8 @@ All three roles execute. Instrument graphs expose `midi_key`, `midi_velocity` an
 signals to the existing audio nodes to generate sound. This initial instrument runtime is
 monophonic: the latest note controls the graph, and note-off releases its gate. MIDI effects go
 before the track instrument; their event buffers are prepared with the chain, so processing does
-not allocate on the audio thread.
+not allocate on the audio thread. On a track with no instrument the notes they send play as the
+track's sine tones, as for built-in MIDI effects ([ADR 0004](../decisions/0004-built-in-devices.md) › 13).
 The `.sd` file contains data only. FFT, sample assets, oversampled nonlinear processing and
 freely arranged graph editing are not implemented; accepted graphs need none of these to load.
 
@@ -280,3 +287,10 @@ Declare reciprocal links for bidirectional pairs. While the toggle is enabled, e
 updates both stored values. When enabling the toggle, the earlier parameter in each reciprocal
 pair is copied to the later one. The complete edit shares one undo snapshot and all messages
 reach the attached player; undo, redo and project saving preserve the pair.
+
+## Registered native devices
+
+A `native_device` node names a trusted registered implementation with `device`.
+It is restricted to a whole-device wrapper and requires `prepare_native_at` with
+a host factory. Parameters must match the native order and ranges, have valid
+native defaults and zero SDK smoothing. See [stock bundles](stock-device-bundle.md).

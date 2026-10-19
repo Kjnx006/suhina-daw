@@ -97,7 +97,7 @@ the view with the detail area, status bar.
 |---|---|
 | Menu bar | 20 px, `panel.background`, items 14 px apart in `text.secondary`: File (New or open…, Open…, Open recent › the recent projects newest first, up to 10, by name with the path as the tooltip, each opened as Open… opens a file, greyed out while there are none, a file that is gone saying so in the status bar; Save, Save as…, Save as template…, Quit), Edit, View, Projects, Options, Help (About Suhina, [spec](../spec/about.md)); Create, Playback and Navigate (planned) |
 | Tab row | 22 px, `window.background`, shown while two or more projects are open (ADR 0007): one tab per project, name (with " •" while it has unsaved changes, as the window title has) and a 12 px × to close; the active tab `panel.background` with `text.primary`, others `text.secondary`; Ctrl+Tab and Ctrl+Shift+Tab move between them |
-| Control bar | 28 px, `panel.background`, a 1 px `border` under it. Left, 6 px apart: tempo (56 × 20 value field, `control.background`, 11 px mono right-aligned, dragged up or down), time signature (40 px, 11 px mono `text.secondary`, "4 / 4"), the grid and launch quantisation (64 px dropdown, 11 px mono, its list tall enough for every value; the tooltip says it also sets the Arrangement grid). Centre: play and stop (28 × 20 each, 1 px apart), the position (64 × 20 on `window.background`, 11 px mono, "bar.beat.sixteenth", bars through the time-signature changes). Right: the CPU load (56 × 20 on `window.background`, only while an engine plays: "CPU" in 9 px `text.hint` left and the smoothed percentage in 10 px mono `text.secondary` right, over a 2 px-tall bar of the load, `meter.normal` fill, `meter.hot` from 80 %, in a `control.background` track; the audio thread's share of wall time inside the engine's render call, per mille smoothed over 0.2 s windows, published as an atomic), then the view switch at the right edge, 6 px from it. Left of the CPU load, 6 px apart, the RAM (76 × 20 on `window.background`, always shown: "RAM" in 9 px `text.hint` left, the program's resident memory in 10 px mono `text.secondary` right, "512 MB", "2.3 GB"). Right, left to right: RAM, CPU load, view switch; a block that would come within 6 px of the position is left out, the RAM first. (planned): metronome, record, loop |
+| Control bar | 28 px, `panel.background`, a 1 px `border` under it. Left: the browser's show/hide button (20 × 20, `control.background`, a 14 × 11 panel outline whose left part is filled in `text.primary` while the browser shows; "Hide browser" / "Show browser", the same as Ctrl+B), 4 px on, then 6 px apart: tempo (56 × 20 value field, `control.background`, 11 px mono right-aligned, dragged up or down), time signature (40 px, 11 px mono `text.secondary`, "4 / 4"), the grid and launch quantisation (64 px dropdown, 11 px mono, its list tall enough for every value; the tooltip says it also sets the Arrangement grid). Centre: play and stop (28 × 20 each, 1 px apart), the position (64 × 20 on `window.background`, 11 px mono, "bar.beat.sixteenth", bars through the time-signature changes). Right: the CPU load (56 × 20 on `window.background`, only while an engine plays: "CPU" in 9 px `text.hint` left and the smoothed percentage in 10 px mono `text.secondary` right, over a 2 px-tall bar of the load, `meter.normal` fill, `meter.hot` from 80 %, in a `control.background` track; the audio thread's share of wall time inside the engine's render call, per mille smoothed over 0.2 s windows, published as an atomic), then the view switch at the right edge, 6 px from it. Left of the CPU load, 6 px apart, the RAM (76 × 20 on `window.background`, always shown: "RAM" in 9 px `text.hint` left, the program's resident memory in 10 px mono `text.secondary` right, "512 MB", "2.3 GB"). Right, left to right: RAM, CPU load, view switch; a block that would come within 6 px of the position is left out, the RAM first. (planned): metronome, record, loop |
 | Transport button | 28 × 20, `control.background`; play shows `control.activeBackground` while playing, its glyph in `accent`; stop is an 8 × 8 square in `text.primary`; record (planned) a 1.5 px red ring |
 | View switch | Text only, 11 px, right-aligned, 12 px apart: "Session", "Arrangement"; the current one `text.primary` with a 1 px underline, the other `text.secondary`. While a clip is dragged over the other view's name, a 1 px `accent` outline 3 px around it; after 0.5 s the view switches |
 | Open prompt | When a project is dropped while another is open and the setting says Ask: a 32 px row on `panel.background` above the view: "Open x:" In a new tab, In place of y, Cancel, Remember (which sets the setting) |
@@ -117,8 +117,8 @@ from top to bottom:
 | Search | 26 px, `window.background`, 11 px search icon (a ring and a handle in `text.hint`), placeholder "Search", shortcut hint right in 9 px mono `text.hint` |
 | Category filters | Wrapping row of buttons, 16 px high, 7 px side padding, 2 px gaps, 10 px text; selected `text.value` with `window.background` text, others `control.background` (hover `control.hoverBackground`) with `text.secondary` |
 | Sidebar | 104 px, a 1 px `border` on its right; section titles (Pinned, Recent, Folders) 10 px `text.hint` with 8 px top padding; items 17 px, 10 px `text.secondary` (`text.primary` when selected); selected item `control.activeBackground`, hover `panel.hoverBackground`; a folder's state at its right in 9 px mono `text.hint` ("…" scanning, "poll", "gone"); "+ Add folder" in `text.hint` opens a path field in its place |
-| Tree row | 17 px; indent 12 px per level; 10 px lead (a chevron in `text.hint` for what opens, a play triangle for a selected or hovered sample or MIDI file), 12 px type icon, 5 px, name 10 px `text.value` (`text.primary` selected), tag dots, meta right in 9 px mono `text.hint` (length, "plug-in", the folder a search found it in); selected row `control.activeBackground`, hover `panel.hoverBackground`; a 2 px `border.strong` bar at the right edge shows the scroll position |
-| Type icons | Our own strokes, 1.1 px, 12 px: folder and heading `text.secondary`; MIDI note `track.2` (ochre); audio wave `track.3` (steel blue); instrument and preset `track.4`; effect `track.1`; project page `text.secondary` |
+| Tree row | 17 px; indent 12 px per level; 10 px lead (a chevron in `text.hint` for what opens, a play triangle for a selected or hovered sample or MIDI file), 12 px type icon, 5 px, name 10 px `text.value` (`text.primary` selected), tag dots, meta right in 9 px mono `text.hint` (length, "plug-in", "MIDI effect", the folder a search found it in); selected row `control.activeBackground`, hover `panel.hoverBackground`; a 2 px `border.strong` bar at the right edge shows the scroll position |
+| Type icons | Our own strokes, 1.1 px, 12 px: folder and heading `text.secondary`; MIDI note `track.2` (ochre); audio wave `track.3` (steel blue); instrument and preset `track.4`; effect `track.1`; MIDI effect the effect's box in `track.2`; project page `text.secondary` |
 | Colour tag | 6 px dot after the name, 2 px apart, in the tag's colour; a tag's right-click menu in the footer offers the colour palette (Session view › Colour palette), then any colour |
 | Preview strip | 54 px, `window.background`, a 1 px `border` on top: 22 px play button (`control.background`, its glyph `accent` while playing), file name 10 px, length, BPM ("~" when detected) and key right in 9 px mono `text.secondary`; under them the waveform ([waveforms](../spec/waveforms.md); a MIDI file: 2 px note bars), played part `text.secondary`, rest `text.hint`, playhead 1 px `accent` |
 | List and Map | 22 px row above the results: two buttons like the category filters, List and Map; Map shows the [sample map](../spec/sample-map.md) in the results area |
@@ -143,7 +143,7 @@ space, the mixer at the bottom.
 | Main header | 20 px, `control.background`, "Main" in `text.primary`, no colour strip |
 | Scene button | 20 px, `control.background` (hover `#34332F`), a 4.5 px play glyph in `text.secondary` (`text.primary` hovered) 6 px from its left, name after it in 11 px, number right in 10 px mono `text.hint`; a playing scene `control.playingBackground`, its glyph the stop square, its click `scene.stop` |
 | Stop row | 20 px under the last scene, `panel.background`: per track a 7 × 7 square outline in `text.secondary` (`accent` while the stop is queued), centred; in the scene column the square and "Stop all" |
-| Empty space | Right of the last track: "+ MIDI track" and "+ Audio track" buttons (20 px, `control.background`, 10 px `text.secondary`, 2 px apart, 6 px from its top left) and, below them, "Drop files or devices to add a track" in 10 px `text.hint`. Drops from the browser there make new tracks; the Arrangement has the same under its last lane |
+| Empty space | Right of the last track: "+ MIDI track", "+ Audio track" and "+ Return track" buttons (a right-click anywhere there offers Insert audio track, Insert MIDI track, Insert return track) (20 px, `control.background`, 10 px `text.secondary`, 2 px apart, 6 px from its top left) and, below them, "Drop files or devices to add a track" in 10 px `text.hint`. Drops from the browser there make new tracks; the Arrangement has the same under its last lane |
 
 Track colours: the track's own colour if it has one, else `track.1`–`track.4` in track order.
 
@@ -197,6 +197,10 @@ moves it, a double-click gives 166 px back.
 **Height steps.** Each part appears once the mixer is at least as tall as its step, and goes
 again below it. Top to bottom, the strip at its tallest: name, device list, sends row, pan row,
 volume readout, fader with the meter, toggles. Between the name and the device list: the output.
+On an audio track, the input's block (Audio From and the monitor's In / Auto / Off) sits above
+the toggles from 236 px ([spec](../spec/ui-session-view.md) › I/O section). While any strip shows
+that block, every strip keeps its room (empty where a track has no input), so the sends, pan,
+fader and toggles stay in line across the mixer.
 
 | Mixer height | Adds | Size |
 |---|---|---|
@@ -206,7 +210,8 @@ volume readout, fader with the meter, toggles. Between the name and the device l
 | 148 px | Sends row | 22 px and 4 px under it (the pre dot sits in the gap) |
 | 166 px (default) | Name row, at the top | 16 px and 2 px under it |
 | 192 px | Output row, under the name | 16 px and 4 px under it |
-| 260 px | Device list, under the output | at least four 16 px rows and 4 px under it; the fader takes the height up to 140 px, the list the rest |
+| 236 px | On an audio track, the input's block above the toggles: the "Audio From" caption and the source's dropdown, then the monitor's In / Auto / Off buttons | caption 12 px, dropdown 16 px, buttons 18 px, 3 px between the parts; the fader loses their height first |
+| 260 px | Device list, under the output | at least four 16 px rows and 4 px under it; the fader takes the height up to 140 px, the list the rest. A divider under the lists (6 px hit area, a 2 px `accent` line hovered or dragged) sets the fader's height for every strip at once: dragged down, the lists grow and the controls get lower, down to a 48 px fader; up, until one device row is left. A double-click makes the split automatic again. Settings keeps it (`session_strip_fader`, 0 is automatic) |
 
 | Part | Spec |
 |---|---|
@@ -219,7 +224,7 @@ volume readout, fader with the meter, toggles. Between the name and the device l
 | Colour band | 5 px down the left edge, in the strip's padding, the strip's full height, the track colour (dimmed as the header while the track is off); a click opens the palette (Colour palette) |
 | Name | 16 px, filled with the track colour as the column's header: the track's name in 11 px in the text colour that reads on it, 4 px in, cut off at the strip's edge |
 | Output | 16 px across the strip: "→" (14 px, 10 px `text.hint`) and the output dropdown the rest of the row ("Main" or a group track, as the Arrangement header's; `track.setOutput`). Its menu lists Main and every group track but the track itself |
-| Device list | 16 px rows, one per device in chain order: its name in 10 px `text.secondary` 4 px in (`text.hint` while the device is off), "plug-in" right in 9 px `text.hint` for a plug-in; `control.hoverBackground` hovered, `control.activeBackground` for the row clicked last. The wheel scrolls it. "No devices" in 10 px `text.hint` when the chain is empty. A click selects the track and opens the detail area on its devices |
+| Device list | 16 px rows, one per device in chain order: its name in 10 px `text.secondary` 4 px in (`text.hint` while the device is off), "plug-in" right in 9 px `text.hint` for a plug-in; `control.hoverBackground` hovered, `control.activeBackground` for the picked devices, the same ones the detail area's chain lights. The wheel scrolls it. "No devices" in 10 px `text.hint` when the chain is empty. A click picks the device, selects the track and opens the detail area on its devices; Ctrl (Cmd) adds a device to the picks or takes it out, Shift picks the run from the last one; a double-click opens a plug-in's editor. Delete (`device.removeMany`), Ctrl+C, Ctrl+X and Ctrl+V (`device.copy`, `device.paste`, after the last pick) act on the picks, in the strip and in the chain alike |
 | Send knob | A knob with the return's letter in its centre (8 px mono `text.hint`), pointer `text.value` (`text.primary` hovered); −70 dB … +6 dB over the travel. A 1.5 px `text.value` dot under it when the send is before the fader |
 | Knob | 22 px; circle r 9, `control.background` fill, 1 px `text.hint` stroke; pointer 1.5 px from centre to r 8; travel −135° … +135°; pan pointer `text.primary`, sends `#C9C4BB` |
 | Toggles | 18 px at the bottom, at every height: track on (the track number, or the return's letter, in 10 px mono) and, 2 px apart, solo ("S" in 10 px) and cue ("C" in 10 px), a quarter each; on a track that plays notes or audio, solo, cue and arm take a fifth each and track on the rest |
@@ -344,6 +349,9 @@ the wheel over it, as far as its last row and no further.
 | General › Backups | Last backup | The active project's newest backup, its time and file, as the row's note; "None written for this project yet" |
 | General › Dropping files | Several files | One track (default), One each; Ctrl while dropping does the other ([browser spec](../spec/browser.md) › Files) |
 | General › Dropping files | Warp mode | Rhythmic (default), Tonal, Texture, Smooth, High quality, Re-pitch: how a dropped sample with a known tempo is stretched |
+| General › Updates | Check for updates | On (default): once per start, asks GitHub whether a newer build is out ([spec](../spec/updates.md)); Off |
+| General › Updates | Channel | Nightly (default); Test builds as well while developer mode is on |
+| General › Updates | Developer mode | Off (default); On lists test builds of pull requests as a channel |
 | Audio › Output | Driver | Default (the host's own), then each host (WASAPI, ASIO, …): a 260 px dropdown |
 | Audio › Output | Device | Default (the host's default device), then the host's devices; a saved device that is gone says so and the default plays |
 | Audio › Output | Sample rate | The device's own (default), then the rates the device offers |
@@ -357,7 +365,7 @@ the wheel over it, as far as its last row and no further.
 | MIDI › MIDI inputs | Each MIDI input port | On (default), Off: the note says whether it plays the armed tracks or why it could not be opened; "None" when no controller is connected. Listed again every 2 s while the page shows; runs `midi.setInput` |
 | Plug-ins › Editors | Editors | Window (default), Device view: where a plug-in's editor opens; the note says when the device view is not available on this system |
 | Arrangement › Clips | Allow sample stacking, Allow MIDI stacking | On, Off (default): moved clips stack instead of replacing ([spec](../spec/arrangement-editing.md)) |
-| Arrangement › Clips | Double-click makes a clip | On (default): a double-click on an empty slot (Session view) or an empty spot of a lane (Arrangement view) of a track that plays notes makes an empty MIDI clip (`clip.create`); Off: it does nothing ([spec](../spec/ui-session-view.md) › Clip slots) |
+| Arrangement › Clips | Double-click makes a clip | On (default): a double-click on an empty slot (Session view) or an empty spot of a lane (Arrangement view) makes an empty clip of the track's kind — MIDI on a notes track, audio with no file yet on an audio track — (`clip.create`); Off: it does nothing ([spec](../spec/ui-session-view.md) › Clip slots) |
 | Arrangement › Tracks | Track headers | Left, Right (default) |
 | Session and mixer › Launching | Select on launch | On (default), Off: launching a clip in the Session view selects it, so the detail area shows it ([spec](../spec/ui-session-view.md)) |
 | Session and mixer › Mixer | Mixer controls | Field (default): the volume bar and the pan centre bar; Knob: a knob with its value beside it, in the Arrangement headers and the Session mixer ([spec](../spec/arrangement-editing.md) › Volume, pan, mute and solo) |
@@ -381,7 +389,7 @@ the wheel over it, as far as its last row and no further.
 | Appearance › Waveforms | Waveform scale | Linear (default), dB ([waveforms](../spec/waveforms.md)) |
 | Appearance › Graphics | Renderer | GPU (wgpu, default), OpenGL (glow) |
 
-**Appearance › Theme**: the themes as 20 px rows in a list that scrolls after eight, the user's
+**Appearance › Theme** (a page of its own, listed stepped in under Appearance): the themes as 20 px rows in a list that scrolls after eight, the user's
 own first and then those that come with Suhina, the name on the left and the file name or
 `built-in` on the right (10 px `text.hint`); a click uses one, the one in use filled like the page
 list and scrolled into view when the page opens. Under them a 34 px row: the name of the theme in
@@ -422,7 +430,7 @@ use as `theme = <id>`; unknown lines are skipped with a warning in the status ba
 
 ## Project dialog and save prompt
 
-File › New or open (Ctrl+T) and Open (Ctrl+O, the path field takes the keys) show a dialog over
+File › New or open (Ctrl+N) and Open (Ctrl+O, the path field takes the keys) show a dialog over
 the window, as the plug-in loading dialog: the window dimmed with `window.background` at 60 %,
 a 620 × 380 px panel, `panel.background` with a 1 px `border.strong` border, a 20 px
 `control.background` title "New or open a project" with Close on the right. Escape closes it;
@@ -461,31 +469,47 @@ chosen in the field; cancelling leaves it as it was. The dialog opens in the fie
 
 ## Start panel
 
-While no project is open, the area right of the browser shows the start panel (`start_panel.rs`)
-on `window.background`: at start when Settings › General › At start is Panel (the default), and
+While no project is open, the start panel (`start_panel.rs`) fills the area below the menu and
+control bar on `window.background`; the browser is hidden while it shows (Ctrl+B's setting keeps
+its value for when a project opens), and Ctrl+N (File › New or open…) does nothing there, since the
+panel offers the same: at start when Settings › General › At start is Panel (the default), and
 after the last project is closed. Its content is at most 820 px wide, centred, 24 px from the
 top. Files dropped anywhere on it open as on the rest of the window.
 
 | Part | Spec |
 |---|---|
 | Actions | Three 132 × 24 px buttons along the top, 6 px apart: **New project** (a blank one), **From a template** (shows the Templates tab), **Open…** (the system's file dialog; a project chosen opens) |
+| Drop hint | One line under the actions, 11 px `text.secondary`: "Drop a project (.suhina) or an .als file here to open it"; the status bar says the same at start |
 | List | A `panel.background` card with a 1 px `border`: the tabs **Recent** and **Templates** (11 px, the chosen one `text.primary` over a 2 px `accent` line, the other `text.hint`) and a search field up to 200 px wide on the right (hint "Search") that filters both lists by name, ignoring case |
 | Recent | The projects opened and saved lately, newest first, as 20 px rows: the name, and on the right when it was last saved in words ("Just now", "5 minutes ago", "Yesterday", "3 weeks ago", "Last year"), or its folder when that cannot be read; the whole path as the tooltip. A click opens it as File › Open would; right-click › **Remove from list** takes it off `recent.txt`. "No projects yet: start a new one, or drop a project here" when there are none |
 | Templates | The templates folder's projects as in the project dialog; a click makes a new project from one; the folder in 10 px `text.hint` at the bottom |
 | Audio | A 240 px card on the right: "Audio" heading, Output, Sample rate and Buffer as the settings choose them ("Default" when unset), and an **Audio settings…** button that opens Settings › Audio. Below 560 px of width it goes under the list |
-| Footer | "Suhina" and the version on the left, "Drop a project or a Live Set (.als) here to open it" on the right, 10 px `text.hint` |
+| Footer | "Suhina" and the version on the left, 10 px `text.hint` |
 
 ## Device panel
 
 | Part | Spec |
 |---|---|
 | Panel | `panel.background`, panels 1 px apart, end of chain is empty `window.background` |
-| Header | 20 px, `control.background`, 6 px padding: on switch, name, and what it is on the right in 9 px `text.hint` (Suhina, CLAP, VST3, VST2, or "Not supported (<format>)" for a device of another DAW) |
-| On switch | 9 × 9 square, 1 px border; on: filled `text.primary`; off: outline `text.hint`, name `text.hint` |
+| Header | 20 px, `control.background`, 6 px padding: on switch, name, and what it is on the right in 9 px `text.hint` (Suhina, CLAP, VST3, VST2, or "Not supported (<format>)" for a device of another DAW). A right-click anywhere on the panel opens its menu: **Remove device** (`device.remove`); the panel's hover says so. A click on the panel selects the device: a 1 px `selection` outline (yellow; one at a time), and the Delete key takes the selected one off the track |
+| On switch | 9 × 9 square, 1 px border; on: filled `text.primary`; off: outline `text.hint`, name `text.hint`. A click bypasses the device or enables it again (`device.setEnabled`): a bypassed **effect** passes the sound through untouched, and a bypassed **instrument**'s notes play the track's plain tones (as on a track without an instrument); either way its settings are kept. The switch's hover and label say which way a click goes: "Bypass <name>" / "Enable <name>" |
 | Parameter | A 16 px row: its id in 10 px `text.secondary` on the left, its value in 10 px mono `#C9C4BB` on the right. (planned, with parameter ranges) a 44 px column: 26 px knob (r 11, pointer to r 10), value 10 px mono, label 10 px `text.secondary`; 14 px between columns; pointer `accent` when the device is on |
 | Plug-in | A 16 px row with where it stands, 10 px: the plug-in's name and vendor (and its latency in frames) in `text.secondary` while it runs; "Loading …", "Not running" (the project is not playing) or "Not installed; kept with its settings" in `text.hint`; "Crashed: …" or "Could not start: …" in `recording`. Under it a 96 × 18 px button, `control.background` (hover `control.hoverBackground`), 1 px `border.strong` border, 10 px `text.primary`: "Open editor" or "Close editor" while it runs, "Restart" after a crash; none otherwise. It runs `device.openEditor`, `device.closeEditor` or `device.restart`. With Settings › Plug-ins › Editors › Device view, an open editor sits under the button, 6 px in: in a row the device is as wide as the editor plus 12 px (at least 220 px) and the detail area at least as tall as the tallest open editor; stacked, the device is as tall as the editor needs; what does not fit is cut off at the panel's edge |
 | No parameters | Another DAW's device: "Kept so the chain keeps its shape"; a built-in effect or instrument without parameters: "No parameters" (10 px `text.hint`) |
 | Stacked | In a column, each device is as tall as its parameters (20 px header, 6 px padding, 16 px a parameter; a plug-in as tall as its state row and button, plus an open embedded editor), 1 px apart |
+| Menu | **Group** (Ctrl+G, `device.group`), **Duplicate device** (`device.duplicate`), **Remove device**; on a device group also **Ungroup** (Ctrl+Shift+G, only with one branch) and **Add branch** ([device groups](../spec/device-groups.md)) |
+
+### Device group panel
+
+A device group ([spec](../spec/device-groups.md) › The device panel) is one panel in the chain, 260 px wide in a row (the column's width stacked), followed by the devices of its shown branch as the chain's own panels; nested groups do the same.
+
+| Part | Spec |
+|---|---|
+| Header | 20 px as a device's: on switch, name, then **Mix** (62 px) and **Gain** (66 px) value fields 2 px in from the header's edges, 2 px apart, then the remove ×. A value field is `control.background` (hover `control.hoverBackground`), its label 10 px `text.hint` on the left, its value 10 px `text.value` on the right; dragged sideways it changes (Mix 0.5 % a point, Gain 0.1 dB a point), a double-click resets it (100 %, 0 dB); the values go out while dragging, as `device.setParam` continuous edits |
+| Branch row | 18 px tall, 20 px apart, 6 px in: the name (a click shows that branch's devices after the panel; the shown branch on `control.activeBackground`, a muted one's name `text.hint`), its volume (44 px, "-6.0 dB") and pan (32 px, "C", "25L", "40R") value fields, then **M** and **S** (16 px each, 2 px apart; M lit as a track's toggle, S on `accent`). Volume and pan are drafts while dragged and set once when let go (`branch.setVolume`, `branch.setPan`), one undo step a drag; a double-click resets them to 0 dB and the centre |
+| Add branch | A last row "+ Branch", `window.background` (hover `control.hoverBackground`), 10 px `text.hint`: `branch.add` |
+| Inside a group | A device after a group's panel has a 2 px `accent` line along its top, one more 3 px lower for each group further in |
+| Picks | Ctrl+G groups the devices picked on the track (next to each other) in the place of the first; Ctrl+Shift+G takes the picked group of one branch apart. Devices inside a group are not picked yet |
 
 ## Plug-in loading dialog
 

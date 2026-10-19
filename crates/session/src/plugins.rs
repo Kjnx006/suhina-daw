@@ -24,7 +24,7 @@ const ENABLED: Param = param("enabled", ParamType::Bool, "true for on, false for
 static PLUGIN_COMMANDS: &[CommandSpec<Projects>] = &[
     CommandSpec {
         id: "plugins.list",
-        label: "List the plug-ins the last scan found (id, name, vendor, type, version, features, file, whether it is switched on), the files that failed, and those built for another processor; files that hold no plug-ins only with ignored",
+        label: "List the plug-ins the last scan found (id, name, vendor, type, version, features, whether it supports ARA, file, whether it is switched on), the files that failed, and those built for another processor; files that hold no plug-ins only with ignored",
         params: &[optional(
             "ignored",
             ParamType::Bool,
@@ -84,7 +84,7 @@ static PLUGIN_COMMANDS: &[CommandSpec<Projects>] = &[
     },
     CommandSpec {
         id: "plugins.setHosting",
-        label: "Choose how a plug-in's instances share host processes from their next start: binary (one process per plug-in file, the default), vendor (one per vendor) or instance (a process of its own for each)",
+        label: "Choose how a plug-in's instances share host processes from their next start: binary (one process per plug-in file, the default), vendor (one per vendor) or instance (a process of its own for each; not for a plug-in that edits clips over ARA)",
         params: &[
             param("plugin", ParamType::Text, "plug-in name, id or file, from plugins.list"),
             param("hosting", ParamType::Text, "binary, vendor or instance"),
@@ -139,6 +139,7 @@ fn list(projects: &mut Projects, params: &Value) -> Result<Value, CommandError> 
                 "type": if crate::is_instrument(p) { "instrument" } else { "effect" },
                 "version": p.version,
                 "features": p.features,
+                "ara": p.ara,
                 "file": p.path.display().to_string(),
                 "hosting": hosting.get(&p.spec()).copied().unwrap_or_default().name(),
                 "enabled": !off.contains(&p.spec()),
@@ -265,6 +266,14 @@ fn set_hosting(projects: &mut Projects, params: &Value) -> Result<Value, Command
         .find(name)
         .or_else(|| catalog.plugins().find(|p| p.spec() == name))
         .ok_or_else(|| format!("no plug-in {name:?} in the catalog; plugins.list lists them"))?;
+    if hosting == Hosting::Instance && plugin.ara {
+        return Err(format!(
+            "{} edits clips over ARA, so its instances share one process with the document they edit; \
+             choose binary or vendor",
+            plugin.name
+        )
+        .into());
+    }
     let (spec, shown) = (plugin.spec(), plugin.name.clone());
     library.set_hosting(&spec, hosting)?;
     Ok(json!({ "plugin": shown, "hosting": hosting.name() }))
@@ -281,7 +290,7 @@ fn found<'a>(catalog: &'a Catalog, kind: &DeviceKind, name: &str) -> Option<Opti
         DeviceKind::Vst3 { id } => Some(catalog.match_vst3(id, name)),
         DeviceKind::Vst2 { id } => Some(catalog.match_vst2(*id, name)),
         DeviceKind::Clap { id } => Some(catalog.match_clap(id, name)),
-        DeviceKind::Builtin(_) | DeviceKind::Sd | DeviceKind::Foreign { .. } => None,
+        DeviceKind::Builtin(_) | DeviceKind::Sd | DeviceKind::Foreign { .. } | DeviceKind::Group(_) => None,
     }
 }
 
@@ -303,6 +312,7 @@ fn device_format(kind: &DeviceKind) -> (&'static str, String) {
         DeviceKind::Builtin(id) => ("builtin", id.clone()),
         DeviceKind::Sd => ("sd", String::new()),
         DeviceKind::Foreign { id, .. } => ("foreign", id.clone()),
+        DeviceKind::Group(_) => ("group", String::new()),
     }
 }
 
@@ -313,7 +323,8 @@ fn check(projects: &mut Projects, params: &Value) -> Result<Value, CommandError>
         .project()
         .channels
         .iter()
-        .flat_map(|c| c.devices.iter().map(|d| (c.name.clone(), d.clone())))
+        // Plug-ins inside device groups too.
+        .flat_map(|c| suhina_model::walk_devices(&c.devices).into_iter().map(|(_, d)| (c.name.clone(), d.clone())))
         .collect();
     // What sessions load: a plug-in switched off is missing to a project that uses it.
     let enabled = projects.library_mut().enabled_catalog();

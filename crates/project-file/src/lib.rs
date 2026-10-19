@@ -21,22 +21,26 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use serde_json::{Map, Value, json};
 use suhina_model::{
-    Arrangement, ArrangementLane, AudioInput, AudioRegion, AutomationLane, AutomationPoint, Channel, ChannelId,
-    ChannelRole, Clip, ClipContent, ClipId, ContentId, ContentKinds, ContentLane, Device, DeviceKind, DeviceParam,
-    Extension, Extensions, FadeCurve, FadeShape, FollowAction, FollowKind, InputChannels, LaneData, LaneId,
-    LaunchMapping, LaunchMode, LaunchQuantization, LaunchSettings, Launcher, LauncherColumn, LoopRange,
-    MAX_CHANGE_BEAT, MAX_INPUT_CHANNEL, MAX_TEMPO_CHANGES, MAX_TIME_SIGNATURE_CHANGES, MappingSource, MappingTarget,
-    Marker, MidiInput, MidiPort, Monitor, Note, Project, Rgb, Scale, ScaleMode, Scene, SceneId, Send, Slot,
-    StretchMode, TempoPoint, TimeSignature, TimeSignatureChange, Track, TrackId, Transport, WarpMarker, automation,
-    valid_bpm,
+    Arrangement, ArrangementLane, AudioInput, AudioRegion, AutomationLane, AutomationPoint, Branch, Channel, ChannelId,
+    ChannelRole, Clip, ClipContent, ClipId, ContentId, ContentKinds, ContentLane, Device, DeviceGroup, DeviceKind,
+    DeviceParam, Extension, Extensions, FadeCurve, FadeShape, FollowAction, FollowKind, InputChannels, LaneData,
+    LaneId, LaunchMapping, LaunchMode, LaunchQuantization, LaunchSettings, Launcher, LauncherColumn, LoopRange,
+    MAX_CHANGE_BEAT, MAX_INPUT_CHANNEL, MAX_TEMPO_CHANGES, MAX_TIME_SIGNATURE_CHANGES, Macro, MacroMapping,
+    MappingSource, MappingTarget, Marker, MidiInput, MidiPort, Monitor, Note, Project, Rgb, Scale, ScaleMode, Scene,
+    SceneId, Send, Slot, StretchMode, TempoPoint, TimeSignature, TimeSignatureChange, Track, TrackId, Transport,
+    WarpMarker, automation, has_groups, valid_bpm,
 };
 
 /// The file extension, without the dot.
 pub const EXTENSION: &str = "suhina";
 /// The `format` every file names.
 const FORMAT: &str = "suhina";
-/// The version this crate writes, and the newest it reads.
-pub const VERSION: u64 = 1;
+/// The newest version this crate reads, and the one it writes for a project that holds a device
+/// group. A project without one is written as [`VERSION_WITHOUT_GROUPS`], so a Suhina from before
+/// device groups still opens it (`docs/spec/device-groups.md` › Project file).
+pub const VERSION: u64 = 2;
+/// The version a project without device groups is written as.
+pub const VERSION_WITHOUT_GROUPS: u64 = 1;
 /// A larger file is refused before it is parsed.
 const MAX_FILE: u64 = 512 * 1024 * 1024;
 
@@ -99,8 +103,14 @@ pub fn write_file(path: &Path, project: &Project) -> Result<(), ProjectFileError
 
 /// The project as the text of a `.suhina` file.
 pub fn to_json(project: &Project) -> String {
-    let file = json!({ "format": FORMAT, "version": VERSION, "project": project_value(project) });
+    let file = json!({ "format": FORMAT, "version": version_of(project), "project": project_value(project) });
     serde_json::to_string_pretty(&file).unwrap_or_default()
+}
+
+/// The version `project` is written as: [`VERSION`] when a channel holds a device group, else
+/// [`VERSION_WITHOUT_GROUPS`].
+pub fn version_of(project: &Project) -> u64 {
+    if project.channels.iter().any(|c| has_groups(&c.devices)) { VERSION } else { VERSION_WITHOUT_GROUPS }
 }
 
 /// Reads the text of a `.suhina` file. The project must validate (ids unique, references
@@ -133,9 +143,26 @@ pub fn from_json(text: &str) -> Result<Project, ProjectFileError> {
 /// to `to` (the folder of the file it is saved in): each relative path is written relative to
 /// `to` where both are on one drive, and the absolute path is kept for when it does not resolve.
 pub fn rebase_audio(project: &mut Project, from: &Path, to: &Path) {
+    for device in project.channels.iter_mut().flat_map(|c| &mut c.devices) {
+        let Some(source) = device.sample_file() else { continue };
+        let here = from.join(source);
+        let file = if here.is_file() {
+            here
+        } else {
+            device.sample_absolute_file().map(PathBuf::from).filter(|p| p.is_file()).unwrap_or(here)
+        };
+        let absolute = normalise(&std::path::absolute(&file).unwrap_or(file));
+        let relative = relative_to(&absolute, &normalise(&std::path::absolute(to).unwrap_or(to.into())))
+            .map_or_else(|| source.to_owned(), |p| slashes(&p));
+        device.set_sample_reference(&relative, &absolute.display().to_string());
+    }
     for content in &mut project.contents {
         for lane in &mut content.lanes {
             let LaneData::Audio(region) = &mut lane.data else { continue };
+            // An empty audio clip has no file yet: nothing to move.
+            if region.file.is_empty() {
+                continue;
+            }
             let here = from.join(&region.file);
             let file = if here.is_file() {
                 here
@@ -418,6 +445,7 @@ fn device_value(d: &Device) -> Value {
         DeviceKind::Vst3 { id } => json!({ "type": "vst3", "id": id }),
         DeviceKind::Vst2 { id } => json!({ "type": "vst2", "id": id }),
         DeviceKind::Foreign { format, id } => json!({ "type": "foreign", "format": format, "id": id }),
+        DeviceKind::Group(group) => group_value(group),
     };
     let mut out = json!({
         "name": d.name,
@@ -434,6 +462,40 @@ fn device_value(d: &Device) -> Value {
         with_extensions(map, &d.extensions);
     }
     out
+}
+
+fn group_value(g: &DeviceGroup) -> Value {
+    let branches: Vec<Value> = g
+        .branches
+        .iter()
+        .map(|b| {
+            let mut out = json!({
+                "name": b.name,
+                "volume": number(b.volume),
+                "pan": number(b.pan),
+                "mute": b.mute,
+                "solo": b.solo,
+                "devices": b.devices.iter().map(device_value).collect::<Vec<_>>(),
+            });
+            if let Some(map) = out.as_object_mut() {
+                with_extensions(map, &b.extensions);
+            }
+            out
+        })
+        .collect();
+    let macros: Vec<Value> = g
+        .macros
+        .iter()
+        .map(|m| {
+            let mappings: Vec<Value> = m
+                .mappings
+                .iter()
+                .map(|x| json!({ "device": x.device, "param": x.param, "min": number(x.min), "max": number(x.max) }))
+                .collect();
+            json!({ "name": m.name, "mappings": mappings })
+        })
+        .collect();
+    json!({ "type": "group", "branches": branches, "macros": macros })
 }
 
 fn content_value(c: &ClipContent) -> Value {
@@ -525,6 +587,10 @@ fn clip_value(c: &Clip) -> Value {
         // arrangement clip that never was in a slot) stay as they were written before.
         if !c.launch.is_default() {
             map.insert("launch".into(), launch_value(&c.launch));
+        }
+        // Only a clip with a colour of its own carries one; the others show their track's.
+        if let Some(Rgb(r, g, b)) = c.color {
+            map.insert("color".into(), json!(format!("#{r:02X}{g:02X}{b:02X}")));
         }
         with_extensions(map, &c.extensions);
     }
@@ -1092,7 +1158,12 @@ fn read_device(value: &Value, at: &str) -> Result<Device, ProjectFileError> {
         Some("foreign") => {
             DeviceKind::Foreign { format: required_text(k, "format", &kind_at)?, id: required_text(k, "id", &kind_at)? }
         }
-        _ => return Err(format!("{kind_at}.type: expected builtin, sd, clap, vst3, vst2 or foreign").into()),
+        Some("group") => DeviceKind::Group(Box::new(read_group(k, &kind_at)?)),
+        // Dropping a device that is not understood could drop the devices inside it.
+        Some(other) => {
+            return Err(format!("{kind_at}.type: this project uses a device a newer Suhina knows ({other})").into());
+        }
+        None => return Err(format!("{kind_at}.type: expected builtin, sd, clap, vst3, vst2, foreign or group").into()),
     };
     let mut params = Vec::new();
     for (i, v) in list(d, "params", at)?.iter().enumerate() {
@@ -1110,6 +1181,53 @@ fn read_device(value: &Value, at: &str) -> Result<Device, ProjectFileError> {
         automation,
         extensions: extensions(d, at)?,
     })
+}
+
+/// A device group. Its limits (branch and macro counts, depth, ranges) are checked by
+/// `Project::validate` after the whole project is read; the JSON parser's own nesting limit
+/// bounds how deep this recursion goes before that.
+fn read_group(k: &Obj, at: &str) -> Result<DeviceGroup, ProjectFileError> {
+    let mut branches = Vec::new();
+    for (i, v) in list(k, "branches", at)?.iter().enumerate() {
+        let at = format!("{at}.branches[{i}]");
+        let b = object(v, &at)?;
+        let mut devices = Vec::new();
+        for (j, d) in list(b, "devices", &at)?.iter().enumerate() {
+            devices.push(read_device(d, &format!("{at}.devices[{j}]"))?);
+        }
+        branches.push(Branch {
+            name: text(b, "name", &at)?,
+            volume: float_or(b, "volume", 1.0, &at)?,
+            pan: float_or(b, "pan", 0.0, &at)?,
+            mute: flag(b, "mute", false, &at)?,
+            solo: flag(b, "solo", false, &at)?,
+            devices,
+            extensions: extensions(b, &at)?,
+        });
+    }
+    let mut macros = Vec::new();
+    for (i, v) in list(k, "macros", at)?.iter().enumerate() {
+        let at = format!("{at}.macros[{i}]");
+        let m = object(v, &at)?;
+        let mut mappings = Vec::new();
+        for (j, v) in list(m, "mappings", &at)?.iter().enumerate() {
+            let at = format!("{at}.mappings[{j}]");
+            let x = object(v, &at)?;
+            let mut device = Vec::new();
+            for step in list(x, "device", &at)? {
+                let step = step.as_u64().and_then(|n| u32::try_from(n).ok());
+                device.push(step.ok_or_else(|| format!("{at}.device: expected a list of whole numbers"))?);
+            }
+            mappings.push(MacroMapping {
+                device,
+                param: required_text(x, "param", &at)?,
+                min: float_or(x, "min", 0.0, &at)?,
+                max: float_or(x, "max", 1.0, &at)?,
+            });
+        }
+        macros.push(Macro { name: text(m, "name", &at)?, mappings });
+    }
+    Ok(DeviceGroup { branches, macros })
 }
 
 fn read_content(value: &Value, at: &str) -> Result<ClipContent, ProjectFileError> {
@@ -1221,8 +1339,25 @@ fn read_clip(value: &Value, at: &str) -> Result<Clip, ProjectFileError> {
         fade_out_curve: fade_curve(c, "fade_out", at)?,
         follow_action: read_follow(c, at)?,
         launch: read_launch(c, at)?,
+        color: read_color(c.get("color"), at)?,
         extensions: extensions(c, at)?,
     })
+}
+
+/// A `color` field, `#RRGGBB`; missing or null is none.
+fn read_color(value: Option<&Value>, at: &str) -> Result<Option<Rgb>, ProjectFileError> {
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(hex)) => {
+            let digits = hex.strip_prefix('#').unwrap_or(hex);
+            let parsed = (digits.len() == 6 && digits.chars().all(|c| c.is_ascii_hexdigit()))
+                .then(|| u32::from_str_radix(digits, 16).ok())
+                .flatten();
+            let rgb = parsed.ok_or_else(|| ProjectFileError(format!("{at}.color: expected #RRGGBB")))?;
+            Ok(Some(Rgb((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8)))
+        }
+        Some(_) => Err(format!("{at}.color: expected #RRGGBB").into()),
+    }
 }
 
 /// A clip's follow action, `follow`: off when missing (files written before follow actions).

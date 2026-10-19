@@ -31,6 +31,11 @@ products; see [`CONTRIBUTING.md`](CONTRIBUTING.md) › Clean-room.
 
 ## Goals
 
+Sampler provides single-source sample and granular playback with an SDK panel,
+editable waveform and sample loading by drag and drop.
+Manual slice maps support double-click add/remove and draggable boundaries; the
+waveform supports anchored zoom and horizontal navigation.
+
 - A real-time audio engine that never glitches, with offline rendering on the same code path.
 - Session-style clip launching with quantisation, plus a linear arrangement.
 - Reading `.als` projects you made yourself; later other formats such as DAWproject and `.flp`,
@@ -209,6 +214,12 @@ port anchors and wire routes for a future visual editor. See the [authoring guid
 Suhina is free software, licensed under the [GNU General Public License v3.0 or later](LICENSE).
 Contributions are licensed the same way.
 
+Rust authors can use checked graph handles and standard panel-control constructors to reduce
+manual wiring and repeated UI setup ([SDK authoring guide](docs/device-sdk.md#checked-rust-authoring)).
+
 SDK effect panels can include custom vector controls, XY pads, gradients and embedded PNG/JPEG
 icons, photos and repeating backgrounds. Artwork and bindings travel inside the single `.sd`;
 see the [custom panel guide](docs/device-sdk.md#custom-panels-images-and-controls).
+
+Application builds generate stock device definitions in the build script's `OUT_DIR/devices/`
+as `.sd` files and embed them in the executable for immediate startup availability.

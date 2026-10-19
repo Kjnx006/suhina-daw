@@ -5,11 +5,15 @@
 //! `DeviceKind::Builtin(id)` turns into a running device here. The engine builds device chains
 //! through this crate; front ends list what can be added.
 
-use suhina_device_api::{Device, DeviceInfo};
+use std::sync::Arc;
 
-/// The built-in effects and instruments, in the order a device browser lists them.
-pub const DEVICES: [&DeviceInfo; 8] = [
+use suhina_device_api::{Device, DeviceInfo};
+pub mod stock;
+
+/// The built-in effects, instruments and MIDI effects, in the order a device browser lists them.
+pub const DEVICES: [&DeviceInfo; 14] = [
     &suhina_device_fm_synth::INFO,
+    &suhina_device_sampler::INFO,
     &suhina_device_utility::INFO,
     &suhina_device_auto_pan::INFO,
     &suhina_device_dj_eq::INFO,
@@ -17,6 +21,11 @@ pub const DEVICES: [&DeviceInfo; 8] = [
     &suhina_device_overdrive::INFO,
     &suhina_device_compressor::INFO,
     &suhina_device_limiter::INFO,
+    &suhina_device_nam_amp_modeler::INFO,
+    &suhina_device_nam_cab_loader::INFO,
+    &suhina_device_delay::INFO,
+    &suhina_device_reverb::INFO,
+    &suhina_device_pitch::INFO,
 ];
 
 /// What the device with this id is, or `None` for an unknown id.
@@ -24,10 +33,16 @@ pub fn info(id: &str) -> Option<&'static DeviceInfo> {
     DEVICES.iter().copied().find(|info| info.id == id)
 }
 
+/// Native instruments can author their panel with the same SDK widgets as .sd graphs.
+pub fn panel(id: &str) -> Option<(suhina_device_sdk::ui::DeviceUi, Vec<suhina_device_sdk::Parameter>)> {
+    (id == "sampler").then(|| (suhina_device_sampler::panel(), suhina_device_sampler::parameters()))
+}
+
 /// A new device with this id at its defaults, prepared for 48 kHz, or `None` for an unknown
 /// id. Allocates: call it off the audio thread.
 pub fn create(id: &str) -> Option<Box<dyn Device>> {
     Some(match id {
+        "sampler" => Box::new(suhina_device_sampler::Sampler::new()),
         "fm-synth" => Box::new(suhina_device_fm_synth::FmSynth::new()),
         "utility" => Box::new(suhina_device_utility::Utility::new()),
         "auto-pan" => Box::new(suhina_device_auto_pan::AutoPan::new()),
@@ -36,8 +51,42 @@ pub fn create(id: &str) -> Option<Box<dyn Device>> {
         "overdrive" => Box::new(suhina_device_overdrive::Overdrive::new()),
         "compressor" => Box::new(suhina_device_compressor::Compressor::new()),
         "limiter" => Box::new(suhina_device_limiter::Limiter::new()),
+        "nam-amp-modeler" => Box::new(suhina_device_nam_amp_modeler::NamAmp::new()),
+        "nam-cab-loader" => Box::new(suhina_device_nam_cab_loader::CabLoader::new()),
+        "delay" => Box::new(suhina_device_delay::Delay::new()),
+        "reverb" => Box::new(suhina_device_reverb::Reverb::new()),
+        "pitch" => Box::new(suhina_device_pitch::Pitch::new()),
         _ => return None,
     })
+}
+
+/// The file a file-backed device runs, already read and parsed or decoded (docs/spec/nam-amp-and-cab.md):
+/// a model for the Amp Modeler, an impulse response for the Cab Loader. The session keeps a
+/// map of these by the file's path; the engine hands the device the map's entry when it builds
+/// its chains.
+#[derive(Debug, Clone)]
+pub enum DeviceAsset {
+    Nam(Arc<suhina_device_nam_amp_modeler::NamModel>),
+    Ir(Arc<suhina_dsp::Ir>),
+}
+
+/// The ids whose devices run a file stored in `Device::state` (docs/spec/nam-amp-and-cab.md).
+pub fn is_file_device(id: &str) -> bool {
+    matches!(id, "nam-amp-modeler" | "nam-cab-loader")
+}
+
+/// A new device with this id, its defaults, and `asset` already loaded — `None` for an id that
+/// takes no file, or for an unknown id. Allocation: off the audio thread.
+pub fn create_with(id: &str, asset: Option<&DeviceAsset>) -> Option<Box<dyn Device>> {
+    match (id, asset) {
+        ("nam-amp-modeler", Some(DeviceAsset::Nam(model))) => {
+            Some(Box::new(suhina_device_nam_amp_modeler::NamAmp::with_model(Arc::clone(model))))
+        }
+        ("nam-cab-loader", Some(DeviceAsset::Ir(ir))) => {
+            Some(Box::new(suhina_device_nam_cab_loader::CabLoader::with_ir((**ir).clone())))
+        }
+        _ => create(id),
+    }
 }
 
 /// Largest preset file read.

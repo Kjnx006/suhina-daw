@@ -32,6 +32,7 @@ fn start(spec: &str, sample_rate: u32) -> (Plugin, Hosted) {
         sample_rate: f64::from(sample_rate),
         timeout: PATIENT,
         group: None,
+        ara: None,
     };
     let (plugin, audio) = Plugin::start(launch).unwrap_or_else(|e| panic!("{spec}: {e}"));
     (plugin, Hosted::new(audio))
@@ -119,6 +120,7 @@ fn project(chains: &[usize]) -> Project {
                 fade_out_curve: Default::default(),
                 follow_action: Default::default(),
                 launch: Default::default(),
+                color: None,
                 extensions: Extensions::default(),
             }],
         });

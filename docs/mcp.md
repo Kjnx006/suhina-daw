@@ -18,6 +18,20 @@ covers:
 
 # MCP server
 
+Sampler uses the common commands: `device.add {"track":1,"id":"sampler"}`,
+`device.loadSample {"track":1,"device":0,"path":"/path/to/sample.wav"}` and
+`device.setParam` for its stable parameters. Sample paths are confined to the
+read root. `device.recordSample {"track":1,"device":0,"on":true}` records the
+armed track's selected audio input; `on:false` finishes and loads the take, as one
+undo step. Save the project and open an audio output before recording.
+
+Loading a sample initializes `source_bpm` from its metadata, filename or detected
+tempo, falling back to the current project/playback tempo; `device.loadSample`
+returns `source_bpm` too. Set `warp` to 1 to follow project BPM using that original
+tempo. Correct `source_bpm` explicitly when known, or set it to 0 to request fresh
+detection. The legacy `warp_beats` parameter remains readable; setting it explicitly
+returns to beat-length timing. Source and tempo changes persist and undo together.
+
 `suhina-cli mcp` serves the [Model Context Protocol](https://modelcontextprotocol.io) on
 stdin/stdout (the official `rmcp` SDK), so an agent can open, inspect, edit and render projects.
 It follows the same conventions as [PhotoCraft](https://github.com/storytold/photocraft)'s MCP server.
@@ -179,8 +193,9 @@ suhina-cli mcp --read-root ./projects --write-root ./renders [--audio]
   ([clip launching](spec/clip-launching.md) › Clips between the arrangement and the slots). `clip.setFades` with
   `scene` instead of `index` sets a launcher slot clip's fades
   ([clip launching](spec/clip-launching.md)). `clip.create {track, scene? | start?, length?,
-  stack?}` makes an empty MIDI clip, a bar long by default, in an empty slot or at a beat
-  ([arrangement editing](spec/arrangement-editing.md#making-an-empty-midi-clip)).
+  stack?}` makes an empty clip — MIDI on a notes track, audio with no file yet on an audio
+  track — a bar long by default, in an empty slot or at a beat
+  ([arrangement editing](spec/arrangement-editing.md#making-an-empty-clip)).
   `clip.split {track, index, at}` cuts a clip in two at a song position; `clip.consolidate
   {track, start, end}` turns a range of one track into one clip (audio is rendered to a file next
   to the project, which must have been saved).
@@ -329,6 +344,24 @@ suhina-cli mcp --read-root ./projects --write-root ./renders [--audio]
   Values are kept in the parameter's range once `device.pluginParams` has listed them.
   `track.devices` gives a plug-in's set values and any device's lanes (`automation`).
 
+- **Device groups.** A device inside a device group is named by a *device path*
+  ([spec](spec/device-groups.md)): a whole number is a device on the track, as before, and text
+  such as `"2/1/0"` is the device at index 2 (a group), its branch 1, device 0 there. Every
+  `device.*` command takes a path for `device`, and `device.add`, `device.addSd`,
+  `device.addPlugin` and `device.paste` a path for `position` (`"2/1/3"`: branch 1 of the group
+  at 2, before its device 3). `track.devices` gives each device its `path`, and a group its
+  `params` (`mix`, `gain`, `macro.1` … `macro.8`, set with `device.setParam`), `branches` (name,
+  volume, pan, mute, solo and their `devices`) and `macros`. `device.group {track, device, count?,
+  name?}` puts consecutive devices into a new group of one branch without changing the sound,
+  `device.ungroup` takes a group of one branch apart, `device.addGroup {track, position?}` adds an
+  empty one, `device.move {track, device, to}` moves a device along the chain, between branches or
+  into and out of a group, and `device.duplicate` copies a device or a whole group next to itself.
+  `branch.add`, `branch.remove`, `branch.duplicate`, `branch.rename`, `branch.setVolume {db}`,
+  `branch.setPan`, `branch.setMute` and `branch.setSolo` take the group's path as `device` and the
+  `branch` index. Each is one undo step. A group whose branches start with an instrument is the
+  track's instrument and goes first; an effect group goes anywhere an effect can. Automation of a
+  device inside a group is refused until the engine plays it.
+
 - **Automation.** `automation.addPoint`, `automation.movePoint`, `automation.deletePoint`,
   `automation.movePoints`, `automation.deletePoints` (several points of one lane in one undo
   step), `automation.clear`, `automation.setEnabled` and `automation.list` (through `command_run`) edit
@@ -338,8 +371,10 @@ suhina-cli mcp --read-root ./projects --write-root ./renders [--audio]
   built-in devices too. Setting an automated parameter by hand turns its lane off (the answer
   says `"automation": "off"`) until `automation.setEnabled` turns it on again
   ([automation spec](spec/automation.md)).
-  An instrument (`fm-synth`) goes first, on a MIDI track, and plays the track's notes; effects
-  follow. `device.add {preset, voice?}` adds the FM synth playing a DX7 voice from a `.syx` file.
+  MIDI effects (`pitch`) go first, on a MIDI track, and change the notes on their way to the
+  instrument (`fm-synth`), which goes right after them and plays the notes; audio effects
+  follow. `track.devices` gives each built-in and `.sd` device's `role` (`effect`,
+  `instrument`, `midi_effect`). `device.add {preset, voice?}` adds the FM synth playing a DX7 voice from a `.syx` file.
   `devices.sdNodes` returns every SDK node contract, ports, units, defaults, configuration examples
   limits and custom canvas capabilities (including equality expressions and literal-value selector buttons, conditional controls, choice menus and text alignment) for effect authoring by agents ([guide](device-sdk.md)).
   `device.setParam` applies declared conditional peer links as one undo gesture and sends all affected values to the player.
@@ -455,3 +490,13 @@ Or, to work on the projects open in the running app:
 ```sh
 claude mcp add suhina-app -- /path/to/suhina-cli mcp --attach
 ```
+
+Sampler manual boundaries are edited with `device.setSampleSlices` (`track`,
+`device`, `points`: normalized source positions strictly between 0 and 1). The
+command validates, sorts and deduplicates the list and supports undo/redo; an
+empty list clears the map. Optional `continue` groups consecutive drag edits.
+
+`track.devices` includes `sample_slices` when a Sampler has an explicit manual map.
+
+`device.updateSd` applies the same read-root confinement as `device.addSd` and
+`device.loadSample`, including symlink resolution.

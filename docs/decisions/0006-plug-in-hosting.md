@@ -96,7 +96,9 @@ workspace forbids.
    process. The hosting choice per plug-in (`Hosting`: `binary`, the default, `instance` or
    `vendor`) is kept in `plugin-hosting.json` in the settings folder; `library::group_for`
    turns it into the group: `file:<path>` (every plug-in in one file or shell together),
-   `vendor:<name>` (the file's group when the vendor is unknown) or none.
+   `vendor:<name>` (the file's group when the vendor is unknown) or none. An ARA plug-in is
+   never hosted alone: `instance` is refused for it and read as the file's group
+   ([ADR 0028](0028-ara-hosting.md) decision 2).
    *Built (#108): one round trip for consecutive plug-ins of a process.* A block may name
    instances of the same process to run after the link's own (`Link::send_joint`, up to 63;
    the engine sends at most 16 plug-ins a block). The host keeps each instance's audio
@@ -128,7 +130,10 @@ workspace forbids.
      *Built:* each block carries up to 1024 events (note on and off, MIDI controller, pitch
      bend, parameter value) as fixed 16-byte records with their frame (`crates/ipc/src/events.rs`, region
      version 2; version 3 adds the block's followers, decision 2); the host reads them into a
-     list made beforehand, so neither side allocates.
+     list made beforehand, so neither side allocates. Two more kinds carry the song: `Transport`
+     (playing, position in samples) and `Tempo`, sent with every block to a plug-in that follows
+     the song (one loaded with an ARA document, [ADR 0028](0028-ara-hosting.md)), which a VST3
+     host puts in the block's process context.
      A VST3 host hands notes to `process` as an `IEventList` on event bus 0, and controllers
      and pitch bend as parameter changes at their frame through the plug-in's `IMidiMapping`
      (asked for the first MIDI channel only: some plug-ins crash when asked about the second); a
@@ -152,7 +157,13 @@ workspace forbids.
      with its automation yet.
    - **Messages** over a local socket or pipe, with a versioned protocol: load and unload,
      state save and load, latency changes, editor open and close, ping. *Built:* protocol
-     version 8 (`latency_changed` comes unasked when a running plug-in reports another
+     version 11 (the two below together with `transport_key`, which a host sends unasked when
+     Space is pressed in a plug-in's window, so the engine starts or stops playback); version 10
+     (`memory` comes unasked once a second: the host's process reports its resident memory, and
+     `host_memory` reads the running hosts' reports for the control bar's total); version 9
+     (`load` may carry an ARA document, `ara_update` changes it, `ara_select` tells its editor
+     the selected clip and `fit_editor` asks an embedded editor to take the room it has,
+     [ADR 0028](0028-ara-hosting.md)); version 8 (`latency_changed` comes unasked when a running plug-in reports another
      latency; see *Latency* below); version 7 (`open_editor` says whether the editor is `embedded` in the engine's window,
      `place_editor` puts it there and is not answered, and `editor_resized` comes unasked when
      a plug-in gives its editor a new size, decision 10); version 6: `open_editor` names the
@@ -361,6 +372,8 @@ workspace forbids.
    folders the user adds, so no setting is needed to find installed plug-ins. Implemented in
    `suhina_plugins::scan` and `scan_pool` for CLAP and VST3:
    - A VST3 bundle with a `moduleinfo.json` (JSON5) is read from it without loading anything.
+     Both ways note whether a plug-in supports ARA (an `ARA Main Factory Class` paired with it,
+     [ADR 0028](0028-ara-hosting.md)).
    - Everything else goes to a few long-lived `suhina-plugin-host --scan-worker` processes
      (half the processor's threads, at most 4), each reading file after file. A worker that
      crashes or hangs on a file is ended, the file is marked failed with the reason, and a new
@@ -472,6 +485,18 @@ workspace forbids.
     CLAP and VST3 hosting work, with nothing of its own to build. It costs a second process hop
     (our host, then yabridge's Wine process). Windows plug-ins that exist only as VST2 do not
     work this way (decision 8).
+
+13. **Plug-ins inside device groups** (added 2026-10-18, #147;
+    [device groups](../spec/device-groups.md)). A plug-in inside a group still runs out of
+    process; a group is not a process boundary. Its key counts "how many of the same plug-in
+    come before it" depth-first through the channel's whole tree of devices, so moving it into or
+    out of a group keeps its process and state while the order of identical plug-ins stays.
+    Inside a branch it runs its round trip and is waited for within the block's deadline, one
+    after another with the branch's other devices; it does not take part in the joint blocks or
+    the staged runs of 4, which a later change can extend to a group's branches. A missed block
+    does what it does on a track: an effect passes its input, an instrument is silent, and the
+    rest of the group goes on. Its state is read and saved, and it restarts, by its key like any
+    other plug-in.
 
 ## Not decided yet
 

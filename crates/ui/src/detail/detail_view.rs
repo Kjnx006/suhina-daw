@@ -10,15 +10,30 @@
 //! takes the room under that line, and where it lands in the window is reported each frame
 //! ([`EditorPlace`]) for the host process to put it there.
 
-use egui::{Align2, Pos2, Rect, Sense, Ui, Vec2};
+use egui::{Align2, Id, Pos2, Rect, Sense, Ui, Vec2};
 use serde_json::json;
 use suhina_engine::model::{ClipId, DeviceKind, LaneData, Note, Project, TrackId};
 use suhina_session::{Placement, PluginReport, PluginStatus};
 
 use crate::interaction::grid::gain_to_db;
+use crate::interaction::menus;
 use crate::kit::motion;
 use crate::kit::theme::{self, PAD, ROW};
 use crate::kit::widgets::{self, Action};
+
+fn device_display_name(device: &suhina_engine::model::Device) -> String {
+    let Some(file) =
+        device.sample_file().and_then(|path| std::path::Path::new(path).file_name()).and_then(|s| s.to_str())
+    else {
+        return device.name.clone();
+    };
+    let stem = std::path::Path::new(file).file_stem().and_then(|s| s.to_str()).unwrap_or(file);
+    if device.name.to_lowercase().contains(&stem.to_lowercase()) {
+        device.name.clone()
+    } else {
+        format!("{} \u{b7} {file}", device.name)
+    }
+}
 
 /// Width of one device in a row, and of the column the stacked chain takes.
 pub const DEVICE_WIDTH: f32 = 220.0;
@@ -45,6 +60,9 @@ pub struct EditorPlace {
     pub track: TrackId,
     pub device: usize,
     pub placement: Placement,
+    /// The room the panel has for the editor, in pixels, where it is asked to fit (an ARA
+    /// editor in the clip's place); `None` where it keeps its own size.
+    pub fit: Option<(u32, u32)>,
 }
 
 /// The height a device row needs to show an embedded editor `height` pixels tall under a
@@ -55,17 +73,68 @@ pub fn row_height_with_editor(height: u32, pixels_per_point: f32) -> f32 {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DeviceBox {
-    /// Its index among the track's devices, as the device commands take it.
+    /// Its index in the list it is in: the track's devices, or a group's branch.
     pub index: usize,
+    /// Where it is on the track, as the device commands take it.
+    pub at: DeviceAt,
+    /// For a device group: its settings and branches.
+    pub group: Option<GroupBox>,
     pub name: String,
     /// What it is: a built-in effect or instrument, a plug-in format, or one Suhina cannot run.
     pub kind: String,
     pub enabled: bool,
     /// Parameter ids and values as text.
     pub params: Vec<(String, String)>,
+    /// Built-in parameter values, by id (in the parameter's unit, so a panel's knobs take them).
+    pub values: Vec<(String, f64)>,
+    /// The id of a device that runs a file ([docs/spec/nam-amp-and-cab.md]); the file is the
+    /// state's path.
+    pub file_device: Option<&'static str>,
+    /// The file's path, when the device runs one.
+    pub file: Option<String>,
     pub graph: Option<GraphBox>,
     /// For a plug-in: where it stands, while the project plays.
     pub plugin: Option<PluginBox>,
+}
+
+/// Where a device is on its track: its index, or its path through device groups
+/// (`docs/spec/device-groups.md` › Commands).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub struct DeviceAt(pub Vec<usize>);
+
+impl DeviceAt {
+    /// The `device` parameter of a device command: the index of a device on the track, or the
+    /// path `"2/1/0"` of one inside a group.
+    pub fn value(&self) -> serde_json::Value {
+        match self.0.as_slice() {
+            [index] => json!(index),
+            path => json!(path.iter().map(ToString::to_string).collect::<Vec<_>>().join("/")),
+        }
+    }
+
+    /// Whether it is on the track itself, not inside a group.
+    pub fn top(&self) -> bool {
+        self.0.len() == 1
+    }
+}
+
+/// A device group in the detail area: its mix and gain and its branches.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GroupBox {
+    pub mix: f64,
+    pub gain_db: f64,
+    pub branches: Vec<BranchBox>,
+}
+
+/// One branch of a device group.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BranchBox {
+    pub name: String,
+    pub volume_db: f64,
+    pub pan: f64,
+    pub mute: bool,
+    pub solo: bool,
+    pub devices: Vec<DeviceBox>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -98,6 +167,8 @@ pub struct PluginBox {
     pub editor_open: bool,
     /// Its editor is open inside the panel: the size of it, in pixels.
     pub embedded: Option<(u32, u32)>,
+    /// It is bound to its track's audio clips (ARA), so its editor edits them.
+    pub ara: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -118,6 +189,7 @@ impl PluginBox {
                 line: "Not running".into(),
                 editor_open: false,
                 embedded: None,
+                ara: false,
             };
         };
         let name = report.plugin.as_ref().map(|(name, vendor, _)| format!("{name} by {vendor}"));
@@ -140,7 +212,7 @@ impl PluginBox {
             PluginStatus::Crashed(why) => (PluginState::Crashed, format!("Crashed: {why}")),
             PluginStatus::Failed(why) => (PluginState::Crashed, format!("Could not start: {why}")),
         };
-        Self { state, line, editor_open: report.editor_open, embedded: report.editor_embedded }
+        Self { state, line, editor_open: report.editor_open, embedded: report.editor_embedded, ara: report.ara }
     }
 
     /// The size the embedded editor takes in the panel, in points.
@@ -207,6 +279,18 @@ pub enum Showing {
     #[default]
     Clip,
     Devices,
+}
+
+/// What the detail area's frame picked: the Clip / Devices switch's value, and a device panel
+/// clicked (to select it).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Picked {
+    pub showing: Option<Showing>,
+    /// A device panel was clicked: the track and the device's index, to select.
+    pub clicked: Option<(TrackId, usize)>,
+    /// How tall the device chain's panels are, in points, when the area shows only the chain:
+    /// the detail area is kept no taller.
+    pub content_height: Option<u32>,
 }
 
 /// What the piano roll has selected in the clip the detail area shows: how many notes, how many
@@ -284,6 +368,9 @@ pub struct Chain {
     pub track: TrackId,
     pub name: String,
     pub devices: Vec<DeviceBox>,
+    /// The NAM panels' folders' files and a file's names and notes
+    /// ([docs/spec/nam-amp-and-cab.md] › Folders).
+    pub nam: crate::detail::nam_panel::Lists,
 }
 
 /// What the detail area shows: a selected clip comes with its track's chain, since that chain
@@ -298,15 +385,16 @@ pub enum Detail {
 
 /// The detail for a selected clip (it wins, with its own track's chain) or track.
 pub fn build(project: &Project, track: Option<TrackId>, clip: Option<ClipRef>) -> Detail {
-    build_with(project, track, clip, &mut |_, _| None)
+    build_with(project, track, clip, &mut |_, _| None, crate::detail::nam_panel::Lists::default())
 }
 
-/// [`build`], with each plug-in device's state from `plugins` (track, device index).
+/// [`build`], with each plug-in device's state from `plugins` (track, device path).
 pub fn build_with(
     project: &Project,
     track: Option<TrackId>,
     clip: Option<ClipRef>,
-    plugins: &mut dyn FnMut(TrackId, usize) -> Option<PluginReport>,
+    plugins: &mut dyn FnMut(TrackId, &[usize]) -> Option<PluginReport>,
+    nam: crate::detail::nam_panel::Lists,
 ) -> Detail {
     let bar = bar_beats(project);
     let track_name =
@@ -360,14 +448,19 @@ pub fn build_with(
                 selection: SelectionInfo::default(),
                 switch: None,
             }),
-            chain(project, id, plugins),
+            chain(project, id, plugins, nam.clone()),
         );
     }
-    track.map_or(Detail::Nothing, |id| Detail::Devices(chain(project, id, plugins)))
+    track.map_or(Detail::Nothing, |id| Detail::Devices(chain(project, id, plugins, nam.clone())))
 }
 
 /// A track's devices as the detail area shows them.
-fn chain(project: &Project, id: TrackId, plugins: &mut dyn FnMut(TrackId, usize) -> Option<PluginReport>) -> Chain {
+fn chain(
+    project: &Project,
+    id: TrackId,
+    plugins: &mut dyn FnMut(TrackId, &[usize]) -> Option<PluginReport>,
+    nam: crate::detail::nam_panel::Lists,
+) -> Chain {
     let track_name = project.tracks.iter().find(|t| t.id == id).map(|t| t.name.clone()).unwrap_or_default();
     let channel = project
         .tracks
@@ -376,85 +469,183 @@ fn chain(project: &Project, id: TrackId, plugins: &mut dyn FnMut(TrackId, usize)
         .and_then(|t| t.channel)
         .and_then(|c| project.channels.iter().find(|ch| ch.id == c));
     let devices = channel
-        .map(|c| {
-            c.devices
-                .iter()
-                .enumerate()
-                .map(|(index, d)| DeviceBox {
-                    index,
-                    name: d.name.clone(),
-                    kind: match &d.kind {
-                        DeviceKind::Builtin(_) => "Suhina".into(),
-                        DeviceKind::Sd => d
-                            .state
-                            .as_deref()
-                            .and_then(|state| std::str::from_utf8(state).ok())
-                            .and_then(|text| suhina_device_sdk::DeviceGraph::from_sd(text).ok())
-                            .map(|graph| {
-                                match graph.role {
-                                    suhina_device_sdk::DeviceRole::Effect => "AudioEffect",
-                                    suhina_device_sdk::DeviceRole::Instrument => "Instrument",
-                                    suhina_device_sdk::DeviceRole::MidiEffect => "MIDI Effect",
-                                }
-                                .to_owned()
-                            })
-                            .unwrap_or_else(|| "AudioEffect".into()),
-                        DeviceKind::Clap { .. } => "CLAP".into(),
-                        DeviceKind::Vst3 { .. } => "VST3".into(),
-                        DeviceKind::Vst2 { .. } => "VST2".into(),
-                        DeviceKind::Foreign { format, .. } => format!("Not supported ({format})"),
-                    },
-                    enabled: d.enabled,
-                    params: d.params.iter().map(|p| (p.id.clone(), format_value(p.value))).collect(),
-                    graph: match (&d.kind, d.state.as_deref()) {
-                        (DeviceKind::Sd, Some(state)) => crate::detail::device_canvas::graph(state).map(|cached| {
-                            let graph = &cached.graph;
-                            GraphBox {
-                                canvas: cached.canvas.clone(),
-                                linear: graph.connections.len() == graph.nodes.len().saturating_sub(1)
-                                    && graph.nodes.iter().all(|node| {
-                                        graph.connections.iter().filter(|e| e.from == node.id).count() <= 1
-                                    })
-                                    && graph.connections.iter().all(|e| e.from_port == "out" && e.to_port == "in"),
-                                nodes: graph
-                                    .ordered_nodes()
-                                    .iter()
-                                    .filter(|node| node.visible)
-                                    .map(|node| node.kind.info().name.into())
-                                    .collect(),
-                                parameters: graph
-                                    .parameters
-                                    .iter()
-                                    .map(|parameter| GraphParameter {
-                                        default: parameter.default,
-                                        control: parameter.control,
-                                        ui: parameter.ui.clone(),
-                                        unit: parameter.unit.clone(),
-                                        id: parameter.id.clone(),
-                                        name: parameter.name.clone(),
-                                        min: parameter.min,
-                                        max: parameter.max,
-                                        value: d
-                                            .params
-                                            .iter()
-                                            .find(|value| value.id == parameter.id)
-                                            .map_or(parameter.default, |value| parameter.clamp(value.value)),
-                                    })
-                                    .collect(),
-                            }
-                        }),
-                        _ => None,
-                    },
-                    plugin: matches!(
-                        d.kind,
-                        DeviceKind::Clap { .. } | DeviceKind::Vst3 { .. } | DeviceKind::Vst2 { .. }
-                    )
-                    .then(|| PluginBox::from_report(plugins(id, index))),
-                })
-                .collect()
-        })
+        .map(|c| c.devices.iter().enumerate().map(|(index, d)| device_box(d, &[index], id, plugins)).collect())
         .unwrap_or_default();
-    Chain { track: id, name: track_name, devices }
+    Chain { track: id, name: track_name, devices, nam }
+}
+
+/// One device as the detail area shows it, at `path` on track `id`; a group with its branches.
+fn device_box(
+    d: &suhina_engine::model::Device,
+    path: &[usize],
+    id: TrackId,
+    plugins: &mut dyn FnMut(TrackId, &[usize]) -> Option<PluginReport>,
+) -> DeviceBox {
+    DeviceBox {
+        index: path.last().copied().unwrap_or(0),
+        at: DeviceAt(path.to_vec()),
+        group: d.as_group().map(|g| group_box(g, d, path, id, plugins)),
+        name: device_display_name(d),
+        kind: match &d.kind {
+            DeviceKind::Builtin(_) => "Suhina".into(),
+            DeviceKind::Sd => d
+                .state
+                .as_deref()
+                .and_then(|state| std::str::from_utf8(state).ok())
+                .and_then(|text| suhina_device_sdk::DeviceGraph::from_sd(text).ok())
+                .map(|graph| {
+                    match graph.role {
+                        suhina_device_sdk::DeviceRole::Effect => "AudioEffect",
+                        suhina_device_sdk::DeviceRole::Instrument => "Instrument",
+                        suhina_device_sdk::DeviceRole::MidiEffect => "MIDI Effect",
+                    }
+                    .to_owned()
+                })
+                .unwrap_or_else(|| "AudioEffect".into()),
+            DeviceKind::Clap { .. } => "CLAP".into(),
+            DeviceKind::Vst3 { .. } => "VST3".into(),
+            DeviceKind::Vst2 { .. } => "VST2".into(),
+            DeviceKind::Foreign { format, .. } => format!("Not supported ({format})"),
+            DeviceKind::Group(_) => "Group".into(),
+        },
+        enabled: d.enabled,
+        params: d.params.iter().map(|p| (p.id.clone(), format_value(p.value))).collect(),
+        values: if let DeviceKind::Builtin(id) = &d.kind {
+            let info = suhina_device_registry::info(id);
+            info.map(|info| {
+                info.params
+                    .iter()
+                    .map(|p| {
+                        (
+                            p.id.to_owned(),
+                            d.params
+                                .iter()
+                                .find(|stored| stored.id == p.id)
+                                .map_or(p.default, |stored| p.clamp(stored.value)),
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+        } else {
+            Vec::new()
+        },
+        file_device: match &d.kind {
+            DeviceKind::Builtin(id) if suhina_device_registry::is_file_device(id) => {
+                suhina_device_registry::info(id).map(|info| info.id)
+            }
+            _ => None,
+        },
+        file: d
+            .state
+            .as_deref()
+            .and_then(|state| std::str::from_utf8(state).ok())
+            .filter(|path| !path.is_empty())
+            .map(str::to_owned),
+        graph: match (&d.kind, d.state.as_deref()) {
+            // A built-in with a stock `.sd` panel (the Sampler, #600), read from the bundle by id.
+            (DeviceKind::Builtin(_), _) => {
+                suhina_device_bundle::source(d).and_then(crate::detail::device_canvas::graph).map(|cached| GraphBox {
+                    canvas: cached.canvas.clone(),
+                    linear: false,
+                    nodes: vec![],
+                    parameters: cached
+                        .graph
+                        .parameters
+                        .iter()
+                        .map(|p| GraphParameter {
+                            default: p.default,
+                            control: p.control,
+                            ui: p.ui.clone(),
+                            unit: p.unit.clone(),
+                            id: p.id.clone(),
+                            name: p.name.clone(),
+                            min: p.min,
+                            max: p.max,
+                            value: d.params.iter().find(|v| v.id == p.id).map_or(p.default, |v| p.clamp(v.value)),
+                        })
+                        .collect(),
+                })
+            }
+            (DeviceKind::Sd, Some(state)) => crate::detail::device_canvas::graph(state).map(|cached| {
+                let graph = &cached.graph;
+                GraphBox {
+                    canvas: cached.canvas.clone(),
+                    linear: graph.connections.len() == graph.nodes.len().saturating_sub(1)
+                        && graph
+                            .nodes
+                            .iter()
+                            .all(|node| graph.connections.iter().filter(|e| e.from == node.id).count() <= 1)
+                        && graph.connections.iter().all(|e| e.from_port == "out" && e.to_port == "in"),
+                    nodes: graph
+                        .ordered_nodes()
+                        .iter()
+                        .filter(|node| node.visible)
+                        .map(|node| node.kind.info().name.into())
+                        .collect(),
+                    parameters: graph
+                        .parameters
+                        .iter()
+                        .map(|parameter| GraphParameter {
+                            default: parameter.default,
+                            control: parameter.control,
+                            ui: parameter.ui.clone(),
+                            unit: parameter.unit.clone(),
+                            id: parameter.id.clone(),
+                            name: parameter.name.clone(),
+                            min: parameter.min,
+                            max: parameter.max,
+                            value: d
+                                .params
+                                .iter()
+                                .find(|value| value.id == parameter.id)
+                                .map_or(parameter.default, |value| parameter.clamp(value.value)),
+                        })
+                        .collect(),
+                }
+            }),
+            _ => None,
+        },
+        plugin: matches!(d.kind, DeviceKind::Clap { .. } | DeviceKind::Vst3 { .. } | DeviceKind::Vst2 { .. })
+            .then(|| PluginBox::from_report(plugins(id, path))),
+    }
+}
+
+/// A device group's settings and its branches with their devices.
+fn group_box(
+    group: &suhina_engine::model::DeviceGroup,
+    device: &suhina_engine::model::Device,
+    path: &[usize],
+    id: TrackId,
+    plugins: &mut dyn FnMut(TrackId, &[usize]) -> Option<PluginReport>,
+) -> GroupBox {
+    let values = suhina_engine::group_param_values(&device.params);
+    GroupBox {
+        mix: values.first().copied().unwrap_or(1.0),
+        gain_db: values.get(1).copied().unwrap_or(0.0),
+        branches: group
+            .branches
+            .iter()
+            .enumerate()
+            .map(|(b, branch)| BranchBox {
+                name: branch.name.clone(),
+                volume_db: gain_to_db(branch.volume),
+                pan: branch.pan,
+                mute: branch.mute,
+                solo: branch.solo,
+                devices: branch
+                    .devices
+                    .iter()
+                    .enumerate()
+                    .map(|(i, inner)| {
+                        let mut at = path.to_vec();
+                        at.extend([b, i]);
+                        device_box(inner, &at, id, plugins)
+                    })
+                    .collect(),
+            })
+            .collect(),
+    }
 }
 
 fn format_value(value: f64) -> String {
@@ -471,70 +662,184 @@ fn format_value(value: f64) -> String {
 pub fn show_row(
     ui: &mut Ui,
     detail: &Detail,
+    selected: &[(TrackId, usize)],
     actions: &mut Vec<Action>,
     places: &mut Vec<EditorPlace>,
-) -> Option<Showing> {
+) -> Picked {
     let area = ui.available_rect_before_wrap();
     ui.allocate_rect(area, Sense::hover());
     let painter = ui.painter_at(area);
     painter.rect_filled(area, 0.0, theme::window_background());
     match detail {
         Detail::Nothing => hint(&painter, area, "Select a track or a clip to see it here"),
-        Detail::Devices(chain) => chain_row(ui, &painter, area, chain, actions, places),
+        Detail::Devices(chain) => return chain_row(ui, &painter, area, chain, selected, actions, places),
         Detail::Clip(info, chain) => {
             let (column, picked) = clip_properties(ui, &painter, area, info, false);
             clip_for_readers(ui, column, info);
             let rest = Rect::from_min_max(Pos2::new(column.right() + 1.0, area.top()), area.max);
-            if rest.width() > 0.0 {
-                chain_row(ui, &painter, rest, chain, actions, places);
-            }
-            return picked;
+            // The chain is drawn beside the clip's properties: a click on one of its panels
+            // selects the device as it does with the chain alone.
+            let chain_picked = if rest.width() > 0.0 {
+                chain_row(ui, &painter, rest, chain, selected, actions, places)
+            } else {
+                Picked::default()
+            };
+            return Picked { showing: picked, clicked: chain_picked.clicked, content_height: None };
         }
     }
-    None
+    Picked::default()
 }
 
-/// A chain's devices side by side in `area`; one with an embedded editor is as wide as it.
+/// A chain's devices side by side in `area`; one with an embedded editor is as wide as it. Each
+/// panel is as tall as what it shows; a chain wider than the area scrolls sideways with the
+/// wheel's sideways turn (Shift and the wheel) or the bar along its bottom.
 fn chain_row(
     ui: &mut Ui,
     painter: &egui::Painter,
     area: Rect,
     chain: &Chain,
+    selected: &[(TrackId, usize)],
     actions: &mut Vec<Action>,
     places: &mut Vec<EditorPlace>,
-) {
+) -> Picked {
     if chain.devices.is_empty() {
-        hint(painter, area, &format!("No devices on {} yet", chain.name));
-        return;
+        hint(painter, area, &format!("No devices on {} yet: drop audio effects here", chain.name));
+        return Picked::default();
     }
     let scale = ui.ctx().pixels_per_point();
-    let mut x = area.left();
-    for device in &chain.devices {
-        let editor = device.plugin.as_ref().and_then(|p| p.editor_size(scale));
-        let authored_width = device.graph.as_ref().map_or(DEVICE_WIDTH, |graph| {
-            graph.canvas.as_ref().map_or_else(
-                || {
-                    parameter_layout(&graph.parameters, DEVICE_WIDTH - PAD * 2.0, &[])
-                        .iter()
-                        .map(|cell| cell.right() + PAD * 2.0)
-                        .fold(DEVICE_WIDTH, f32::max)
-                },
-                |c| c.viewport_size.map_or(DEVICE_WIDTH.max(c.size[0] + PAD * 2.0), |v| v[0] + PAD * 2.0),
-            )
-        });
-        let width = editor.map_or(authored_width, |e| authored_width.max(e.x + PAD * 2.0));
-        let bottom =
-            sdk_viewport(device).map_or(area.bottom(), |v| (area.top() + ROW + PAD * 2.0 + v[1]).min(area.bottom()));
-        let rect = Rect::from_min_max(Pos2::new(x, area.top()), Pos2::new(x + width, bottom));
+    let mut picked = Picked::default();
+    // A group's panel, then the devices of its shown branch, in the row as the chain's own.
+    let mut entries = Vec::new();
+    flattened(ui, chain.track, &chain.devices, &mut entries);
+    // Each panel's width and height first, so the scroll knows how wide the chain is.
+    let boxes: Vec<(f32, f32)> = entries
+        .iter()
+        .map(|device| {
+            if let Some(group) = &device.group {
+                return (GROUP_WIDTH, group_height(group));
+            }
+            // An editor embedded in the panel is placed for devices on the track itself.
+            let editor = device.plugin.as_ref().and_then(|p| p.editor_size(scale)).filter(|_| device.at.top());
+            // A NAM panel asks for the mock's wider box (nam spec › The panels); the rest keep
+            // the plain device width.
+            let authored_base =
+                if device.file_device.is_some() { crate::detail::nam_panel::NAM_WIDTH } else { DEVICE_WIDTH };
+            let authored_width = device.graph.as_ref().map_or(authored_base, |graph| {
+                graph.canvas.as_ref().map_or_else(
+                    || {
+                        parameter_layout(&graph.parameters, DEVICE_WIDTH - PAD * 2.0, &[])
+                            .iter()
+                            .map(|cell| cell.right() + PAD * 2.0)
+                            .fold(DEVICE_WIDTH, f32::max)
+                    },
+                    |c| c.viewport_size.map_or(DEVICE_WIDTH.max(c.size[0] + PAD * 2.0), |v| v[0] + PAD * 2.0),
+                )
+            });
+            let width = editor.map_or(authored_width, |e| authored_width.max(e.x + PAD * 2.0));
+            let height = sdk_viewport(device)
+                .map_or_else(|| panel_height(device, width - PAD * 2.0, editor), |v| ROW + PAD * 2.0 + v[1]);
+            (width, height)
+        })
+        .collect();
+    let total = boxes.iter().map(|(w, _)| w + 1.0).sum::<f32>();
+    let scroll_id = Id::new(("chain-scroll", chain.track.0));
+    let most = (total - area.width()).max(0.0);
+    let mut offset = ui.data(|d| d.get_temp::<f32>(scroll_id)).unwrap_or(0.0).clamp(0.0, most);
+    if most > 0.0 && ui.rect_contains_pointer(area) {
+        offset = (offset - ui.input(|i| i.smooth_scroll_delta.x)).clamp(0.0, most);
+    }
+    // The bar along the bottom while the chain is wider than the area.
+    let bar = (most > 0.0).then(|| Rect::from_min_max(Pos2::new(area.left(), area.bottom() - 6.0), area.max));
+    if let Some(bar) = bar {
+        let response = ui.interact(bar, scroll_id.with("bar"), Sense::drag());
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Other, true, "Device chain scroll bar"));
+        if response.dragged() {
+            offset = (offset + response.drag_delta().x * total / area.width()).clamp(0.0, most);
+        }
+    }
+    ui.data_mut(|d| d.insert_temp(scroll_id, offset));
+    // Panels past the area's edges take no clicks there.
+    let outer_clip = ui.clip_rect();
+    ui.set_clip_rect(area.intersect(outer_clip));
+    let mut x = area.left() - offset;
+    let mut tallest: f32 = 0.0;
+    for (device, (width, height)) in entries.iter().zip(boxes) {
+        let editor = device.plugin.as_ref().and_then(|p| p.editor_size(scale)).filter(|_| device.at.top());
+        let rect = Rect::from_min_size(Pos2::new(x, area.top()), Vec2::new(width, height.min(area.height())));
         x = rect.right() + 1.0;
+        tallest = tallest.max(height);
+        if rect.right() < area.left() {
+            continue;
+        }
         if rect.left() > area.right() {
             break;
         }
-        name_for_readers(ui, rect.intersect(area), device);
-        device_panel(ui, &painter.with_clip_rect(area), rect, chain.track, device, actions);
+        // Picks are of the track's own devices (Ctrl+G groups them, Delete removes them).
+        let lit = device.at.top() && selected.contains(&(chain.track, device.index));
+        let clicked = match &device.group {
+            Some(group) => {
+                group_panel(ui, &painter.with_clip_rect(area), rect, chain.track, device, group, lit, actions)
+            }
+            None => {
+                device_panel(ui, &painter.with_clip_rect(area), rect, chain.track, device, lit, actions, &chain.nam)
+            }
+        };
+        inside_group_mark(&painter.with_clip_rect(area), rect, &device.at);
+        // Keep a device an earlier iteration clicked: the later panels were not clicked.
+        if clicked && device.at.top() {
+            picked.clicked = Some((chain.track, device.index));
+        }
         plugin_button(ui, &painter.with_clip_rect(area), rect, chain.track, device, actions);
         if let Some(editor) = editor {
-            places.push(editor_place(ui, area, rect, editor, chain.track, device));
+            let origin = Pos2::new(rect.left() + PAD, rect.top() + EDITOR_TOP);
+            places.push(editor_place(ui, area, rect, editor, chain.track, device, origin));
+        }
+    }
+    ui.set_clip_rect(outer_clip);
+    if let Some(bar) = bar {
+        painter.rect_filled(bar, 0.0, theme::control_background());
+        let thumb_width = (area.width() / total * bar.width()).max(24.0);
+        let thumb_left = bar.left() + offset / most * (bar.width() - thumb_width);
+        let thumb =
+            Rect::from_min_size(Pos2::new(thumb_left, bar.top() + 1.0), Vec2::new(thumb_width, bar.height() - 2.0));
+        painter.rect_filled(thumb, 0.0, theme::text_hint());
+    }
+    // Right of the last panel, what a drop does.
+    if x < area.right() - 80.0 {
+        let rest = Rect::from_min_max(
+            Pos2::new(x, area.top()),
+            Pos2::new(area.right(), (area.top() + tallest).min(area.bottom())),
+        );
+        hint(painter, rest, "Drop audio effects here");
+    }
+    picked.content_height = Some((tallest + if bar.is_some() { 8.0 } else { 0.0 }).ceil() as u32);
+    picked
+}
+
+/// How tall a device's panel is in a row or a stack: its header, then its parameters, its
+/// plug-in rows, its embedded editor, or a NAM panel's own height.
+fn panel_height(device: &DeviceBox, width: f32, editor: Option<Vec2>) -> f32 {
+    let rows =
+        if device.plugin.is_some() { 2.0 + BUTTON_HEIGHT / PARAM_ROW } else { device.params.len().max(1) as f32 };
+    match editor {
+        Some(editor) => EDITOR_TOP + editor.y + PAD,
+        // A NAM panel's own height (nam spec › The panels); the rest take their rows.
+        None if device.file_device.is_some() => crate::detail::nam_panel::NAM_HEIGHT,
+        None => {
+            ROW + PAD * 2.0
+                + device.graph.as_ref().map_or(rows * PARAM_ROW, |graph| {
+                    parameter_layout(
+                        &graph.parameters,
+                        width,
+                        graph.canvas.as_ref().map_or(&[], |c| c.hidden_parameters.as_slice()),
+                    )
+                    .iter()
+                    .map(|r| r.bottom())
+                    .fold(0.0f32, f32::max)
+                })
+                + device.graph.as_ref().map_or(0.0, |graph| {
+                    graph.nodes.len() as f32 * NODE_ROW + graph.canvas.as_ref().map_or(0.0, |c| c.size[1])
+                })
         }
     }
 }
@@ -548,27 +853,32 @@ fn sdk_viewport(device: &DeviceBox) -> Option<[f32; 2]> {
 pub fn show_stack(
     ui: &mut Ui,
     detail: &Detail,
+    selected: &[(TrackId, usize)],
     actions: &mut Vec<Action>,
     places: &mut Vec<EditorPlace>,
-) -> Option<Showing> {
+) -> Picked {
     let area = ui.available_rect_before_wrap();
     ui.allocate_rect(area, Sense::hover());
     let painter = ui.painter_at(area);
     painter.rect_filled(area, 0.0, theme::window_background());
     match detail {
         Detail::Nothing => hint(&painter, area, "Select a track or a clip"),
-        Detail::Devices(chain) => chain_stack(ui, &painter, area, chain, actions, places),
+        Detail::Devices(chain) => return chain_stack(ui, &painter, area, chain, selected, actions, places),
         Detail::Clip(info, chain) => {
             let (column, picked) = clip_properties(ui, &painter, area, info, true);
             clip_for_readers(ui, column, info);
             let rest = Rect::from_min_max(Pos2::new(area.left(), column.bottom() + 1.0), area.max);
-            if rest.height() > 0.0 {
-                chain_stack(ui, &painter, rest, chain, actions, places);
-            }
-            return picked;
+            // The chain is drawn under the clip's properties: its panels pick as they do with
+            // the chain alone.
+            let chain_picked = if rest.height() > 0.0 {
+                chain_stack(ui, &painter, rest, chain, selected, actions, places)
+            } else {
+                Picked::default()
+            };
+            return Picked { showing: picked, clicked: chain_picked.clicked, content_height: None };
         }
     }
-    None
+    Picked::default()
 }
 
 /// The clip's properties column for a clip whose editor fills the rest of the detail area (the
@@ -576,7 +886,7 @@ pub fn show_stack(
 /// controls and the MIDI tools live in the column beside this one
 /// (› Other note tools in `docs/spec/ui-clip-editor.md`). With it, the part the Clip / Devices
 /// switch was clicked to, if it was.
-pub fn show_clip_column(ui: &mut Ui, info: &ClipInfo, stacked: bool) -> (Rect, Option<Showing>) {
+pub fn show_clip_column(ui: &mut Ui, info: &ClipInfo, stacked: bool) -> (Rect, Picked) {
     let area = ui.available_rect_before_wrap();
     ui.allocate_rect(area, Sense::hover());
     let painter = ui.painter_at(area);
@@ -588,7 +898,7 @@ pub fn show_clip_column(ui: &mut Ui, info: &ClipInfo, stacked: bool) -> (Rect, O
     } else {
         Rect::from_min_max(Pos2::new(column.right() + 1.0, area.top()), area.max)
     };
-    (rest, picked)
+    (rest, Picked { showing: picked, ..Picked::default() })
 }
 
 /// A chain's devices one under another in `area`; one with an embedded editor is as tall as
@@ -598,21 +908,42 @@ fn chain_stack(
     painter: &egui::Painter,
     area: Rect,
     chain: &Chain,
+    selected: &[(TrackId, usize)],
     actions: &mut Vec<Action>,
     places: &mut Vec<EditorPlace>,
-) {
+) -> Picked {
     if chain.devices.is_empty() {
         hint(painter, area, &format!("No devices on {} yet", chain.name));
-        return;
+        return Picked::default();
     }
     let scale = ui.ctx().pixels_per_point();
+    let mut picked = Picked::default();
     let mut y = area.top();
-    for device in &chain.devices {
-        let editor = device.plugin.as_ref().and_then(|p| p.editor_size(scale));
+    let mut entries = Vec::new();
+    flattened(ui, chain.track, &chain.devices, &mut entries);
+    for device in entries {
+        if let Some(group) = &device.group {
+            let rect = Rect::from_min_size(Pos2::new(area.left(), y), Vec2::new(area.width(), group_height(group)));
+            y = rect.bottom() + 1.0;
+            if rect.top() > area.bottom() {
+                break;
+            }
+            let lit = device.at.top() && selected.contains(&(chain.track, device.index));
+            let clicked =
+                group_panel(ui, &painter.with_clip_rect(area), rect, chain.track, device, group, lit, actions);
+            inside_group_mark(&painter.with_clip_rect(area), rect, &device.at);
+            if clicked && device.at.top() {
+                picked.clicked = Some((chain.track, device.index));
+            }
+            continue;
+        }
+        let editor = device.plugin.as_ref().and_then(|p| p.editor_size(scale)).filter(|_| device.at.top());
         let rows =
             if device.plugin.is_some() { 2.0 + BUTTON_HEIGHT / PARAM_ROW } else { device.params.len().max(1) as f32 };
         let height = match editor {
             Some(editor) => EDITOR_TOP + editor.y + PAD,
+            // A NAM panel's own height (nam spec › The panels); the rest take their rows.
+            None if device.file_device.is_some() => crate::detail::nam_panel::NAM_HEIGHT,
             None => {
                 ROW + PAD * 2.0
                     + device.graph.as_ref().map_or(rows * PARAM_ROW, |graph| {
@@ -637,21 +968,36 @@ fn chain_stack(
         if rect.top() > area.bottom() {
             break;
         }
-        name_for_readers(ui, rect.intersect(area), device);
-        device_panel(ui, &painter.with_clip_rect(area), rect, chain.track, device, actions);
+        let lit = device.at.top() && selected.contains(&(chain.track, device.index));
+        let clicked =
+            device_panel(ui, &painter.with_clip_rect(area), rect, chain.track, device, lit, actions, &chain.nam);
+        inside_group_mark(&painter.with_clip_rect(area), rect, &device.at);
+        // Keep a device an earlier iteration clicked: the later panels were not clicked.
+        if clicked && device.at.top() {
+            picked.clicked = Some((chain.track, device.index));
+        }
         plugin_button(ui, &painter.with_clip_rect(area), rect, chain.track, device, actions);
         if let Some(editor) = editor {
-            places.push(editor_place(ui, area, rect, editor, chain.track, device));
+            let origin = Pos2::new(rect.left() + PAD, rect.top() + EDITOR_TOP);
+            places.push(editor_place(ui, area, rect, editor, chain.track, device, origin));
         }
     }
+    picked
 }
 
 /// Where a plug-in's embedded editor of `editor` points goes under its line and button in the
 /// device's `rect`, as the host takes it: in the window's own pixels, with the part of the
 /// panel's `area` (and the device's box) that shows it; what falls outside is cut off.
-fn editor_place(ui: &Ui, area: Rect, rect: Rect, editor: Vec2, track: TrackId, device: &DeviceBox) -> EditorPlace {
+fn editor_place(
+    ui: &Ui,
+    area: Rect,
+    rect: Rect,
+    editor: Vec2,
+    track: TrackId,
+    device: &DeviceBox,
+    origin: Pos2,
+) -> EditorPlace {
     let scale = ui.ctx().pixels_per_point();
-    let origin = Pos2::new(rect.left() + PAD, rect.top() + EDITOR_TOP);
     let shown = Rect::from_min_size(origin, editor).intersect(rect).intersect(area);
     let pixel = |value: f32| (value * scale).round() as i32;
     let span = |from: f32, to: f32| u32::try_from(pixel(to).saturating_sub(pixel(from))).unwrap_or(0);
@@ -667,7 +1013,7 @@ fn editor_place(ui: &Ui, area: Rect, rect: Rect, editor: Vec2, track: TrackId, d
             clip_height: span(shown.top(), shown.bottom()),
         }
     };
-    EditorPlace { track, device: device.index, placement }
+    EditorPlace { track, device: device.index, placement, fit: None }
 }
 
 /// A plug-in device's button under its state line: opens or closes its editor while it runs,
@@ -689,7 +1035,7 @@ fn plugin_button(
     let response = widgets::button_area(
         ui,
         button,
-        egui::Id::new(("plugin-button", track.0, device.index)),
+        egui::Id::new(("plugin-button", track.0, &device.at)),
         format!("{label} {}", device.name),
     );
     let hover = widgets::hover(ui, &response);
@@ -705,7 +1051,115 @@ fn plugin_button(
         theme::text_primary(),
     );
     if response.clicked() {
-        actions.push(Action::new(command, json!({ "track": track.0, "device": device.index })));
+        actions.push(Action::new(command, json!({ "track": track.0, "device": device.at.value() })));
+    }
+}
+
+/// The Clip part of an audio clip on a track whose plug-in edits clips (ARA, ADR 0028): the
+/// plug-in's editor in `area`, where a MIDI clip has its piano roll. Embedded, it lands there
+/// (`places`); in a window of its own, or closed, the area says so with a button to open or
+/// close it. `device` is the plug-in's index in `chain`.
+pub fn show_ara_editor(
+    ui: &mut Ui,
+    area: Rect,
+    chain: &Chain,
+    device: usize,
+    actions: &mut Vec<Action>,
+    places: &mut Vec<EditorPlace>,
+) {
+    ui.allocate_rect(area, Sense::hover());
+    let painter = ui.painter_at(area);
+    painter.rect_filled(area, 0.0, theme::window_background());
+    let Some(device) = chain.devices.iter().find(|d| d.index == device) else { return };
+    let Some(plugin) = &device.plugin else { return };
+    let response = ui.interact(area, egui::Id::new(("ara-editor", chain.track.0)), Sense::hover());
+    let label = format!("Clip editor {}", device.name);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Other, true, &label));
+    let track = chain.track;
+    let device_params = json!({ "track": track.0, "device": device.index });
+    // Embedded: a row with Float above the editor, which takes it out to a window of its own.
+    if let Some(size) = plugin.editor_size(ui.ctx().pixels_per_point()) {
+        let float = Rect::from_min_size(area.min + Vec2::splat(PAD), Vec2::new(BUTTON_WIDTH, BUTTON_HEIGHT));
+        let params = json!({ "track": track.0, "device": device.index, "float": true });
+        ara_button(
+            ui,
+            &painter,
+            float,
+            (track, "float"),
+            "Float",
+            &device.name,
+            Action::new("view.araFloat", params),
+            actions,
+        );
+        let rect = Rect::from_min_size(Pos2::new(area.left() + PAD, float.bottom() + PAD), size);
+        let mut place = editor_place(ui, area, rect.expand(PAD), size, track, device, rect.min);
+        // The editor is asked to take the room under Float, as a piano roll fills it.
+        let room = Rect::from_min_max(rect.min, area.max - Vec2::splat(PAD));
+        let scale = ui.ctx().pixels_per_point();
+        let pixels = |points: f32| (points * scale).max(0.0).round() as u32;
+        place.fit = Some((pixels(room.width()), pixels(room.height())));
+        places.push(place);
+        return;
+    }
+    let mut buttons = Vec::new();
+    let text = match plugin.state {
+        PluginState::Running if plugin.editor_open => {
+            let params = json!({ "track": track.0, "device": device.index, "float": false });
+            buttons.push(("Dock", Action::new("view.araFloat", params)));
+            buttons.push(("Close editor", Action::new("device.closeEditor", device_params)));
+            format!("{} is open in a window of its own", device.name)
+        }
+        PluginState::Running => {
+            buttons.push(("Open editor", Action::new("device.openEditor", device_params)));
+            format!("Open {} to edit this clip", device.name)
+        }
+        _ => format!("{}: {}", device.name, plugin.line),
+    };
+    let centre = area.center();
+    painter.text(
+        centre - Vec2::new(0.0, BUTTON_HEIGHT),
+        Align2::CENTER_CENTER,
+        text,
+        theme::ui_font(theme::TEXT),
+        theme::text_hint(),
+    );
+    let count = buttons.len() as f32;
+    let width = count * BUTTON_WIDTH + (count - 1.0).max(0.0) * PAD;
+    for (index, (label, action)) in buttons.into_iter().enumerate() {
+        let left = centre.x - width / 2.0 + index as f32 * (BUTTON_WIDTH + PAD);
+        let rect = Rect::from_min_size(Pos2::new(left, centre.y + PAD / 2.0), Vec2::new(BUTTON_WIDTH, BUTTON_HEIGHT));
+        ara_button(ui, &painter, rect, (track, label), label, &device.name, action, actions);
+    }
+}
+
+/// A button of the ARA editor's area: `label`, named with the plug-in for screen readers; a
+/// click adds `action`.
+#[allow(clippy::too_many_arguments, reason = "one button's place, names and action")]
+fn ara_button(
+    ui: &Ui,
+    painter: &egui::Painter,
+    rect: Rect,
+    id: (TrackId, &str),
+    label: &str,
+    plugin: &str,
+    action: Action,
+    actions: &mut Vec<Action>,
+) {
+    let response =
+        widgets::button_area(ui, rect, egui::Id::new(("ara-button", id.0.0, id.1)), format!("{label} {plugin}"));
+    let hover = widgets::hover(ui, &response);
+    painter.rect_filled(rect, 0.0, crate::kit::motion::mix(theme::control_background(), theme::control_hover(), hover));
+    painter.rect_stroke(rect, 0.0, theme::hairline(theme::border_strong()), egui::StrokeKind::Inside);
+    widgets::text_in(
+        painter,
+        rect,
+        Align2::CENTER_CENTER,
+        label,
+        theme::ui_font(theme::TEXT_SMALL),
+        theme::text_primary(),
+    );
+    if response.clicked() {
+        actions.push(action);
     }
 }
 
@@ -720,26 +1174,41 @@ fn clip_for_readers(ui: &Ui, rect: Rect, info: &ClipInfo) {
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &label));
 }
 
-/// Names a device's panel for screen readers and tests.
-fn name_for_readers(ui: &Ui, rect: Rect, device: &DeviceBox) {
-    let response = ui.interact(rect, egui::Id::new(("device", rect.min.x as i32, rect.min.y as i32)), Sense::hover());
-    let label = format!("Device {}", device.name);
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &label));
-}
-
 fn hint(painter: &egui::Painter, area: Rect, text: &str) {
     painter.text(area.center(), Align2::CENTER_CENTER, text, theme::ui_font(theme::TEXT), theme::text_hint());
 }
 
-/// One device: a header with its on switch and name, then its parameters, one per row.
+/// One device: a header with its on switch and name, then its parameters, one per row. A NAM
+/// Amp Modeler or NAM Cab Loader draws its own panel instead
+/// ([docs/spec/nam-amp-and-cab.md] › The panels).
+#[allow(clippy::too_many_arguments)]
 fn device_panel(
     ui: &mut Ui,
     painter: &egui::Painter,
     rect: Rect,
     track: TrackId,
     device: &DeviceBox,
+    selected: bool,
     actions: &mut Vec<Action>,
-) {
+    nam: &crate::detail::nam_panel::Lists,
+) -> bool {
+    // The panel answers a right-click with its menu (the device's remove); its label is the
+    // screen-reader and test name the chain drew for it before. A click selects the device, so
+    // the Delete key takes it off the track.
+    let panel = ui
+        .interact(rect, Id::new(("device-panel", track.0, &device.at)), Sense::click())
+        .on_hover_text("Right-click for the device's menu");
+    panel.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("Device {}", device.name)));
+    let clicked = panel.clicked();
+    panel.context_menu(|ui| {
+        menus::device_menu(ui, track, &device.at, device.group.as_ref().map(|g| g.branches.len()), actions)
+    });
+    // The selection outline, over everything the panel draws — on every path out of here.
+    let outline = |painter: &egui::Painter| {
+        if selected {
+            painter.rect_stroke(rect, 1.0, theme::hairline(theme::selection()), egui::StrokeKind::Inside);
+        }
+    };
     painter.rect_filled(rect, 0.0, theme::panel_background());
     let header = Rect::from_min_size(rect.min, Vec2::new(rect.width(), ROW));
     painter.rect_filled(header, 0.0, theme::control_background());
@@ -747,24 +1216,59 @@ fn device_panel(
         Pos2::new(header.left() + PAD, header.center().y - ON_SWITCH / 2.0),
         Vec2::splat(ON_SWITCH),
     );
+    // The switch bypasses the device: off, the sound passes through untouched. It says which
+    // way a click goes, and answers for itself to screen readers and tests.
+    let bypass = ui.interact(switch, Id::new(("device-bypass", track.0, &device.at)), Sense::click()).on_hover_text(
+        if device.enabled { format!("Bypass {}", device.name) } else { format!("Enable {}", device.name) },
+    );
+    bypass.widget_info(|| {
+        egui::WidgetInfo::labeled(
+            egui::WidgetType::Button,
+            true,
+            if device.enabled { format!("Bypass {}", device.name) } else { format!("Enable {}", device.name) },
+        )
+    });
+    if bypass.clicked() {
+        actions.push(Action::new(
+            "device.setEnabled",
+            json!({ "track": track.0, "device": device.at.value(), "enabled": !device.enabled }),
+        ));
+    }
     if device.enabled {
         painter.rect_filled(switch, 0.0, theme::text_primary());
     } else {
         painter.rect_stroke(switch, 0.0, theme::hairline(theme::text_hint()), egui::StrokeKind::Inside);
     }
     let name_color = if device.enabled { theme::text_primary() } else { theme::text_hint() };
+    // The X at the header's right end removes the device, as Remove device in its menu does.
+    let close = Rect::from_center_size(Pos2::new(header.right() - PAD - 6.0, header.center().y), Vec2::splat(12.0));
+    let remove = ui
+        .interact(close, Id::new(("device-remove", track.0, &device.at)), Sense::click())
+        .on_hover_text(format!("Remove {}", device.name));
+    remove.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("Remove {}", device.name)));
+    if remove.clicked() {
+        actions.push(Action::new("device.remove", json!({ "track": track.0, "device": device.at.value() })));
+    }
+    let cross = if remove.hovered() { theme::text_primary() } else { theme::text_hint() };
+    let arm = 3.5;
+    painter.line_segment(
+        [close.center() + Vec2::new(-arm, -arm), close.center() + Vec2::new(arm, arm)],
+        egui::Stroke::new(1.2, cross),
+    );
+    painter.line_segment(
+        [close.center() + Vec2::new(-arm, arm), close.center() + Vec2::new(arm, -arm)],
+        egui::Stroke::new(1.2, cross),
+    );
+    let kind_right = close.left() - 4.0;
     let kind_width = widgets::text_width(ui, &device.kind, theme::ui_font(theme::TEXT_TINY));
     let name = Rect::from_min_max(
         Pos2::new(switch.right() + PAD, header.top()),
-        Pos2::new((header.right() - PAD * 2.0 - kind_width).max(switch.right() + PAD), header.bottom()),
+        Pos2::new((kind_right - PAD - kind_width).max(switch.right() + PAD), header.bottom()),
     );
     widgets::text_in(painter, name, Align2::LEFT_CENTER, &device.name, theme::ui_font(theme::TEXT), name_color);
     widgets::text_in(
         painter,
-        Rect::from_min_max(
-            Pos2::new(header.right() - PAD - kind_width, header.top()),
-            Pos2::new(header.right() - PAD, header.bottom()),
-        ),
+        Rect::from_min_max(Pos2::new(kind_right - kind_width, header.top()), Pos2::new(kind_right, header.bottom())),
         Align2::RIGHT_CENTER,
         &device.kind,
         theme::ui_font(theme::TEXT_TINY),
@@ -775,6 +1279,19 @@ fn device_panel(
         Pos2::new(rect.left() + PAD, header.bottom() + PAD),
         Pos2::new(rect.right() - PAD, rect.bottom() - PAD),
     );
+    match device.file_device {
+        Some("nam-amp-modeler") => {
+            crate::detail::nam_panel::show_amp(ui, body, track, device, nam, actions);
+            outline(painter);
+            return clicked;
+        }
+        Some("nam-cab-loader") => {
+            crate::detail::nam_panel::show_cab(ui, body, track, device, nam, actions);
+            outline(painter);
+            return clicked;
+        }
+        _ => {}
+    }
     if let Some(plugin) = &device.plugin {
         let color = match plugin.state {
             PluginState::Crashed => theme::recording(),
@@ -789,7 +1306,8 @@ fn device_panel(
             theme::ui_font(theme::TEXT_SMALL),
             color,
         );
-        return;
+        outline(painter);
+        return clicked;
     }
     if device.params.is_empty() && device.graph.is_none() {
         let text = if device.kind.starts_with("Not supported") {
@@ -805,11 +1323,12 @@ fn device_panel(
             theme::ui_font(theme::TEXT_SMALL),
             theme::text_hint(),
         );
-        return;
+        outline(painter);
+        return clicked;
     }
     if let Some(graph) = &device.graph {
-        ui.scope_builder(egui::UiBuilder::new().max_rect(body.intersect(ui.clip_rect())), |ui| {
-            egui::ScrollArea::both().auto_shrink([false,false]).id_salt(("sd-controls",track.0,device.index)).show(ui, |ui| {
+        ui.scope_builder(egui::UiBuilder::new().max_rect(body), |ui| {
+            egui::ScrollArea::both().auto_shrink([false,false]).id_salt(("sd-controls",track.0,&device.at)).show(ui, |ui| {
                 let hidden = graph.canvas.as_ref().map_or(&[][..],|c|c.hidden_parameters.as_slice());
                 let cells = parameter_layout(&graph.parameters,body.width(),hidden);
                 let custom_size=graph.canvas.as_ref().map_or(Vec2::ZERO,|c|Vec2::new(c.size[0],c.size[1]));
@@ -847,7 +1366,7 @@ fn device_panel(
         }
         if let Some(canvas)=&graph.canvas {
             let rect=Rect::from_min_size(body.min+Vec2::new(0.0,nodes_height),custom_size);
-            crate::detail::device_canvas::show(ui,rect,canvas,&graph.parameters,track,device.index,actions);
+            crate::detail::device_canvas::show(ui,rect,canvas,&graph.parameters,track,&device.at,actions);
         }
         for (parameter, cell) in graph.parameters.iter().filter(|p|!hidden.contains(&p.id)).zip(&cells) {
             let row = cell.translate(Vec2::new(body.left(),body.top()+nodes_height+custom_size.y));
@@ -918,7 +1437,7 @@ fn device_panel(
                         }
                         ui.set_clip_rect(ui.clip_rect().intersect(slider_rect));
                         ui.spacing_mut().slider_width = if parameter.control == suhina_device_sdk::ParameterControl::VerticalSlider { slider_rect.height() } else { slider_rect.width() };
-                        ui.push_id((&parameter.id, device.index, track.0), |ui| {
+                        ui.push_id((&parameter.id, &device.at, track.0), |ui| {
                             let previous = value;
                             let mut response = match parameter.control {
                                 suhina_device_sdk::ParameterControl::Toggle => {
@@ -961,7 +1480,7 @@ fn device_panel(
                                         .speed(if parameter.ui.step > 0.0 {
                                             parameter.ui.step
                                         } else {
-                                            (parameter.max - parameter.min) / 200.0
+                                            (parameter.max - parameter.min) / widgets::PARAMETER_DRAG_PIXELS
                                         })
                                         .max_decimals(parameter.ui.decimals),
                                 ),
@@ -989,7 +1508,7 @@ fn device_panel(
                                     if response.dragged() {
                                         let fine = if ui.input(|i| i.modifiers.shift) { 0.1 } else { 1.0 };
                                         position =
-                                            (position - response.drag_delta().y as f64 * 0.005 * fine).clamp(0.0, 1.0);
+                                            (position - response.drag_delta().y as f64 / widgets::PARAMETER_DRAG_PIXELS * fine).clamp(0.0, 1.0);
                                         value = if logarithmic {
                                             parameter.min * (parameter.max / parameter.min).powf(position)
                                         } else {
@@ -1038,6 +1557,7 @@ fn device_panel(
                                     ),
                                 ),
                             };
+                            if response.double_clicked() { value = parameter.default; }
                             if value != previous {
                                 response.mark_changed();
                             }
@@ -1069,13 +1589,14 @@ fn device_panel(
                 });
                 actions.push(Action::new(
                     "device.setParam",
-                    json!({ "track": track.0, "device": device.index, "param": parameter.id, "value": value, "continuous": continuous }),
+                    json!({ "track": track.0, "device": device.at.value(), "param": parameter.id, "value": value, "continuous": continuous }),
                 ));
             }
         }
             });
         });
-        return;
+        outline(painter);
+        return clicked;
     }
     for (index, (id, value)) in device.params.iter().enumerate() {
         let row = Rect::from_min_size(
@@ -1102,6 +1623,8 @@ fn device_panel(
             theme::text_value(),
         );
     }
+    outline(painter);
+    clicked
 }
 
 /// The selected clip: its name and where it is, how long, and what it plays. In a row it takes
@@ -1295,8 +1818,386 @@ mod styled_gallery;
 #[path = "../../../device-sdk/examples/orbit_filter.rs"]
 mod custom_panel;
 
+/// Width of a device group's panel in a row, and of its Mix and Gain in the header.
+const GROUP_WIDTH: f32 = 260.0;
+const MIX_BOX: f32 = 62.0;
+const GAIN_BOX: f32 = 66.0;
+/// Height of one branch's row in a group's panel, and of its Mix and Gain rows.
+const BRANCH_ROW: f32 = 20.0;
+/// Width of a branch's M and S buttons, and of its volume and pan values.
+const BRANCH_BUTTON: f32 = 16.0;
+const BRANCH_VALUE: f32 = 44.0;
+
+/// The branch of the group at `at` whose devices the chain shows, kept per group while the app
+/// runs (the first one until another is clicked).
+fn shown_branch(ui: &Ui, track: TrackId, at: &DeviceAt, branches: usize) -> usize {
+    let id = Id::new(("group-branch", track.0, at));
+    ui.data(|d| d.get_temp::<usize>(id)).unwrap_or(0).min(branches.saturating_sub(1))
+}
+
+/// The devices of `devices` as the chain shows them, in order: each device, and after a group
+/// the devices of its shown branch, nested groups the same way.
+fn flattened<'a>(ui: &Ui, track: TrackId, devices: &'a [DeviceBox], out: &mut Vec<&'a DeviceBox>) {
+    for device in devices {
+        out.push(device);
+        if let Some(group) = &device.group
+            && let Some(branch) = group.branches.get(shown_branch(ui, track, &device.at, group.branches.len()))
+        {
+            flattened(ui, track, &branch.devices, out);
+        }
+    }
+}
+
+/// How tall a group's panel is: its header (with Mix and Gain), a row per branch and the row
+/// that adds one.
+fn group_height(group: &GroupBox) -> f32 {
+    ROW + PAD + (group.branches.len() + 1) as f32 * BRANCH_ROW + PAD
+}
+
+/// A value dragged sideways in a group's panel: the change a drag this frame makes, in
+/// `per_point` units per point, and whether the drag is still on. A double-click asks for the
+/// default.
+struct Dragged {
+    delta: f64,
+    dragging: bool,
+    ended: bool,
+    reset: bool,
+}
+
+fn value_row(ui: &Ui, painter: &egui::Painter, rect: Rect, id: Id, label: &str, text: &str, per_point: f64) -> Dragged {
+    let response = ui.interact(rect, id, Sense::click_and_drag()).on_hover_text("Drag sideways; double-click resets");
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Slider, true, format!("{label} {text}")));
+    let fill = motion::mix(theme::control_background(), theme::control_hover(), widgets::hover(ui, &response));
+    painter.rect_filled(rect, 0.0, fill);
+    let inner = rect.shrink2(Vec2::new(PAD / 2.0, 0.0));
+    if !label.is_empty() {
+        widgets::text_in(
+            painter,
+            inner,
+            Align2::LEFT_CENTER,
+            label,
+            theme::ui_font(theme::TEXT_SMALL),
+            theme::text_hint(),
+        );
+    }
+    let align = if label.is_empty() { Align2::CENTER_CENTER } else { Align2::RIGHT_CENTER };
+    widgets::text_in(painter, inner, align, text, theme::ui_font(theme::TEXT_SMALL), theme::text_value());
+    Dragged {
+        delta: f64::from(response.drag_delta().x) * per_point,
+        dragging: response.dragged() && !response.drag_stopped(),
+        ended: response.drag_stopped(),
+        reset: response.double_clicked(),
+    }
+}
+
+/// A branch value (volume or pan) dragged: shown from a draft while the drag lasts and set with
+/// one command when it ends, so a drag is one undo step.
+fn branch_value(ui: &Ui, id: Id, stored: f64, dragged: &Dragged, min: f64, max: f64) -> (f64, Option<f64>) {
+    let draft = ui.data(|d| d.get_temp::<f64>(id));
+    if dragged.reset {
+        ui.data_mut(|d| d.remove::<f64>(id));
+        // Both reset to 0: 0 dB, or the centre.
+        return (stored, Some(0.0f64.clamp(min, max)));
+    }
+    if dragged.dragging {
+        let next = (draft.unwrap_or(stored) + dragged.delta).clamp(min, max);
+        ui.data_mut(|d| d.insert_temp(id, next));
+        return (next, None);
+    }
+    if dragged.ended {
+        ui.data_mut(|d| d.remove::<f64>(id));
+        let value = (draft.unwrap_or(stored) + dragged.delta).clamp(min, max);
+        return (value, (value != stored).then_some(value));
+    }
+    (draft.unwrap_or(stored), None)
+}
+
+fn pan_text(pan: f64) -> String {
+    let amount = (pan.abs() * 50.0).round();
+    if amount < 1.0 {
+        "C".into()
+    } else if pan < 0.0 {
+        format!("{amount}L")
+    } else {
+        format!("{amount}R")
+    }
+}
+
+fn db_text(db: f64) -> String {
+    if db.is_finite() { format!("{db:.1} dB") } else { "-inf dB".into() }
+}
+
+/// A device group's panel: its header (switch, name, Mix, Gain, remove), one row per branch
+/// (its name, which shows its devices after the panel, its volume and pan, M and S) and a row
+/// that adds a branch (`docs/spec/device-groups.md` › The device panel). Returns whether the
+/// panel was clicked.
+#[allow(clippy::too_many_arguments)]
+fn group_panel(
+    ui: &mut Ui,
+    painter: &egui::Painter,
+    rect: Rect,
+    track: TrackId,
+    device: &DeviceBox,
+    group: &GroupBox,
+    selected: bool,
+    actions: &mut Vec<Action>,
+) -> bool {
+    let at = device.at.value();
+    let panel = ui
+        .interact(rect, Id::new(("device-panel", track.0, &device.at)), Sense::click())
+        .on_hover_text("Right-click for the group's menu");
+    panel.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("Device {}", device.name)));
+    let clicked = panel.clicked();
+    panel.context_menu(|ui| menus::device_menu(ui, track, &device.at, Some(group.branches.len()), actions));
+    painter.rect_filled(rect, 0.0, theme::panel_background());
+    let header = Rect::from_min_size(rect.min, Vec2::new(rect.width(), ROW));
+    painter.rect_filled(header, 0.0, theme::control_background());
+    let switch = Rect::from_min_size(
+        Pos2::new(header.left() + PAD, header.center().y - ON_SWITCH / 2.0),
+        Vec2::splat(ON_SWITCH),
+    );
+    let label = if device.enabled { format!("Bypass {}", device.name) } else { format!("Enable {}", device.name) };
+    let bypass = widgets::button_area(ui, switch, Id::new(("device-bypass", track.0, &device.at)), &label);
+    if bypass.clicked() {
+        actions.push(Action::new(
+            "device.setEnabled",
+            json!({ "track": track.0, "device": at, "enabled": !device.enabled }),
+        ));
+    }
+    if device.enabled {
+        painter.rect_filled(switch, 0.0, theme::text_primary());
+    } else {
+        painter.rect_stroke(switch, 0.0, theme::hairline(theme::text_hint()), egui::StrokeKind::Inside);
+    }
+    let close = Rect::from_center_size(Pos2::new(header.right() - PAD - 6.0, header.center().y), Vec2::splat(12.0));
+    let remove = widgets::button_area(
+        ui,
+        close,
+        Id::new(("device-remove", track.0, &device.at)),
+        format!("Remove {}", device.name),
+    );
+    if remove.clicked() {
+        actions.push(Action::new("device.remove", json!({ "track": track.0, "device": at })));
+    }
+    let cross = if remove.hovered() { theme::text_primary() } else { theme::text_hint() };
+    for (from, to) in [(Vec2::new(-3.5, -3.5), Vec2::new(3.5, 3.5)), (Vec2::new(-3.5, 3.5), Vec2::new(3.5, -3.5))] {
+        painter.line_segment([close.center() + from, close.center() + to], egui::Stroke::new(1.2, cross));
+    }
+    // Mix and Gain sit in the header, each dragged sideways; the engine smooths what they send.
+    let gain_row = Rect::from_min_max(
+        Pos2::new(close.left() - 4.0 - GAIN_BOX, header.top() + 2.0),
+        Pos2::new(close.left() - 4.0, header.bottom() - 2.0),
+    );
+    let mix_row = Rect::from_min_max(
+        Pos2::new(gain_row.left() - 2.0 - MIX_BOX, gain_row.top()),
+        Pos2::new(gain_row.left() - 2.0, gain_row.bottom()),
+    );
+    let name_color = if device.enabled { theme::text_primary() } else { theme::text_hint() };
+    let name = Rect::from_min_max(
+        Pos2::new(switch.right() + PAD, header.top()),
+        Pos2::new((mix_row.left() - PAD).max(switch.right() + PAD), header.bottom()),
+    );
+    widgets::text_in(painter, name, Align2::LEFT_CENTER, &device.name, theme::ui_font(theme::TEXT), name_color);
+    let mix = value_row(
+        ui,
+        painter,
+        mix_row,
+        Id::new(("group-mix", track.0, &device.at)),
+        "Mix",
+        &format!("{:.0}%", group.mix * 100.0),
+        0.005,
+    );
+    let mix_value = if mix.reset {
+        Some(1.0)
+    } else {
+        (mix.delta != 0.0 || mix.ended).then(|| (group.mix + mix.delta).clamp(0.0, 1.0))
+    };
+    if let Some(value) = mix_value {
+        actions.push(Action::new(
+            "device.setParam",
+            json!({ "track": track.0, "device": at, "param": "mix", "value": value, "continuous": mix.dragging }),
+        ));
+    }
+    let silent = group.gain_db <= suhina_engine::SILENT_DB;
+    let gain = value_row(
+        ui,
+        painter,
+        gain_row,
+        Id::new(("group-gain", track.0, &device.at)),
+        "Gain",
+        &if silent { "-inf".into() } else { format!("{:.1}", group.gain_db) },
+        0.1,
+    );
+    let gain_value = if gain.reset {
+        Some(0.0)
+    } else {
+        (gain.delta != 0.0 || gain.ended).then(|| (group.gain_db + gain.delta).clamp(suhina_engine::SILENT_DB, 12.0))
+    };
+    if let Some(value) = gain_value {
+        actions.push(Action::new(
+            "device.setParam",
+            json!({ "track": track.0, "device": at, "param": "gain", "value": value, "continuous": gain.dragging }),
+        ));
+    }
+    let left = rect.left() + PAD;
+    let width = rect.width() - PAD * 2.0;
+    let mut y = header.bottom() + PAD;
+
+    let shown = shown_branch(ui, track, &device.at, group.branches.len());
+    for (index, branch) in group.branches.iter().enumerate() {
+        let row = Rect::from_min_size(Pos2::new(left, y), Vec2::new(width, BRANCH_ROW - 2.0));
+        y += BRANCH_ROW;
+        let solo = Rect::from_min_size(
+            Pos2::new(row.right() - BRANCH_BUTTON, row.top()),
+            Vec2::new(BRANCH_BUTTON, row.height()),
+        );
+        let mute = solo.translate(Vec2::new(-BRANCH_BUTTON - 2.0, 0.0));
+        let pan = Rect::from_min_size(Pos2::new(mute.left() - 2.0 - 32.0, row.top()), Vec2::new(32.0, row.height()));
+        let volume = Rect::from_min_size(
+            Pos2::new(pan.left() - 2.0 - BRANCH_VALUE, row.top()),
+            Vec2::new(BRANCH_VALUE, row.height()),
+        );
+        let name = Rect::from_min_max(row.min, Pos2::new(volume.left() - 2.0, row.bottom()));
+        let pick = widgets::button_area(
+            ui,
+            name,
+            Id::new(("group-branch-name", track.0, &device.at, index)),
+            format!("Show branch {}", branch.name),
+        );
+        if pick.clicked() {
+            ui.data_mut(|d| d.insert_temp(Id::new(("group-branch", track.0, &device.at)), index));
+        }
+        let lit = index == shown;
+        let fill = if lit {
+            theme::control_active()
+        } else {
+            motion::mix(theme::window_background(), theme::control_hover(), widgets::hover(ui, &pick))
+        };
+        painter.rect_filled(name, 0.0, fill);
+        let color = if branch.mute { theme::text_hint() } else { theme::text_secondary() };
+        widgets::text_in(
+            painter,
+            name.shrink2(Vec2::new(4.0, 0.0)),
+            Align2::LEFT_CENTER,
+            &branch.name,
+            theme::ui_font(theme::TEXT_SMALL),
+            color,
+        );
+
+        let volume_id = Id::new(("branch-volume", track.0, &device.at, index));
+        let shown_db = ui.data(|d| d.get_temp::<f64>(volume_id)).unwrap_or(branch.volume_db);
+        let dragged = value_row(ui, painter, volume, volume_id.with("drag"), "", &db_text(shown_db), 0.1);
+        let stored = if branch.volume_db.is_finite() { branch.volume_db } else { -70.0 };
+        let (_, set) = branch_value(ui, volume_id, stored, &dragged, -70.0, 6.0);
+        if let Some(db) = set {
+            actions.push(Action::new(
+                "branch.setVolume",
+                json!({ "track": track.0, "device": at, "branch": index, "db": if db <= -70.0 { json!("-inf") } else { json!(db) } }),
+            ));
+        }
+        let pan_id = Id::new(("branch-pan", track.0, &device.at, index));
+        let shown_pan = ui.data(|d| d.get_temp::<f64>(pan_id)).unwrap_or(branch.pan);
+        let dragged = value_row(ui, painter, pan, pan_id.with("drag"), "", &pan_text(shown_pan), 0.01);
+        let (_, set) = branch_value(ui, pan_id, branch.pan, &dragged, -1.0, 1.0);
+        if let Some(value) = set {
+            actions.push(Action::new(
+                "branch.setPan",
+                json!({ "track": track.0, "device": at, "branch": index, "pan": value }),
+            ));
+        }
+
+        let response = widgets::button_area(
+            ui,
+            mute,
+            Id::new(("branch-mute", track.0, &device.at, index)),
+            if branch.mute { format!("Unmute branch {}", branch.name) } else { format!("Mute branch {}", branch.name) },
+        );
+        let (fill, text) = widgets::toggle_colors(ui, &response, branch.mute);
+        painter.rect_filled(mute, 0.0, fill);
+        widgets::text_in(painter, mute, Align2::CENTER_CENTER, "M", theme::ui_font(theme::TEXT_SMALL), text);
+        if response.clicked() {
+            actions.push(Action::new(
+                "branch.setMute",
+                json!({ "track": track.0, "device": at, "branch": index, "mute": !branch.mute }),
+            ));
+        }
+        let response = widgets::button_area(
+            ui,
+            solo,
+            Id::new(("branch-solo", track.0, &device.at, index)),
+            if branch.solo {
+                format!("End solo on branch {}", branch.name)
+            } else {
+                format!("Solo branch {}", branch.name)
+            },
+        );
+        let lit = motion::toward(ui.ctx(), response.id.with("on"), branch.solo, motion::VALUE);
+        let off = motion::mix(theme::control_background(), theme::control_hover(), widgets::hover(ui, &response));
+        painter.rect_filled(solo, 0.0, motion::mix(off, theme::accent(), lit));
+        let text = motion::mix(theme::text_secondary(), theme::window_background(), lit);
+        widgets::text_in(painter, solo, Align2::CENTER_CENTER, "S", theme::ui_font(theme::TEXT_SMALL), text);
+        if response.clicked() {
+            actions.push(Action::new(
+                "branch.setSolo",
+                json!({ "track": track.0, "device": at, "branch": index, "solo": !branch.solo }),
+            ));
+        }
+    }
+    let add = Rect::from_min_size(Pos2::new(left, y), Vec2::new(width, BRANCH_ROW - 2.0));
+    let response = widgets::button_area(
+        ui,
+        add,
+        Id::new(("branch-add", track.0, &device.at)),
+        format!("Add a branch to {}", device.name),
+    );
+    let fill = motion::mix(theme::window_background(), theme::control_hover(), widgets::hover(ui, &response));
+    painter.rect_filled(add, 0.0, fill);
+    widgets::text_in(
+        painter,
+        add,
+        Align2::CENTER_CENTER,
+        "+ Branch",
+        theme::ui_font(theme::TEXT_SMALL),
+        theme::text_hint(),
+    );
+    if response.clicked() {
+        actions.push(Action::new("branch.add", json!({ "track": track.0, "device": at })));
+    }
+    if selected {
+        painter.rect_stroke(rect, 1.0, theme::hairline(theme::selection()), egui::StrokeKind::Inside);
+    }
+    clicked
+}
+
+/// The line over a device inside a group, so the devices after a group's panel read as its
+/// shown branch: one step lower for each group it is in.
+fn inside_group_mark(painter: &egui::Painter, rect: Rect, at: &DeviceAt) {
+    let depth = at.0.len() / 2;
+    if depth == 0 {
+        return;
+    }
+    for level in 0..depth {
+        let y = rect.top() + level as f32 * 3.0 + 1.0;
+        painter.line_segment(
+            [Pos2::new(rect.left(), y), Pos2::new(rect.right(), y)],
+            egui::Stroke::new(2.0, theme::accent()),
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn sample_name_is_in_header_once() {
+        let mut device =
+            suhina_engine::model::Device::new("Sampler", suhina_engine::model::DeviceKind::Builtin("sampler".into()));
+        assert_eq!(super::device_display_name(&device), "Sampler");
+        device.set_sample_file("samples/Piano.wav");
+        assert_eq!(super::device_display_name(&device), "Sampler \u{b7} Piano.wav");
+        device.name = "Piano".into();
+        assert_eq!(super::device_display_name(&device), "Piano");
+    }
+
     use super::*;
 
     #[test]
@@ -1450,7 +2351,7 @@ mod tests {
             let ctx = egui::Context::default();
             theme::install(&ctx);
             let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-                show_stack(ui, &detail, &mut Vec::new(), &mut Vec::new());
+                show_stack(ui, &detail, &[], &mut Vec::new(), &mut Vec::new());
             });
             assert!(!output.shapes.is_empty(), "{control:?}");
             output.textures_delta.clear();
@@ -1500,7 +2401,7 @@ mod tests {
         let mut harness =
             egui_kittest::Harness::builder().with_size((1180.0, 180.0)).with_pixels_per_point(1.0).wgpu().build_ui(
                 |ui| {
-                    show_row(ui, &detail, &mut Vec::new(), &mut Vec::new());
+                    show_row(ui, &detail, &[], &mut Vec::new(), &mut Vec::new());
                 },
             );
         theme::install(&harness.ctx);
@@ -1524,7 +2425,7 @@ mod tests {
         let mut harness =
             egui_kittest::Harness::builder().with_size((660.0, 340.0)).with_pixels_per_point(1.0).wgpu().build_ui(
                 |ui| {
-                    show_stack(ui, &detail, &mut Vec::new(), &mut Vec::new());
+                    show_stack(ui, &detail, &[], &mut Vec::new(), &mut Vec::new());
                 },
             );
         theme::install(&harness.ctx);
@@ -1553,7 +2454,7 @@ mod tests {
         let mut harness =
             egui_kittest::Harness::builder().with_size((660.0, 340.0)).with_pixels_per_point(1.0).wgpu().build_ui(
                 |ui| {
-                    show_stack(ui, &detail, &mut Vec::new(), &mut Vec::new());
+                    show_stack(ui, &detail, &[], &mut Vec::new(), &mut Vec::new());
                 },
             );
         theme::install(&harness.ctx);
@@ -1577,6 +2478,7 @@ mod tests {
             longest_us: 0,
             no_time: 0,
             state_refused: None,
+            ara: false,
         }
     }
 
@@ -1592,9 +2494,13 @@ mod tests {
     fn a_plug_in_shows_where_it_stands_and_what_its_button_does() {
         let project = with_plugin();
         let shown = |status: Option<PluginStatus>, open: bool| {
-            let Detail::Devices(chain) =
-                build_with(&project, Some(TrackId(1)), None, &mut |_, _| status.clone().map(|s| report(s, open)))
-            else {
+            let Detail::Devices(chain) = build_with(
+                &project,
+                Some(TrackId(1)),
+                None,
+                &mut |_, _| status.clone().map(|s| report(s, open)),
+                crate::detail::nam_panel::Lists::default(),
+            ) else {
                 panic!()
             };
             chain.devices[0].plugin.clone().unwrap()
@@ -1618,12 +2524,75 @@ mod tests {
     }
 
     #[test]
+    fn a_clips_ara_editor_lands_in_the_clip_view_or_offers_to_open() {
+        use egui_kittest::Harness;
+        use egui_kittest::kittest::Queryable;
+        let project = with_plugin();
+        let chain_with = |report: PluginReport| {
+            let Detail::Devices(chain) = build_with(
+                &project,
+                Some(TrackId(1)),
+                None,
+                &mut |_, _| Some(report.clone()),
+                crate::detail::nam_panel::Lists::default(),
+            ) else {
+                panic!()
+            };
+            chain
+        };
+        let bound = PluginReport { ara: true, ..report(PluginStatus::Running, false) };
+        assert!(chain_with(bound.clone()).devices[0].plugin.as_ref().unwrap().ara);
+        // Embedded: it lands at the area's corner, the whole of it showing.
+        let embedded =
+            chain_with(PluginReport { editor_embedded: Some((300, 200)), ..report(PluginStatus::Running, true) });
+        let mut harness = Harness::builder().with_size(egui::vec2(600.0, 300.0)).build_ui_state(
+            |ui, (places, actions): &mut (Vec<EditorPlace>, Vec<Action>)| {
+                places.clear();
+                let area = ui.available_rect_before_wrap();
+                show_ara_editor(ui, area, &embedded, 0, actions, places);
+            },
+            (Vec::new(), Vec::new()),
+        );
+        harness.run();
+        let place = harness.state().0[0];
+        assert_eq!((place.track, place.device), (TrackId(1), 0));
+        assert_eq!((place.placement.clip_width, place.placement.clip_height), (300, 200));
+        // Float above it takes it out to a window of its own.
+        harness.get_by_label("Float Verb").click();
+        harness.run();
+        let float = &harness.state().1[0];
+        assert_eq!(
+            (float.id, float.params.clone()),
+            ("view.araFloat", json!({ "track": 1, "device": 0, "float": true }))
+        );
+        // Closed: the area offers to open it, and the button opens that plug-in's editor.
+        let closed = chain_with(bound);
+        let mut harness = Harness::builder().with_size(egui::vec2(600.0, 300.0)).build_ui_state(
+            |ui, actions: &mut Vec<Action>| {
+                let area = ui.available_rect_before_wrap();
+                show_ara_editor(ui, area, &closed, 0, actions, &mut Vec::new());
+            },
+            Vec::new(),
+        );
+        harness.run();
+        harness.get_by_label("Open editor Verb").click();
+        harness.run();
+        assert_eq!(harness.state()[0].id, "device.openEditor");
+        assert_eq!(harness.state()[0].params, json!({ "track": 1, "device": 0 }));
+    }
+
+    #[test]
     fn an_embedded_editor_takes_its_room_and_says_where_it_lands() {
         use egui_kittest::Harness;
         let project = with_plugin();
         let embedded = PluginReport { editor_embedded: Some((300, 200)), ..report(PluginStatus::Running, true) };
-        let Detail::Devices(chain) = build_with(&project, Some(TrackId(1)), None, &mut |_, _| Some(embedded.clone()))
-        else {
+        let Detail::Devices(chain) = build_with(
+            &project,
+            Some(TrackId(1)),
+            None,
+            &mut |_, _| Some(embedded.clone()),
+            crate::detail::nam_panel::Lists::default(),
+        ) else {
             panic!()
         };
         assert_eq!(chain.devices[0].plugin.as_ref().unwrap().embedded, Some((300, 200)));
@@ -1634,9 +2603,9 @@ mod tests {
                     places.clear();
                     let mut actions = Vec::new();
                     if stacked {
-                        show_stack(ui, &detail, &mut actions, places);
+                        show_stack(ui, &detail, &[], &mut actions, places);
                     } else {
-                        show_row(ui, &detail, &mut actions, places);
+                        show_row(ui, &detail, &[], &mut actions, places);
                     }
                 },
                 Vec::new(),
@@ -1659,7 +2628,7 @@ mod tests {
             let mut probe = Harness::builder().with_size(egui::vec2(600.0, 300.0)).build_ui_state(
                 |ui, places: &mut Vec<EditorPlace>| {
                     places.clear();
-                    show_row(ui, &detail, &mut Vec::new(), places);
+                    show_row(ui, &detail, &[], &mut Vec::new(), places);
                 },
                 Vec::new(),
             );
@@ -1670,7 +2639,7 @@ mod tests {
             Harness::builder().with_size(egui::vec2(600.0, EDITOR_TOP + 50.0 + margin * 2.0)).build_ui_state(
                 |ui, places: &mut Vec<EditorPlace>| {
                     places.clear();
-                    show_row(ui, &detail, &mut Vec::new(), places);
+                    show_row(ui, &detail, &[], &mut Vec::new(), places);
                 },
                 Vec::new(),
             );
@@ -1679,7 +2648,7 @@ mod tests {
         let mut none = Harness::builder().with_size(egui::vec2(600.0, EDITOR_TOP - 1.0 + margin * 2.0)).build_ui_state(
             |ui, places: &mut Vec<EditorPlace>| {
                 places.clear();
-                show_row(ui, &detail, &mut Vec::new(), places);
+                show_row(ui, &detail, &[], &mut Vec::new(), places);
             },
             Vec::new(),
         );
@@ -1692,9 +2661,13 @@ mod tests {
         use egui_kittest::Harness;
         use egui_kittest::kittest::Queryable;
         let project = with_plugin();
-        let Detail::Devices(chain) =
-            build_with(&project, Some(TrackId(1)), None, &mut |_, _| Some(report(PluginStatus::Running, false)))
-        else {
+        let Detail::Devices(chain) = build_with(
+            &project,
+            Some(TrackId(1)),
+            None,
+            &mut |_, _| Some(report(PluginStatus::Running, false)),
+            crate::detail::nam_panel::Lists::default(),
+        ) else {
             panic!()
         };
         let detail = Detail::Devices(chain);
@@ -1703,9 +2676,9 @@ mod tests {
                 |ui, actions: &mut Vec<Action>| {
                     let mut places = Vec::new();
                     if stacked {
-                        show_stack(ui, &detail, actions, &mut places);
+                        show_stack(ui, &detail, &[], actions, &mut places);
                     } else {
-                        show_row(ui, &detail, actions, &mut places);
+                        show_row(ui, &detail, &[], actions, &mut places);
                     }
                     assert!(places.is_empty());
                 },

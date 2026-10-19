@@ -157,7 +157,15 @@ impl Scale {
                 ParamKind::Choice(options) => {
                     options.get(info.clamp(value) as usize).map_or_else(String::new, |o| (*o).to_string())
                 }
-                ParamKind::Integer => format!("{}", info.clamp(value)),
+                ParamKind::Integer => {
+                    let value = info.clamp(value);
+                    match info.unit {
+                        Unit::Semitones => format!("{value:+} st"),
+                        Unit::ScaleDegrees => format!("{value:+} sd"),
+                        Unit::Key => crate::detail::piano_roll::key_name(value.clamp(0.0, 127.0) as u8),
+                        _ => format!("{value}"),
+                    }
+                }
                 ParamKind::Continuous(_) => match info.unit {
                     Unit::Decibels => format!("{value:.1} dB"),
                     Unit::Hertz => format!("{value:.0} Hz"),
@@ -165,6 +173,9 @@ impl Scale {
                     Unit::Percent => format!("{:.0} %", value * 100.0),
                     Unit::Balance => widgets::format_pan(value),
                     Unit::Octaves => format!("{value:.2} oct"),
+                    Unit::Semitones => format!("{value:+.2} st"),
+                    Unit::ScaleDegrees => format!("{value:+.2} sd"),
+                    Unit::Key => crate::detail::piano_roll::key_name(value.round().clamp(0.0, 127.0) as u8),
                     Unit::None => format!("{value:.2}"),
                 },
             },
@@ -447,6 +458,17 @@ impl LanesState {
         }
         if self.selection.as_ref().is_some_and(|s| s.track == track) {
             self.selection = None;
+        }
+    }
+
+    /// Shows every one of `tracks`' lanes, or hides them all when they all show already
+    /// (`view.automation`, A).
+    pub fn toggle_all(&mut self, tracks: &[TrackId], params: &Params) {
+        let all_open = !tracks.is_empty() && tracks.iter().all(|t| self.is_open(*t));
+        for &track in tracks {
+            if self.is_open(track) == all_open {
+                self.toggle(track, params);
+            }
         }
     }
 

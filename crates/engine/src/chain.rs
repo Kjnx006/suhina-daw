@@ -9,7 +9,10 @@
 //! and volume apply. When the first device is an instrument, the track's notes go to it as
 //! [`NoteEvent`]s instead of starting sine voices; the chain runs in pieces split at each event,
 //! so a note lands on its frame. A track without devices is mixed straight into the output, as
-//! before.
+//! before. MIDI effects before the instrument change those events on the way: each takes the
+//! block's events and hands on what it makes of them ([`Device::process_events`]). Before the
+//! first note of a clip whose scale differs from the last one sent, the chain sends the clip's
+//! scale ([`NoteEvent::Scale`]) for the MIDI effects that follow it.
 //!
 //! A plug-in device takes a [`PluginSlot`] in the chain (ADR 0006): it gets the block's events
 //! with their frames and runs once per block, so the devices run one after another over the
@@ -27,7 +30,7 @@
 
 use std::time::{Duration, Instant};
 
-use suhina_device_api::{Device, NoteEvent, ProcessContext, Role};
+use suhina_device_api::{Device, MusicalScale, NoteEvent, ProcessContext, Role};
 use suhina_model::{DeviceKind, Project, TrackId};
 
 use crate::automation::{DeviceLanes, MixLanes};
@@ -36,6 +39,7 @@ use crate::plugin::{
 };
 use crate::plugin_params::SlotParams;
 use crate::sends::SendOut;
+use crate::sine::{self, SineTones};
 
 /// The most frames one block of a chain holds; the renderer splits longer blocks.
 pub(crate) const MAX_BLOCK: usize = 1024;
@@ -49,10 +53,14 @@ pub(crate) const CHAIN_INPUT_GAIN: f32 = 0.25;
 /// One device of a chain: built in, or a plug-in in a host process.
 pub(crate) enum Slot {
     Device(Box<dyn Device>),
+    /// A built-in MIDI effect: it changes the chain's events, not its sound.
+    MidiDevice(Box<dyn Device>),
     Sd(suhina_device_sdk::PreparedEffect),
     InstrumentSd(suhina_device_sdk::PreparedEffect),
     MidiSd(suhina_device_sdk::PreparedMidiEffect),
     Plugin(PluginSlot),
+    /// A device group: branches of slots summed (`docs/spec/device-groups.md`).
+    Group(Box<crate::group::GroupSlot>),
 }
 
 impl Slot {
@@ -61,7 +69,7 @@ impl Slot {
         match self {
             Slot::Sd(effect) | Slot::InstrumentSd(effect) => effect.set_parameter(index, value),
             Slot::MidiSd(effect) => effect.set_parameter(index, value),
-            Slot::Device(_) | Slot::Plugin(_) => {}
+            Slot::Device(_) | Slot::MidiDevice(_) | Slot::Plugin(_) | Slot::Group(_) => {}
         }
     }
 }
@@ -77,6 +85,7 @@ pub(crate) struct Chain {
     /// The project's device ids in order (a plug-in's by its key), so a graph swap can tell
     /// whether a new chain holds the same devices as an old one.
     ids: Vec<String>,
+    sample_slices: Vec<Option<std::sync::Arc<[f64]>>>,
     /// Every parameter's value from the project (its default when the project has none), per
     /// device.
     params: Vec<Vec<f64>>,
@@ -114,6 +123,9 @@ pub(crate) struct Chain {
     /// transport.
     deadline: Option<Instant>,
     context: ProcessContext,
+    /// The sample rate its devices were prepared for, which turns a span's first frame into its
+    /// song position.
+    sample_rate: f64,
     /// Frames of the current block the devices have run over.
     done: usize,
     /// When the block runs in stages with other chains ([`Chain::advance`]): the next slot to
@@ -133,21 +145,37 @@ pub(crate) struct Chain {
     /// Per key, the renderer frame its note ends at, or `NOT_HELD`.
     held: [u64; 128],
     next_off: u64,
+    /// The scale last sent to the devices ([`Chain::set_scale`]); `None` before the first.
+    scale: Option<Option<MusicalScale>>,
 }
 
 impl Chain {
+    pub(crate) fn sample_positions(&self) -> Option<(usize, [Option<f32>; 32])> {
+        self.slots.iter().zip(&self.positions).find_map(|(slot, &position)| match slot {
+            Slot::Device(device) => {
+                let positions = device.sample_positions();
+                positions.iter().any(Option::is_some).then_some((position, positions))
+            }
+            _ => None,
+        })
+    }
+
     /// The chain for `track` at `sample_rate`, or `None` when its channel holds no device
     /// Suhina can run (other DAWs' devices and plug-ins that are not installed pass the sound
     /// through). Plug-in devices take their processors from `plugins` (one without a processor
-    /// yet gets a slot that waits for it). `post` is the track's gains. Allocates: call it off
-    /// the audio thread.
+    /// yet gets a slot that waits for it). `post` is the track's gains. A file-backed device
+    /// gets its file from `assets` by the path its state holds
+    /// ([docs/spec/nam-amp-and-cab.md]). Allocates: call it off the audio thread.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn build(
         project: &Project,
+        audio: &crate::AudioPool,
         track: TrackId,
         column: u32,
         post: (f32, f32),
         sample_rate: u32,
         plugins: &mut Plugins,
+        assets: &crate::DeviceAssets,
     ) -> Option<Self> {
         let channel = project.tracks.iter().find(|t| t.id == track)?.channel?;
         let channel = project.channels.iter().find(|c| c.id == channel)?;
@@ -209,7 +237,7 @@ impl Chain {
                 }
                 DeviceKind::Clap { .. } | DeviceKind::Vst3 { .. } | DeviceKind::Vst2 { .. } => {
                     let Some(key) =
-                        keys.iter().find(|d| d.channel == channel.id && d.position == position).map(|d| d.key)
+                        keys.iter().find(|d| d.channel == channel.id && d.path == [position]).map(|d| d.key)
                     else {
                         continue;
                     };
@@ -231,9 +259,34 @@ impl Chain {
                     params.push(Vec::new());
                     continue;
                 }
+                DeviceKind::Group(group) => {
+                    if !stored.enabled {
+                        continue;
+                    }
+                    let mut builder = crate::group::Builder {
+                        sample_rate,
+                        assets,
+                        plugins: &mut *plugins,
+                        keys: &keys,
+                        channel: channel.id,
+                        frames_per_beat,
+                    };
+                    let Some(built) = builder.group(stored, group, 0, &[position]) else { continue };
+                    latency = latency.saturating_add(built.latency);
+                    slots.push(built.slot);
+                    positions.push(position);
+                    ids.push(built.id);
+                    params.push(built.values);
+                    continue;
+                }
                 _ => continue,
             };
-            let Some(mut device) = suhina_device_registry::create(id) else { continue };
+            let asset = crate::assets::stored_path(id, stored.state.as_deref()).and_then(|path| assets.get(path));
+            let Some(mut device) = suhina_device_registry::create_with(id, asset) else { continue };
+            if let Some(source) = stored.sample_file().and_then(|file| audio.files.get(file)) {
+                device.load_shared_sample(source.sample_rate, source.channels, source.clone());
+            }
+            device.load_sample_slices(stored.sample_slices().map(std::sync::Arc::from));
             if device.prepare(f64::from(sample_rate)).is_err() {
                 continue;
             }
@@ -251,21 +304,56 @@ impl Chain {
             }
             device.reset();
             latency = latency.saturating_add(device.latency());
-            slots.push(Slot::Device(device));
+            slots.push(if info.role == Role::MidiEffect { Slot::MidiDevice(device) } else { Slot::Device(device) });
             positions.push(position);
-            ids.push(id.clone());
+            // A device that holds a file changes with the file: its identity carries the state's
+            // hash, the `.sd` devices' trick, so a model swap rebuilds one device alone; a
+            // Sampler's carries its sample (#600).
+            if suhina_device_registry::is_file_device(id) {
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                use std::hash::{Hash, Hasher};
+                let hashed = match std::str::from_utf8(stored.state.as_deref().unwrap_or(&[])) {
+                    Ok(text) => {
+                        text.hash(&mut hasher);
+                        hasher.finish()
+                    }
+                    Err(_) => hasher.finish(),
+                };
+                ids.push(format!("{id}:{hashed:016x}"));
+            } else {
+                ids.push(stored.sample_file().map_or_else(
+                    || id.clone(),
+                    |file| {
+                        let source = audio.files.get(file).map(std::sync::Arc::as_ptr);
+                        format!("{id}:{file}:{source:?}")
+                    },
+                ));
+            }
             params.push(values);
         }
-        let instrument = slots.iter().any(|slot| match slot {
-            Slot::Device(device) => device.info().role == Role::Instrument,
-            Slot::Plugin(slot) => slot.instrument,
-            Slot::InstrumentSd(_) => true,
-            Slot::Sd(_) | Slot::MidiSd(_) => false,
-        });
+        let mut instrument = slots.iter().any(crate::group::is_instrument);
+        // MIDI effects with no instrument after them play the notes they change as the sine
+        // tones the track would play without them (ADR 0004 › 14).
+        let is_midi = |slot: &Slot| matches!(slot, Slot::MidiDevice(_) | Slot::MidiSd(_));
+        if !instrument && slots.iter().any(is_midi) {
+            let at = slots.iter().take_while(|slot| is_midi(slot)).count();
+            device_lanes.insert_slot(at);
+            slots.insert(at, Slot::Device(Box::new(SineTones::new(sample_rate))));
+            positions.insert(at, usize::MAX);
+            ids.insert(at, sine::INFO.id.to_string());
+            params.insert(at, Vec::new());
+            instrument = true;
+        }
         (!slots.is_empty()).then(|| Self {
             track,
             column,
             slots,
+            sample_slices: positions
+                .iter()
+                .map(|&i| {
+                    channel.devices.get(i).and_then(suhina_model::Device::sample_slices).map(std::sync::Arc::from)
+                })
+                .collect(),
             positions,
             ids,
             params,
@@ -286,6 +374,7 @@ impl Chain {
             midi_scratch: Vec::with_capacity(MAX_PENDING * 2),
             deadline: None,
             context: ProcessContext::default(),
+            sample_rate: f64::from(sample_rate),
             done: 0,
             stage: 0,
             waiting: None,
@@ -295,6 +384,7 @@ impl Chain {
             joined: Joined::default(),
             held: [NOT_HELD; 128],
             next_off: NOT_HELD,
+            scale: None,
         })
     }
 
@@ -307,6 +397,7 @@ impl Chain {
             slots: Vec::new(),
             positions: Vec::new(),
             ids: Vec::new(),
+            sample_slices: Vec::new(),
             params: Vec::new(),
             instrument: false,
             latency: 0,
@@ -325,6 +416,8 @@ impl Chain {
             midi_scratch: Vec::new(),
             deadline: None,
             context: ProcessContext::default(),
+            // It runs no devices, so nothing reads it.
+            sample_rate: 48_000.0,
             done: 0,
             stage: 0,
             waiting: None,
@@ -334,6 +427,7 @@ impl Chain {
             joined: Joined::default(),
             held: [NOT_HELD; 128],
             next_off: NOT_HELD,
+            scale: None,
         }
     }
 
@@ -378,6 +472,16 @@ impl Chain {
     /// Plans the parameter events of its plug-ins for a block of `frames` frames starting at
     /// arrangement frame `time` (`None` while the transport is stopped): call it after
     /// [`Chain::begin`], before any of the block runs. Never allocates.
+    /// Tells the chain's plug-ins where the song is as the block starts
+    /// ([`PluginProcessor::transport`]). Never allocates.
+    pub(crate) fn transport(&mut self, playing: bool, position: u64, tempo: f64) {
+        for slot in self.plugin_slots() {
+            if let Some(processor) = slot.processor.as_mut() {
+                processor.transport(playing, position, tempo);
+            }
+        }
+    }
+
     pub(crate) fn automate(&mut self, time: Option<u64>, frames: usize) {
         let frames = frames.min(MAX_BLOCK);
         for slot in self.plugin_slots() {
@@ -417,6 +521,7 @@ impl Chain {
             done,
             deadline,
             context,
+            sample_rate,
             stage,
             waiting,
             device_lanes,
@@ -430,7 +535,24 @@ impl Chain {
         while let Some(slot) = slots.get_mut(*stage) {
             match slot {
                 Slot::Device(device) => {
-                    run_device(device, *stage, buffer, from, to, pending, device_lanes, context);
+                    run_device(device, *stage, buffer, from, to, pending, device_lanes, context, *sample_rate);
+                    *stage += 1;
+                }
+                Slot::Group(group) => {
+                    group.run(buffer, from, to, pending, context, *sample_rate, *deadline);
+                    *stage += 1;
+                }
+                Slot::MidiDevice(device) => {
+                    run_midi_device(
+                        device,
+                        *stage,
+                        pending,
+                        span_events,
+                        midi_scratch,
+                        device_lanes,
+                        SdRun { from, to, context },
+                    );
+                    std::mem::swap(pending, midi_scratch);
                     *stage += 1;
                 }
                 Slot::Sd(effect) => {
@@ -576,6 +698,17 @@ impl Chain {
         self.next_off = self.next_off.min(end.max(position + 1));
     }
 
+    /// Tells the devices, at `frame` of the block, that the notes that follow are in `scale`
+    /// (`None` for a clip without one), unless that is the scale they were last told. Only an
+    /// instrument chain takes notes, so only it is told.
+    pub(crate) fn set_scale(&mut self, frame: usize, scale: Option<MusicalScale>) {
+        if !self.instrument || self.scale == Some(scale) {
+            return;
+        }
+        self.scale = Some(scale);
+        self.push(frame, NoteEvent::Scale(scale));
+    }
+
     /// Releases the notes that end by renderer frame `position`, at `frame` of the block.
     pub(crate) fn release_due(&mut self, frame: usize, position: u64) {
         if position < self.next_off {
@@ -658,6 +791,7 @@ impl Chain {
             done,
             deadline,
             context,
+            sample_rate,
             device_lanes,
             joined,
             ..
@@ -667,7 +801,24 @@ impl Chain {
         while let Some(slot) = slots.get_mut(index) {
             match slot {
                 Slot::Device(device) => {
-                    run_device(device, index, buffer, from, to, pending, device_lanes, context);
+                    run_device(device, index, buffer, from, to, pending, device_lanes, context, *sample_rate);
+                    index += 1;
+                }
+                Slot::Group(group) => {
+                    group.run(buffer, from, to, pending, context, *sample_rate, *deadline);
+                    index += 1;
+                }
+                Slot::MidiDevice(device) => {
+                    run_midi_device(
+                        device,
+                        index,
+                        pending,
+                        span_events,
+                        midi_scratch,
+                        device_lanes,
+                        SdRun { from, to, context },
+                    );
+                    std::mem::swap(pending, midi_scratch);
                     index += 1;
                 }
                 Slot::Sd(effect) => {
@@ -779,7 +930,7 @@ impl Chain {
     pub(crate) fn set_param(&mut self, position: usize, param: usize, value: f64) {
         let Some(index) = self.positions.iter().position(|&p| p == position) else { return };
         match self.slots.get_mut(index) {
-            Some(Slot::Device(device)) => {
+            Some(Slot::Device(device) | Slot::MidiDevice(device)) => {
                 device.set_param(param, value);
                 if let Some(slot) = self.params.get_mut(index).and_then(|values| values.get_mut(param)) {
                     *slot = device.param(param).unwrap_or(value);
@@ -794,6 +945,14 @@ impl Chain {
             Some(Slot::Plugin(plugin)) => {
                 if let Ok(id) = u32::try_from(param) {
                     plugin.params.set(id, value);
+                }
+            }
+            Some(Slot::Group(group)) => {
+                group.set_param(param, value);
+                if let (Some(slot), Some(&set)) =
+                    (self.params.get_mut(index).and_then(|values| values.get_mut(param)), group.values().get(param))
+                {
+                    *slot = set;
                 }
             }
             None => {}
@@ -813,7 +972,10 @@ impl Chain {
             self.slots.iter_mut().zip(&self.params).zip(old.slots.iter_mut()).enumerate()
         {
             match (slot, fresh) {
-                (Slot::Device(device), _) => {
+                (Slot::Device(device) | Slot::MidiDevice(device), _) => {
+                    if let Some(points) = self.sample_slices.get_mut(position) {
+                        device.swap_sample_slices(points);
+                    }
                     // A parameter that follows a lane keeps its running value until the lane
                     // sets it in the next block.
                     for (index, &value) in
@@ -829,37 +991,24 @@ impl Chain {
                         slot.set_sd_parameter(index, value);
                     }
                 }
-                (Slot::Plugin(running), Slot::Plugin(fresh)) => {
-                    running.enabled = fresh.enabled;
-                    running.instrument = fresh.instrument;
-                    running.latency = fresh.latency;
-                    running.params.adopt(&mut fresh.params);
-                    // A processor that reached the new graph's slot (a restart) wins, and gets
-                    // the set values again.
-                    if fresh.processor.is_some() {
-                        std::mem::swap(&mut running.processor, &mut fresh.processor);
-                        running.params.restart();
-                    }
-                }
+                (Slot::Plugin(running), Slot::Plugin(fresh)) => running.adopt(fresh),
                 (Slot::Plugin(_), _) => {}
+                (Slot::Group(running), Slot::Group(fresh)) => running.adopt(fresh),
+                (Slot::Group(_), _) => {}
             }
         }
         self.held = old.held;
         self.next_off = old.next_off;
+        self.scale = old.scale;
         self.delay.adopt(&mut old.delay);
         self.adopt_sends(old);
         true
     }
 
-    /// The plug-in slots, for processors to find theirs.
-    pub(crate) fn plugin_slots(&mut self) -> impl Iterator<Item = &mut PluginSlot> {
-        self.slots.iter_mut().filter_map(|slot| match slot {
-            Slot::Plugin(plugin) => Some(plugin),
-            Slot::Device(_) => None,
-            Slot::Sd(_) => None,
-            Slot::InstrumentSd(_) => None,
-            Slot::MidiSd(_) => None,
-        })
+    /// The plug-in slots, inside device groups too, for processors to find theirs. Never
+    /// allocates.
+    pub(crate) fn plugin_slots(&mut self) -> crate::group::PluginSlots<'_> {
+        crate::group::PluginSlots::new(&mut self.slots)
     }
 
     /// Puts `processor` into the slot of plug-in `key`, if this chain has it, and returns the
@@ -1053,9 +1202,10 @@ pub(crate) enum Placed {
 
 /// Runs a built-in device (slot `slot` of its chain) over the block's frames `from..to`,
 /// split where a note event or a change of a parameter that follows a lane falls; at one frame
-/// the parameter changes before the note.
+/// the parameter changes before the note. Each span gets the song position of its own first
+/// frame, as [`run_sd_effect`] gives it.
 #[allow(clippy::too_many_arguments)]
-fn run_device(
+pub(crate) fn run_device(
     device: &mut Box<dyn Device>,
     slot: usize,
     buffer: &mut [f32],
@@ -1064,36 +1214,42 @@ fn run_device(
     pending: &[(usize, NoteEvent)],
     lanes: &DeviceLanes,
     context: &ProcessContext,
+    sample_rate: f64,
 ) {
+    // Give context-dependent instruments the tempo before an event at frame zero.
+    device.set_context(context);
+    let run_span = |device: &mut Box<dyn Device>, buffer: &mut [f32], from: usize, to: usize| {
+        process(device, buffer, from, to, &span_context(context, from, sample_rate));
+    };
     let mut at_done = from;
     let mut changes = lanes.changes(slot, from, to).peekable();
     for &(at, event) in pending {
         let at = at.clamp(at_done, to);
         while let Some(change) = changes.next_if(|c| c.frame <= at) {
-            process(device, buffer, at_done, change.frame.max(at_done), context);
+            run_span(device, buffer, at_done, change.frame.max(at_done));
             at_done = change.frame.max(at_done);
             device.set_param(change.param, change.value);
         }
-        process(device, buffer, at_done, at, context);
+        run_span(device, buffer, at_done, at);
         at_done = at;
         device.event(event);
     }
     for change in changes {
-        process(device, buffer, at_done, change.frame.max(at_done), context);
+        run_span(device, buffer, at_done, change.frame.max(at_done));
         at_done = change.frame.max(at_done);
         device.set_param(change.param, change.value);
     }
-    process(device, buffer, at_done, to, context);
+    run_span(device, buffer, at_done, to);
 }
 
 #[derive(Clone, Copy)]
-struct SdRun<'a> {
-    from: usize,
-    to: usize,
-    context: &'a ProcessContext,
+pub(crate) struct SdRun<'a> {
+    pub(crate) from: usize,
+    pub(crate) to: usize,
+    pub(crate) context: &'a ProcessContext,
 }
 
-fn run_sd_effect(
+pub(crate) fn run_sd_effect(
     effect: &mut suhina_device_sdk::PreparedEffect,
     slot: usize,
     buffer: &mut [f32],
@@ -1104,17 +1260,17 @@ fn run_sd_effect(
     for change in lanes.changes(slot, run.from, run.to) {
         let end = change.frame.max(at).min(run.to);
         if let Some(span) = buffer.get_mut(at * 2..end * 2) {
-            effect.process_context(&sd_context(run.context, at, effect.sample_rate()), span);
+            effect.process_context(&span_context(run.context, at, effect.sample_rate()), span);
         }
         effect.set_parameter(change.param, change.value);
         at = end;
     }
     if let Some(span) = buffer.get_mut(at * 2..run.to * 2) {
-        effect.process_context(&sd_context(run.context, at, effect.sample_rate()), span);
+        effect.process_context(&span_context(run.context, at, effect.sample_rate()), span);
     }
 }
 
-fn run_sd_instrument(
+pub(crate) fn run_sd_instrument(
     instrument: &mut suhina_device_sdk::PreparedEffect,
     slot: usize,
     buffer: &mut [f32],
@@ -1151,11 +1307,15 @@ fn run_sd_instrument_span(
             .then_some((frame.saturating_sub(start.saturating_sub(run.from)), event))
     }));
     if let Some(span) = buffer.get_mut(start * 2..end * 2) {
-        instrument.process_instrument_context(&sd_context(run.context, start, instrument.sample_rate()), scratch, span);
+        instrument.process_instrument_context(
+            &span_context(run.context, start, instrument.sample_rate()),
+            scratch,
+            span,
+        );
     }
 }
 
-fn run_sd_midi(
+pub(crate) fn run_sd_midi(
     effect: &mut suhina_device_sdk::PreparedMidiEffect,
     slot: usize,
     events: &[(usize, NoteEvent)],
@@ -1180,7 +1340,74 @@ fn run_sd_midi(
     output.truncate(written);
 }
 
-fn sd_context(context: &ProcessContext, frame: usize, sample_rate: f64) -> ProcessContext {
+/// Runs a built-in MIDI effect (slot `slot` of its chain) over the block's frames `from..to`:
+/// `events` (at block frames) go in, what it sends on goes to `output` (at block frames), split
+/// where a parameter that follows a lane changes, a change at a frame coming before the events
+/// at that frame. `input` is scratch for each span's events. Never allocates: the device gets
+/// the room `output`'s capacity has left, at least as many events as it is handed (the block's
+/// events never outnumber that capacity), and leaves out what does not fit, note-ons first.
+pub(crate) fn run_midi_device(
+    device: &mut Box<dyn Device>,
+    slot: usize,
+    events: &[(usize, NoteEvent)],
+    input: &mut Vec<(usize, NoteEvent)>,
+    output: &mut Vec<(usize, NoteEvent)>,
+    lanes: &DeviceLanes,
+    run: SdRun<'_>,
+) {
+    output.clear();
+    let mut start = run.from;
+    let mut next = 0;
+    for change in lanes.changes(slot, run.from, run.to) {
+        let end = change.frame.clamp(start, run.to);
+        if end > start {
+            midi_span(device, events, &mut next, input, output, SdRun { from: start, to: end, ..run }, false);
+        }
+        device.set_param(change.param, change.value);
+        start = end;
+    }
+    midi_span(device, events, &mut next, input, output, SdRun { from: start, ..run }, true);
+}
+
+/// One span `from..to` of [`run_midi_device`]: the events from `next` that fall before `to`
+/// (all that are left, when `rest`) go through the device. An event outside the span is handed
+/// over at its nearest frame, as `run_device` does.
+fn midi_span(
+    device: &mut Box<dyn Device>,
+    events: &[(usize, NoteEvent)],
+    next: &mut usize,
+    input: &mut Vec<(usize, NoteEvent)>,
+    output: &mut Vec<(usize, NoteEvent)>,
+    span: SdRun<'_>,
+    rest: bool,
+) {
+    let SdRun { from: start, to: end, context } = span;
+    let frames = end.saturating_sub(start);
+    let final_frame = frames.saturating_sub(1);
+    input.clear();
+    while let Some(&(at, event)) = events.get(*next)
+        && (rest || at < end)
+        && input.len() < input.capacity()
+    {
+        input.push((at.saturating_sub(start).min(final_frame), event));
+        *next += 1;
+    }
+    let written = output.len();
+    // The events of the block's later spans keep their room, so every span has room for at
+    // least as many events as it hands over (ADR 0004 › 14).
+    let later = events.len().saturating_sub(*next);
+    output.resize(output.capacity().saturating_sub(later).max(written), (0, NoteEvent::AllNotesOff));
+    let sent = match output.get_mut(written..) {
+        Some(room) => device.process_events(context, frames, input, room),
+        None => 0,
+    };
+    output.truncate(written + sent);
+    for event in output.iter_mut().skip(written) {
+        event.0 = (event.0 + start).min(start + final_frame);
+    }
+}
+
+fn span_context(context: &ProcessContext, frame: usize, sample_rate: f64) -> ProcessContext {
     let mut context = *context;
     if context.playing {
         context.beat += frame as f64 * context.tempo / (60.0 * sample_rate);
@@ -1226,5 +1453,172 @@ mod sd_tests {
             SdRun { from: 100, to: 200, context: &ProcessContext::default() },
         );
         assert_eq!(output, [(150, NoteEvent::On { key: 72, velocity: 0.8 })]);
+    }
+}
+
+#[cfg(test)]
+mod span_tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+    use suhina_device_api::{DeviceError, DeviceInfo, Role};
+
+    const SR: f64 = 48_000.0;
+    /// Two beats per second: one beat is 24 000 frames.
+    const PLAYING: ProcessContext = ProcessContext { tempo: 120.0, beat: 8.0, playing: true };
+    const NOTE: NoteEvent = NoteEvent::On { key: 60, velocity: 0.8 };
+
+    static RECORDER: DeviceInfo = DeviceInfo { id: "test.recorder", name: "Recorder", role: Role::Effect, params: &[] };
+
+    /// Notes the song position and length of every span it is given.
+    struct Recorder(Arc<Mutex<Vec<(f64, usize)>>>);
+
+    impl Device for Recorder {
+        fn info(&self) -> &'static DeviceInfo {
+            &RECORDER
+        }
+        fn prepare(&mut self, _sample_rate: f64) -> Result<(), DeviceError> {
+            Ok(())
+        }
+        fn reset(&mut self) {}
+        fn set_param(&mut self, _index: usize, _value: f64) {}
+        fn param(&self, _index: usize) -> Option<f64> {
+            None
+        }
+        fn process(&mut self, context: &ProcessContext, buffer: &mut [f32]) {
+            if let Ok(mut spans) = self.0.lock() {
+                spans.push((context.beat, buffer.len() / 2));
+            }
+        }
+    }
+
+    /// The spans a device is run over for frames 100..400 of a block with notes at 200 and 300.
+    fn spans(context: &ProcessContext) -> Vec<(f64, usize)> {
+        let spans = Arc::new(Mutex::new(Vec::new()));
+        let mut device: Box<dyn Device> = Box::new(Recorder(Arc::clone(&spans)));
+        let mut buffer = vec![0.0; 400 * 2];
+        let pending = [(200, NOTE), (300, NOTE)];
+        run_device(&mut device, 0, &mut buffer, 100, 400, &pending, &DeviceLanes::none(), context, SR);
+        spans.lock().map(|s| s.clone()).unwrap_or_default()
+    }
+
+    #[test]
+    fn each_span_gets_the_song_position_of_its_first_frame() {
+        let beat = |frame: f64| 8.0 + frame / 24_000.0;
+        assert_eq!(spans(&PLAYING), [(beat(100.0), 100), (beat(200.0), 100), (beat(300.0), 100)]);
+    }
+
+    #[test]
+    fn a_stopped_transport_keeps_the_song_position_for_every_span() {
+        let stopped = ProcessContext { playing: false, ..PLAYING };
+        assert_eq!(spans(&stopped), [(8.0, 100), (8.0, 100), (8.0, 100)]);
+    }
+
+    /// The delay with its LFO synced to sixteenth notes at full depth on the time and the band,
+    /// over a block of clicks, its frames split at `splits` by notes it ignores.
+    fn synced_delay(splits: &[usize]) -> Vec<f32> {
+        let Some(mut device) = suhina_device_registry::create("delay") else { panic!("no delay") };
+        let info = device.info();
+        let index = |id: &str| info.params.iter().position(|p| p.id == id).unwrap_or_else(|| panic!("{id}"));
+        // Synced mode, 1/16 per cycle, the shortest time so the repeats are heard in one block.
+        device.set_param(index("lfoMode"), 2.0);
+        device.set_param(index("lfoSynced"), 17.0);
+        device.set_param(index("lfoToTime"), 1.0);
+        device.set_param(index("lfoToFilter"), 1.0);
+        device.set_param(index("syncLeft"), 0.0);
+        device.set_param(index("syncRight"), 0.0);
+        device.set_param(index("timeLeft"), 0.002);
+        device.set_param(index("timeRight"), 0.002);
+        device.reset();
+        let mut buffer: Vec<f32> = (0..2_048).map(|n| if n % 200 < 2 { 1.0 } else { 0.0 }).collect();
+        let pending: Vec<_> = splits.iter().map(|&at| (at, NOTE)).collect();
+        run_device(&mut device, 0, &mut buffer, 0, 1_024, &pending, &DeviceLanes::none(), &PLAYING, SR);
+        buffer
+    }
+
+    #[test]
+    fn a_split_block_sounds_like_a_whole_one() {
+        let whole = synced_delay(&[]);
+        let split = synced_delay(&[300, 700]);
+        for (n, (a, b)) in whole.iter().zip(&split).enumerate() {
+            assert!((a - b).abs() < 1e-5, "sample {n}: {a} whole against {b} split");
+        }
+    }
+}
+
+#[cfg(test)]
+mod sampler_regressions {
+    use super::*;
+    #[test]
+    fn sampler_fit_beats_follows_project_tempo_during_a_held_note() {
+        let mut sampler = suhina_device_registry::create("sampler").unwrap();
+        sampler.load_sample(48000, 1, vec![0.2; 48000].into());
+        for (id, value) in [("warp", 1.), ("warp_beats", 4.), ("attack", 0.), ("sustain", 1.)] {
+            sampler.set_param(sampler.info().param_index(id).unwrap(), value);
+        }
+        let mut buffer = vec![0.; 960];
+        let mut context = ProcessContext { tempo: 120., playing: true, ..ProcessContext::default() };
+        run_device(
+            &mut sampler,
+            0,
+            &mut buffer,
+            0,
+            480,
+            &[(0, NoteEvent::On { key: 60, velocity: 1. })],
+            &DeviceLanes::none(),
+            &context,
+            48_000.0,
+        );
+        assert!((sampler.sample_position().unwrap() - 0.005).abs() < 1e-6);
+        context.tempo = 60.;
+        run_device(&mut sampler, 0, &mut buffer, 0, 480, &[], &DeviceLanes::none(), &context, 48_000.0);
+        assert!((sampler.sample_position().unwrap() - 0.0075).abs() < 1e-6);
+        sampler.set_param(sampler.info().param_index("warp_beats").unwrap(), 2.);
+        run_device(&mut sampler, 0, &mut buffer, 0, 480, &[], &DeviceLanes::none(), &context, 48_000.0);
+        assert!((sampler.sample_position().unwrap() - 0.0125).abs() < 1e-6);
+    }
+    #[test]
+    fn first_beat_slice_uses_context_before_frame_zero_note() {
+        let mut sampler = suhina_device_registry::create("sampler").unwrap();
+        let source =
+            std::sync::Arc::new(crate::AudioData { sample_rate: 48000, channels: 1, samples: vec![0.5; 96000] });
+        sampler.load_shared_sample(48000, 1, source.clone());
+        assert_eq!(std::sync::Arc::strong_count(&source), 2, "PCM must be shared");
+        for (id, value) in [("playback", 3.), ("slice_by", 1.), ("sensitivity", 0.4), ("attack", 0.), ("sustain", 1.)] {
+            sampler.set_param(sampler.info().param_index(id).unwrap(), value);
+        }
+        let mut context = ProcessContext { tempo: 60., ..ProcessContext::default() };
+        let mut buffer = vec![0.; 2048];
+        run_device(
+            &mut sampler,
+            0,
+            &mut buffer,
+            0,
+            1024,
+            &[(0, NoteEvent::On { key: 60, velocity: 1. })],
+            &DeviceLanes::none(),
+            &context,
+            48_000.0,
+        );
+        for _ in 0..28 {
+            run_device(&mut sampler, 0, &mut buffer, 0, 1024, &[], &DeviceLanes::none(), &context, 48_000.0);
+        }
+        assert!(buffer.iter().any(|s| *s > 0.1), "one-beat slice at 60 BPM must outlast half a second");
+        context.tempo = 120.;
+        sampler.reset();
+        run_device(
+            &mut sampler,
+            0,
+            &mut buffer,
+            0,
+            1024,
+            &[(0, NoteEvent::On { key: 60, velocity: 1. })],
+            &DeviceLanes::none(),
+            &context,
+            48_000.0,
+        );
+        for _ in 0..28 {
+            run_device(&mut sampler, 0, &mut buffer, 0, 1024, &[], &DeviceLanes::none(), &context, 48_000.0);
+        }
+        assert!(buffer.iter().all(|s| *s == 0.), "one-beat slice at 120 BPM ends after half a second");
     }
 }

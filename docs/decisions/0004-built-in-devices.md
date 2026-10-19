@@ -42,7 +42,7 @@ decision 9.
 
 1. **Three kinds of crate.** `crates/dsp` (`suhina-dsp`) holds building blocks: gain
    conversions, parameter smoothing, filters, crossovers, LFOs, shapers, DC filtering and
-   oversampling; later oscillators, envelopes and delay lines. `crates/device-api` (`suhina-device-api`) holds the interface. Each
+   oversampling, first-order filters, delay lines and allpasses; later oscillators and envelopes. `crates/device-api` (`suhina-device-api`) holds the interface. Each
    device is its own crate under `devices/` (`suhina-device-<name>`), depending on those two
    only. None of them depends on the model, the engine or each other, so a device can be tested
    alone and later built as a CLAP plug-in or moved to its own repository.
@@ -62,8 +62,8 @@ decision 9.
    `ProcessContext` (tempo, song position in beats, whether the transport runs) for devices that
    follow the tempo. `latency()` reports added delay for compensation.
 5. **Automation: the host splits, the device smooths.** The host addresses parameters by index
-   and splits a block where an automation point falls, so a change lands on its frame; the
-   device ramps a change that would click (20 ms for the utility). The output must not depend on
+   and splits a block where an automation point falls, so a change lands on its frame, and gives
+   each part the song position of its own first frame; the device ramps a change that would click (20 ms for the utility). The output must not depend on
    how a stream is divided into blocks.
 6. **Every device passes the same contract tests.** `device_api::conformance::check` runs a
    device through hostile parameter values and input (NaN, infinities, extremes), several block
@@ -160,6 +160,60 @@ decision 9.
     only supported node data; the engine prepares them off-thread and runs them in the same
     real-time-safe chain. Their parameter declarations generate UI controls.
 
+13. **A device group is one slot of a chain** (added 2026-10-18, #147; behaviour in the
+    [device groups spec](../spec/device-groups.md)). `Slot::Group` holds its branches, each a
+    list of slots with a buffer of its own, all made when the graph is built
+    (`crates/engine/src/group.rs`). Every branch gets a copy of the group's input and runs its
+    slots one after another over the same span the chain runs, with the same note events, so an
+    instrument in every branch plays every note at its frame. The branches are summed at their
+    volume and equal-power pan, centred at unity like a channel's, then crossfaded linearly with
+    the dry input by `mix` and scaled by `gain`; branch gains, mix and gain move to a new value
+    over 20 ms. A muted branch, or one left out by a solo in its group, still runs its devices
+    and adds nothing, as a muted track does in 9. A group whose branches start with an instrument
+    counts as the chain's instrument and has no dry signal. A graph swap keeps a group's running
+    devices when the identity it compares, its branches' device ids in order, is the same, and
+    takes the new branch gains and parameter values, so an edit to one value never restarts a
+    sound. A switched-off group is not in the chain, like a switched-off device. Latency is
+    compensated inside the group as across tracks in 10: a branch's latency is the sum of its
+    devices', the group's the largest of its branches' (cut at 2 s), every branch is delayed by
+    what it lacks of that and the dry signal by all of it, with delay lines made with the graph,
+    and the group reports its latency to its chain like any device.
+14. **Built-in MIDI effects change the events before the instrument** (added 2026-10-18, with
+    the first one, [the pitch effect](../spec/pitch.md)). `DeviceInfo::role` has a third value,
+    `MidiEffect`. The host never asks such a device to process a buffer; it calls
+    `Device::process_events` with the events of a span (at frames from the span's start) and an
+    output, and the device writes what it sends on, in frame order. Nothing on the audio thread
+    allocates, so the room is fixed: a chain holds at most 512 events a block for its MIDI
+    effects (it runs its devices up to the frame it has reached whenever 256 notes wait), and
+    each span gets the room left of those, at least as many events as it hands over, twice as
+    many while the block has space. A device with more to send than fits leaves out note-ons
+    first: it keeps room for the note-offs and all-notes-off still to come, and a note-on it
+    leaves out is not counted as sounding, so its note-off goes too. A key played again with no
+    room to end its note keeps the old note until that key's note-off. So no note a MIDI effect
+    started is left sounding, however crowded the block; the contract tests run with room for
+    no more events than the device gets.
+    The chain splits the span where one of the device's parameters follows a lane, a change
+    coming before the events at its frame, as for instruments; what one MIDI effect sends is what
+    the next device gets, so they run in order before the instrument. Notes are paired by key:
+    a MIDI effect that changes a note-on's key remembers it, so the note-off ends the same key
+    whatever its settings are by then. A clip's scale reaches the devices as an event,
+    `NoteEvent::Scale(Option<MusicalScale>)`, which the chain sends before the first note of a
+    clip whose scale differs from the last one sent; instruments and plug-ins ignore it.
+    `MusicalScale` is the root and the set of pitch classes, with the steps along it a
+    scale-aware device needs. Three units come with it: semitones, scale degrees and a MIDI key.
+    The contract tests add, for MIDI effects, the same events in spans of every size at every
+    parameter's ends, `reset` while notes are held, hostile events, too little room to write, and
+    that no key still sounds after every key played is released, after all-notes-off too.
+    `device.add` places a MIDI effect among the MIDI effects that lead the chain, only on a MIDI
+    track; an instrument goes right after them (built-in, `.sd` or plug-in). A chain whose MIDI
+    effects have no instrument after them plays the notes they change as the sine tones a MIDI
+    track without an instrument plays (an instrument of the engine's own, after the MIDI
+    effects and before the audio effects), so adding a MIDI effect never silences a track and
+    never passes its notes by; notes from a MIDI input reach those tones too. MIDI effects run in
+    the same chain code offline and in real time (golden rule 4): `render_offline`, the player
+    and the launcher all start notes through it, so the offline renders in
+    `crates/engine/src/midi_effect_tests.rs` are the oracle for playback as well.
+
 ## Not decided yet
 
 - **A chain on the master channel:** how it runs after every other chain, and how latency
@@ -184,6 +238,9 @@ decision 9.
   [ADR 0014](0014-stock-presets.md), their loader is not built yet).
 - Parameter ids and device ids are stored in projects: renaming one is a breaking change, like a
   command id (ADR 0002).
+- The native sampler reuses the SDK's sample runtime and theme-aware UI widgets.
+  `Device::load_sample` installs immutable decoded audio off the callback; graph
+  replacement owns its disposal. This is a native instrument, not an `.sd` node.
 - An instrument that works in fixed internal blocks (the FM synth renders 64 frames at a time)
   applies an event at its next internal block boundary on a grid counted from `reset`, which
   keeps the output independent of the host's block sizes at the cost of up to one internal

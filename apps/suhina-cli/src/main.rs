@@ -134,11 +134,11 @@ fn main() -> ExitCode {
             let result = parse_args(args.get(1..).unwrap_or_default(), command).and_then(|a| match command {
                 Command::Render => render(&a),
                 Command::Play => {
-                    let (project, audio) = load_project(&a)?;
+                    let (project, audio, assets) = load_project(&a)?;
                     if a.launcher {
-                        play::launcher(project, &audio, &a.audio_output)
+                        play::launcher(project, &audio, &assets, &a.audio_output)
                     } else {
-                        play::play(&project, &audio, &a.audio_output)
+                        play::play(&project, &audio, &assets, &a.audio_output)
                     }
                 }
             });
@@ -333,9 +333,9 @@ fn parse_args(args: &[String], command: Command) -> Result<Args, String> {
 
 /// Opens the project named by the arguments and the audio files it uses, printing warnings, and
 /// applies `--scene`.
-fn load_project(args: &Args) -> Result<(Project, AudioPool), String> {
-    let (project, audio) = match &args.source {
-        Source::Demo => (demo_project(), AudioPool::new()),
+fn load_project(args: &Args) -> Result<(Project, AudioPool, suhina_engine::DeviceAssets), String> {
+    let (project, audio, assets) = match &args.source {
+        Source::Demo => (demo_project(), AudioPool::new(), suhina_engine::DeviceAssets::new()),
         Source::Als(path) => {
             // A Suhina project (.suhina) or a Live Set to import.
             let (session, warnings) = suhina_session::Session::open(path).map_err(|e| e.0)?;
@@ -348,7 +348,7 @@ fn load_project(args: &Args) -> Result<(Project, AudioPool), String> {
             if !audio.files.is_empty() {
                 eprintln!("audio: {} files decoded in {:.1} s", audio.files.len(), started.elapsed().as_secs_f64());
             }
-            (session.project().clone(), audio)
+            (session.project().clone(), audio, session.device_assets().clone())
         }
     };
     let mut project = match args.scene {
@@ -360,7 +360,7 @@ fn load_project(args: &Args) -> Result<(Project, AudioPool), String> {
         eprintln!("FM synth: {}", if patch.name().is_empty() { "(no name)".to_string() } else { patch.name() });
         put_fm_synth_on_note_tracks(&mut project, &patch);
     }
-    Ok((project, audio))
+    Ok((project, audio, assets))
 }
 
 /// The voice `--fm` asks for: from a DX7 voice or bank file, or the initial voice.
@@ -389,10 +389,10 @@ fn read_voices(path: &std::path::Path) -> Result<suhina_device_fm_synth::patch::
     Ok(voices)
 }
 
-/// Puts the FM synth with `patch` first on the channel of every track that plays notes, in
-/// place of an instrument already there.
+/// Puts the FM synth with `patch` on the channel of every track that plays notes, first after
+/// its MIDI effects, in place of an instrument already there.
 fn put_fm_synth_on_note_tracks(project: &mut Project, patch: &suhina_device_fm_synth::Patch) {
-    use suhina_device_api::Device as _;
+    use suhina_device_api::{Device as _, Role};
     let mut synth = suhina_device_fm_synth::FmSynth::new();
     synth.load_patch(patch);
     let params: Vec<DeviceParam> = suhina_device_fm_synth::INFO
@@ -412,15 +412,18 @@ fn put_fm_synth_on_note_tracks(project: &mut Project, patch: &suhina_device_fm_s
     };
     let channels: Vec<ChannelId> =
         project.tracks.iter().filter(|t| t.content.notes).filter_map(|t| t.channel).collect();
+    let role = |d: &Device| match &d.kind {
+        DeviceKind::Builtin(id) => suhina_device_registry::info(id).map(|info| info.role),
+        _ => None,
+    };
     for channel in project.channels.iter_mut().filter(|c| channels.contains(&c.id)) {
-        let first_is_instrument = channel.devices.first().is_some_and(|d| {
-            matches!(&d.kind, DeviceKind::Builtin(id) if suhina_device_registry::info(id)
-                .is_some_and(|i| i.role == suhina_device_api::Role::Instrument))
-        });
-        if first_is_instrument {
-            channel.devices.remove(0);
+        // The synth goes after the MIDI effects that lead the chain, in place of a built-in
+        // instrument there.
+        let at = channel.devices.iter().take_while(|d| role(d) == Some(Role::MidiEffect)).count();
+        if channel.devices.get(at).is_some_and(|d| role(d) == Some(Role::Instrument)) {
+            channel.devices.remove(at);
         }
-        channel.devices.insert(0, device.clone());
+        channel.devices.insert(at, device.clone());
     }
 }
 
@@ -438,10 +441,10 @@ fn fm_synth(args: &[String]) -> Result<(), String> {
 
 fn render(args: &Args) -> Result<(), String> {
     let path = args.output.as_ref().ok_or("missing --output")?;
-    let (project, audio) = load_project(args)?;
+    let (project, audio, assets) = load_project(args)?;
     let mut library = suhina_plugins::library::Library::default();
     let env = suhina_session::PluginEnv::from_library(&mut library);
-    let summary = render_wavs(&project, &audio, path, args.cue.as_deref(), args.sample_rate, Some(&env))?;
+    let summary = render_wavs(&project, &audio, &assets, path, args.cue.as_deref(), args.sample_rate, Some(&env))?;
     for notice in &summary.plugins {
         eprintln!("plug-ins: {notice}");
     }
@@ -565,6 +568,7 @@ fn plugin(args: &[String]) -> Result<(), String> {
         sample_rate: f64::from(audio.sample_rate),
         timeout: std::time::Duration::from_secs(30),
         group: None,
+        ara: None,
     };
     // An instrument's notes: its track's arrangement, from the bar asked for or the first clip.
     let events = match &device_source {
@@ -767,6 +771,7 @@ fn edit_plugin<'a>(
         sample_rate: 48_000.0,
         timeout: std::time::Duration::from_secs(30),
         group: None,
+        ara: None,
     };
     let (mut plugin, _audio) = suhina_plugins::Plugin::start(launch).map_err(|e| e.to_string())?;
     if let Some(state) = state
@@ -813,6 +818,7 @@ fn print_params(
         sample_rate: 48_000.0,
         timeout: std::time::Duration::from_secs(30),
         group: None,
+        ara: None,
     };
     let (mut plugin, _audio) = suhina_plugins::Plugin::start(launch).map_err(|e| e.to_string())?;
     if let Some(state) = state
@@ -939,6 +945,7 @@ fn demo_project() -> Project {
         fade_out_curve: Default::default(),
         follow_action: Default::default(),
         launch: Default::default(),
+        color: None,
         extensions: Extensions::default(),
     };
 
@@ -1070,5 +1077,12 @@ mod tests {
         let peak = samples.iter().fold(0.0f32, |m, s| m.max(s.abs()));
         assert!(peak > 0.05 && peak <= 1.0, "peak {peak}");
         let _ = std::fs::remove_file(path);
+
+        // A MIDI effect leading a chain stays before the synth.
+        let pitch = Device::new("Pitch", DeviceKind::Builtin("pitch".into()));
+        project.channels[0].devices.insert(0, pitch);
+        put_fm_synth_on_note_tracks(&mut project, &loaded);
+        let ids: Vec<&DeviceKind> = project.channels[0].devices.iter().map(|d| &d.kind).collect();
+        assert_eq!(ids, [&DeviceKind::Builtin("pitch".into()), &DeviceKind::Builtin("fm-synth".into())]);
     }
 }

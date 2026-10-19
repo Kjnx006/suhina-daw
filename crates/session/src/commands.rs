@@ -12,8 +12,8 @@ use suhina_model::{
 };
 
 use crate::{
-    CommandError, Session, automation, devices, editing, files, follow, launch, mapping, meters, note_tools, notes,
-    preview, tempo,
+    CommandError, Session, automation, device_groups, devices, editing, files, follow, launch, mapping, meters,
+    note_tools, notes, preview, tempo,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,6 +61,7 @@ impl ParamType {
             Self::Numbers => "numbers",
             Self::Clips => "clips",
             Self::Clip => "clip",
+            Self::DevicePath => "device path",
         }
     }
 }
@@ -109,6 +110,9 @@ pub enum ParamType {
     /// A clip id (integer, from `project.clips` or `project.launcher`) or a clip name (string) that
     /// only one clip has.
     Clip,
+    /// A device on a track: its index (an integer), or a path through device groups as text,
+    /// `"2/1/0"` (docs/spec/device-groups.md).
+    DevicePath,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -136,7 +140,26 @@ const CONTINUE: Param = optional(
      when no other edit came between (one drag, one step)",
 );
 const TRACKS: Param = param("tracks", ParamType::Tracks, "the tracks to act on (ids or names), at least one");
-const DEVICE: Param = param("device", ParamType::Integer, "device index on the track, from 0, as in track.devices");
+const RANGE_START: Param =
+    param("start", ParamType::Number, "where the time selection starts, in beats from the beginning, at least 0");
+const RANGE_END: Param = param("end", ParamType::Number, "where the time selection ends, in beats, after start");
+const DEVICE: Param = param(
+    "device",
+    ParamType::DevicePath,
+    "device index on the track, from 0, or a path through device groups such as \"2/1/0\" (device 2, its branch 1, device 0 there), as in track.devices",
+);
+const GROUP: Param = param("device", ParamType::DevicePath, "a device group: its index or path, as in track.devices");
+const BRANCH: Param = param("branch", ParamType::Integer, "branch index in the group, from 0, as in track.devices");
+const POSITION: Param = optional(
+    "position",
+    ParamType::DevicePath,
+    "where in the chain, from 0, or inside a group as a path such as \"2/1/3\" (branch 1 of the group at 2, before its device 3); the end when left out",
+);
+const DEVICES: Param = param(
+    "devices",
+    ParamType::Integers,
+    "device indices on the track, from 0, or paths through groups such as \"2/1/0\", as in track.devices; at least one",
+);
 const RETURN: Param = param("return", ParamType::Track, "return track id or name, from project.tracks");
 const SCENE: Param = param("scene", ParamType::Integer, "scene number, from 1, as in project.launcher");
 /// A clip command's clip by its id (ADR 0025): it stays the same when other clips move.
@@ -268,7 +291,7 @@ impl<T> CommandSpec<T> {
                 ParamType::Number => json!("number"),
                 ParamType::Integer => json!("integer"),
                 ParamType::Bool => json!("boolean"),
-                ParamType::Track | ParamType::Clip => json!(["integer", "string"]),
+                ParamType::Track | ParamType::Clip | ParamType::DevicePath => json!(["integer", "string"]),
                 ParamType::Decibels => json!(["number", "string"]),
                 ParamType::Text => json!("string"),
             };
@@ -460,6 +483,21 @@ static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: set_volume,
+    },
+    CommandSpec {
+        id: "main.setVolume",
+        label: "Set the main output's volume, which every track, group and return plays through",
+        params: &[
+            param("db", ParamType::Decibels, "level in dB, at most +6; \"-inf\" or below -150 is silence"),
+            optional(
+                "continue",
+                ParamType::Bool,
+                "true adds the change to the undo step of the previous call of this command, when no other \
+                 edit came between (one drag, one step)",
+            ),
+        ],
+        kind: CommandKind::Edit,
+        run: set_main_volume,
     },
     CommandSpec {
         id: "track.adjustVolume",
@@ -692,6 +730,132 @@ static COMMANDS: &[CommandSpec] = &[
         run: set_clip_enabled,
     },
     CommandSpec {
+        id: "clip.setColor",
+        label: "Give a clip a colour of its own (by index), or every clip of a track one when no index is given; \"none\" makes them show the track's colour again",
+        params: &[
+            CLIP_TRACK,
+            param("color", ParamType::Text, "\"#rrggbb\", or \"none\" for the track's colour"),
+            CLIP,
+            optional(
+                "index",
+                ParamType::Integer,
+                "clip index on the track, from project.clips (deprecated, use clip); every clip of the track when neither is given",
+            ),
+        ],
+        kind: CommandKind::Edit,
+        run: crate::clip_color::set_clip_color,
+    },
+    CommandSpec {
+        id: "track.renameClips",
+        label: "Name every clip of a track, in the arrangement and in its slots, after the track",
+        params: &[TRACK],
+        kind: CommandKind::Edit,
+        run: crate::clip_color::rename_clips,
+    },
+    CommandSpec {
+        id: "clip.trim",
+        label: "Move an arrangement clip's edges (song beats), the content moving with the left one; an unlooped clip ends at most where its audio does, a looping one repeats as far as it goes, and loop turns the loop on first",
+        params: &[
+            CLIP,
+            CLIP_TRACK,
+            CLIP_INDEX,
+            optional("start", ParamType::Number, "where the clip's left edge goes, in beats from the beginning"),
+            optional("end", ParamType::Number, "where the clip's right edge goes, in beats from the beginning"),
+            optional(
+                "loop",
+                ParamType::Bool,
+                "true turns the clip's loop on (over what it plays now) before the edges move",
+            ),
+            optional("stack", ParamType::Bool, "true leaves clips under it as they are; false (default) replaces them"),
+        ],
+        kind: CommandKind::Edit,
+        run: crate::clip_edges::trim_clip,
+    },
+    CommandSpec {
+        id: "clip.stretch",
+        label: "Move an audio clip's edges with its audio time-stretched to fill the new length, its pitch kept",
+        params: &[
+            CLIP,
+            CLIP_TRACK,
+            CLIP_INDEX,
+            optional("start", ParamType::Number, "where the clip's left edge goes, in beats from the beginning"),
+            optional("end", ParamType::Number, "where the clip's right edge goes, in beats from the beginning"),
+            optional("stack", ParamType::Bool, "true leaves clips under it as they are; false (default) replaces them"),
+        ],
+        kind: CommandKind::Edit,
+        run: crate::clip_edges::stretch_clip,
+    },
+    CommandSpec {
+        id: "range.split",
+        label: "Split the clips of some tracks at both edges of a time selection, so the span is clips of its own; answers with the clips inside it",
+        params: &[TRACKS, RANGE_START, RANGE_END],
+        kind: CommandKind::Edit,
+        run: crate::range::split_range,
+    },
+    CommandSpec {
+        id: "range.delete",
+        label: "Delete what plays inside a time selection on some tracks: clips crossing an edge keep their parts outside it, and the gap stays",
+        params: &[TRACKS, RANGE_START, RANGE_END],
+        kind: CommandKind::Edit,
+        run: crate::range::delete_range,
+    },
+    CommandSpec {
+        id: "range.copy",
+        label: "Copy what plays inside a time selection on some tracks, cut to it, for clip.paste; a paste with no track puts each part back on its own track",
+        params: &[TRACKS, RANGE_START, RANGE_END],
+        kind: CommandKind::Read,
+        run: crate::range::copy_range,
+    },
+    CommandSpec {
+        id: "range.cut",
+        label: "Copy what plays inside a time selection for clip.paste and delete it, as one undo step",
+        params: &[TRACKS, RANGE_START, RANGE_END],
+        kind: CommandKind::Edit,
+        run: crate::range::cut_range,
+    },
+    CommandSpec {
+        id: "range.duplicate",
+        label: "Put a copy of what plays inside a time selection right after it, on the same tracks",
+        params: &[
+            TRACKS,
+            RANGE_START,
+            RANGE_END,
+            optional(
+                "stack",
+                ParamType::Bool,
+                "true leaves clips under the copy as they are; false (default) replaces them",
+            ),
+        ],
+        kind: CommandKind::Edit,
+        run: crate::range::duplicate_range,
+    },
+    CommandSpec {
+        id: "clip.moveMany",
+        label: "Move several arrangement clips by the same number of beats at once, so none replaces another on the way; to_track takes clips of one track to another",
+        params: &[
+            param("clips", ParamType::Clips, "the clips to move, each {track, index} from project.clips"),
+            param("beats", ParamType::Number, "how far to move them, in beats; negative is earlier"),
+            optional("to_track", ParamType::Track, "track to move them to, when they are all on one track"),
+            optional(
+                "color",
+                ParamType::Text,
+                "\"#rrggbb\": the colour they show now, kept on the other track by those with none of their own",
+            ),
+            optional(
+                "copy",
+                ParamType::Bool,
+                "true leaves the clips where they are and puts copies (each with a content of its own) where they would have gone",
+            ),
+            optional(
+                "stack",
+                ParamType::Bool,
+                "true leaves clips under them as they are; false (default) replaces them",
+            ),
+        ],
+        kind: CommandKind::Edit,
+        run: crate::range::move_clips,
+    },
+    CommandSpec {
         id: "clip.split",
         label: "Cut an arrangement clip in two at a song position; the second part plays on from where the clip was",
         params: &[
@@ -764,6 +928,11 @@ static COMMANDS: &[CommandSpec] = &[
                 "stack",
                 ParamType::Bool,
                 "true leaves clips under it as they are (they all play); false (default) shortens, splits or removes them",
+            ),
+            optional(
+                "color",
+                ParamType::Text,
+                "\"#rrggbb\": the colour the clip shows now, which it keeps on another track when it has none of its own",
             ),
         ],
         kind: CommandKind::Edit,
@@ -902,6 +1071,11 @@ static COMMANDS: &[CommandSpec] = &[
                 "db",
                 ParamType::Decibels,
                 "click level in dB, at most +6; keeps the current level (-6 at first) if left out",
+            ),
+            optional(
+                "sound",
+                ParamType::Text,
+                "the click's sound: beep (the first), wood or soft; keeps it if left out",
             ),
         ],
         kind: CommandKind::Transport,
@@ -1253,7 +1427,7 @@ static COMMANDS: &[CommandSpec] = &[
     },
     CommandSpec {
         id: "devices.list",
-        label: "List the built-in effects and instruments (id, name, effect or instrument) with their parameters (id, range, default, unit, options)",
+        label: "List the built-in effects, instruments and MIDI effects (id, name, role) with their parameters (id, range, default, unit, options)",
         params: &[],
         kind: CommandKind::Read,
         run: devices::list,
@@ -1267,25 +1441,25 @@ static COMMANDS: &[CommandSpec] = &[
     },
     CommandSpec {
         id: "track.devices",
-        label: "List the devices on a track in order, with the parameter values of every built-in effect and instrument",
+        label: "List the devices on a track in order, with each built-in and .sd device's role and parameter values",
         params: &[TRACK],
         kind: CommandKind::Read,
         run: devices::track_devices,
     },
     CommandSpec {
         id: "device.add",
-        label: "Add a built-in effect or instrument to a track; an instrument goes first and plays the track's notes, an effect goes last unless a position is given",
+        label: "Add a built-in effect, instrument or MIDI effect to a track; MIDI effects go first and change the notes, the instrument right after them plays the notes, an effect goes last unless a position is given",
         params: &[
             TRACK,
             optional(
                 "id",
                 ParamType::Text,
-                "id of a built-in effect or instrument, from devices.list (not needed with a preset)",
+                "id of a built-in effect, instrument or MIDI effect, from devices.list (not needed with a preset)",
             ),
             optional(
                 "position",
-                ParamType::Integer,
-                "where in the chain, from 0 (default: last; an instrument is always first)",
+                ParamType::DevicePath,
+                "where in the chain, from 0 (default: last; an instrument always goes right after the MIDI effects, a MIDI effect among them), or inside a group as a path such as \"2/1/3\"",
             ),
             optional("preset", ParamType::Text, "a preset file to load: DX7 voice data (.syx) for the FM synth"),
             optional("voice", ParamType::Integer, "which voice of a preset bank, from 1 (default 1)"),
@@ -1299,7 +1473,11 @@ static COMMANDS: &[CommandSpec] = &[
         params: &[
             TRACK,
             param("path", ParamType::Text, "path to a validated .sd AudioEffect graph"),
-            optional("position", ParamType::Integer, "where in the chain, from 0 (default: last)"),
+            optional(
+                "position",
+                ParamType::DevicePath,
+                "where in the chain, from 0 (default: last; an instrument always goes right after the MIDI effects, a MIDI effect among them, an effect after both), or inside a group as a path such as \"2/1/3\"",
+            ),
         ],
         kind: CommandKind::Edit,
         run: devices::add_sd,
@@ -1321,7 +1499,7 @@ static COMMANDS: &[CommandSpec] = &[
     },
     CommandSpec {
         id: "track.add",
-        label: "Add an audio or MIDI track with its mixer channel, clip slots and arrangement lane, optionally with a device (an instrument makes a MIDI track, an effect an audio track)",
+        label: "Add an audio or MIDI track with its mixer channel, clip slots and arrangement lane, optionally with a device (an instrument or MIDI effect makes a MIDI track, an effect an audio track)",
         params: &[
             optional("kind", ParamType::Text, "audio or midi (default: from the device)"),
             optional("name", ParamType::Text, "the track's name (default: the device's, or Audio n / MIDI n)"),
@@ -1392,7 +1570,7 @@ static COMMANDS: &[CommandSpec] = &[
     },
     CommandSpec {
         id: "clip.create",
-        label: "Make an empty MIDI clip on a track that plays notes: in an empty clip slot, or at a beat in the arrangement, replacing what it covers unless stacked",
+        label: "Make an empty clip on a track that holds clips: MIDI on a notes track, audio with no file yet on an audio track; in an empty clip slot, or at a beat in the arrangement, replacing what it covers unless stacked",
         params: &[
             TRACK,
             optional("scene", ParamType::Integer, "scene number, from 1, of an empty clip slot"),
@@ -1456,11 +1634,190 @@ static COMMANDS: &[CommandSpec] = &[
         run: devices::remove,
     },
     CommandSpec {
+        id: "device.removeMany",
+        label: "Remove several devices from a track as one undo step",
+        params: &[TRACK, DEVICES],
+        kind: CommandKind::Edit,
+        run: devices::remove_many,
+    },
+    CommandSpec {
+        id: "device.copy",
+        label: "Copy devices of a track, with their parameters, automation and a running plug-in's state as it is now, for device.paste",
+        params: &[TRACK, DEVICES],
+        kind: CommandKind::Read,
+        run: devices::copy,
+    },
+    CommandSpec {
+        id: "device.paste",
+        label: "Put the copied devices into a track's chain, in the order they were copied, as one undo step",
+        params: &[TRACK, POSITION],
+        kind: CommandKind::Edit,
+        run: devices::paste,
+    },
+    CommandSpec {
+        id: "device.group",
+        label: "Put consecutive devices of a track (or of a group's branch) into a new device group of one branch, in the place of the first; the sound does not change",
+        params: &[
+            TRACK,
+            DEVICE,
+            optional("count", ParamType::Integer, "how many consecutive devices from that one, at least 1 (default 1)"),
+            optional("name", ParamType::Text, "the group's name (default: the device's, or Group)"),
+        ],
+        kind: CommandKind::Edit,
+        run: device_groups::group,
+    },
+    CommandSpec {
+        id: "device.ungroup",
+        label: "Put the devices of a device group of one branch in its place",
+        params: &[TRACK, GROUP],
+        kind: CommandKind::Edit,
+        run: device_groups::ungroup,
+    },
+    CommandSpec {
+        id: "device.addGroup",
+        label: "Add an empty device group (one empty branch, a clean passthrough) to a track or inside a group",
+        params: &[TRACK, POSITION, optional("name", ParamType::Text, "the group's name (default Group)")],
+        kind: CommandKind::Edit,
+        run: device_groups::add_group,
+    },
+    CommandSpec {
+        id: "device.move",
+        label: "Move a device along a track's chain, between a group's branches, or into or out of a group",
+        params: &[
+            TRACK,
+            DEVICE,
+            param(
+                "to",
+                ParamType::DevicePath,
+                "the position to move it before: an index on the track, or a path such as \"2/1/0\" into a group's branch",
+            ),
+        ],
+        kind: CommandKind::Edit,
+        run: device_groups::move_device,
+    },
+    CommandSpec {
+        id: "device.duplicate",
+        label: "Copy a device (a group with everything in it) next to itself; a plug-in's copy starts with its state as it is now",
+        params: &[TRACK, DEVICE],
+        kind: CommandKind::Edit,
+        run: device_groups::duplicate,
+    },
+    CommandSpec {
+        id: "branch.add",
+        label: "Add an empty branch to a device group",
+        params: &[
+            TRACK,
+            GROUP,
+            optional("position", ParamType::Integer, "where among the branches, from 0 (default: last)"),
+            optional("name", ParamType::Text, "the branch's name (default Branch N)"),
+        ],
+        kind: CommandKind::Edit,
+        run: device_groups::branch_add,
+    },
+    CommandSpec {
+        id: "branch.remove",
+        label: "Remove a branch of a device group with its devices; the last branch stays",
+        params: &[TRACK, GROUP, BRANCH],
+        kind: CommandKind::Edit,
+        run: device_groups::branch_remove,
+    },
+    CommandSpec {
+        id: "branch.duplicate",
+        label: "Copy a branch of a device group next to itself",
+        params: &[TRACK, GROUP, BRANCH],
+        kind: CommandKind::Edit,
+        run: device_groups::branch_duplicate,
+    },
+    CommandSpec {
+        id: "branch.rename",
+        label: "Rename a branch of a device group",
+        params: &[TRACK, GROUP, BRANCH, param("name", ParamType::Text, "the new name")],
+        kind: CommandKind::Edit,
+        run: device_groups::branch_rename,
+    },
+    CommandSpec {
+        id: "branch.setVolume",
+        label: "Set a branch's volume in a device group, as track.setVolume",
+        params: &[
+            TRACK,
+            GROUP,
+            BRANCH,
+            param("db", ParamType::Decibels, "level in dB, at most +6; \"-inf\" or below -150 is silence"),
+        ],
+        kind: CommandKind::Edit,
+        run: device_groups::branch_set_volume,
+    },
+    CommandSpec {
+        id: "branch.setPan",
+        label: "Set a branch's pan in a device group, as track.setPan",
+        params: &[TRACK, GROUP, BRANCH, param("pan", ParamType::Number, "-1 hard left, 0 centre, 1 hard right")],
+        kind: CommandKind::Edit,
+        run: device_groups::branch_set_pan,
+    },
+    CommandSpec {
+        id: "branch.setMute",
+        label: "Mute or unmute a branch of a device group; its devices keep running",
+        params: &[TRACK, GROUP, BRANCH, param("mute", ParamType::Bool, "true mutes the branch")],
+        kind: CommandKind::Edit,
+        run: device_groups::branch_set_mute,
+    },
+    CommandSpec {
+        id: "branch.setSolo",
+        label: "Solo a branch within its device group: while any branch is soloed only soloed branches sound",
+        params: &[TRACK, GROUP, BRANCH, param("solo", ParamType::Bool, "true solos the branch")],
+        kind: CommandKind::Edit,
+        run: device_groups::branch_set_solo,
+    },
+    CommandSpec {
         id: "device.setEnabled",
         label: "Switch a device on or off; a device that is off passes the sound through",
         params: &[TRACK, DEVICE, param("enabled", ParamType::Bool, "false switches the device off")],
         kind: CommandKind::Edit,
         run: devices::set_enabled,
+    },
+    CommandSpec {
+        id: "device.setNamFile",
+        label: "Load a .nam model into a NAM Amp Modeler, or a .wav impulse response into a NAM Cab Loader (docs/spec/nam-amp-and-cab.md)",
+        params: &[
+            TRACK,
+            DEVICE,
+            param("path", ParamType::Text, "path to a .nam model file, or a .wav impulse response for the Cab Loader"),
+        ],
+        kind: CommandKind::Edit,
+        run: devices::set_file,
+    },
+    CommandSpec {
+        id: "device.file",
+        label: "The file a NAM Amp Modeler or NAM Cab Loader runs: its absolute path (empty when none is set) and the model's or cab's name",
+        params: &[TRACK, DEVICE],
+        kind: CommandKind::Read,
+        run: devices::device_file,
+    },
+    CommandSpec {
+        id: "device.loadSample",
+        label: "Load an audio file into a Sampler instrument",
+        params: &[TRACK, DEVICE, param("path", ParamType::Text, "sample audio file")],
+        kind: CommandKind::Edit,
+        run: devices::load_sample,
+    },
+    CommandSpec {
+        id: "device.setSampleSlices",
+        label: "Replace a Sampler's manual slice boundaries",
+        params: &[
+            TRACK,
+            DEVICE,
+            param("points", ParamType::Numbers, "normalized source positions strictly between 0 and 1"),
+            optional("continue", ParamType::Bool, "continue the preceding slice drag undo step"),
+        ],
+        kind: CommandKind::Edit,
+        run: devices::set_sample_slices,
+    },
+    CommandSpec {
+        id: "device.recordSample",
+        label: "Record the armed track's selected audio input into its Sampler; stop commits the source as one undo step",
+        params: &[TRACK, DEVICE, param("on", ParamType::Bool, "start or stop sample recording")],
+        kind: CommandKind::Transport,
+        run: crate::recording::record_sample,
     },
     CommandSpec {
         id: "device.setParam",
@@ -1634,14 +1991,14 @@ static COMMANDS: &[CommandSpec] = &[
     },
     CommandSpec {
         id: "device.addPlugin",
-        label: "Add an installed plug-in to a track; an instrument goes first and plays the track's notes, an effect goes last unless a position is given. It starts while the project plays",
+        label: "Add an installed plug-in to a track; an instrument goes right after the MIDI effects and plays the track's notes, an effect goes last unless a position is given. It starts while the project plays",
         params: &[
             TRACK,
             param("plugin", ParamType::Text, "plug-in name, id or file, from plugins.list"),
             optional(
                 "position",
-                ParamType::Integer,
-                "where in the chain, from 0 (default: last; an instrument is always first)",
+                ParamType::DevicePath,
+                "where in the chain, from 0 (default: last; an instrument always goes right after the MIDI effects), or inside a group as a path such as \"2/1/3\"",
             ),
         ],
         kind: CommandKind::Edit,
@@ -1752,6 +2109,12 @@ static COMMANDS: &[CommandSpec] = &[
             NOTES,
             optional("beats", ParamType::Number, "beats to move by, later when positive"),
             optional("semitones", ParamType::Integer, "semitones to move by, higher when positive"),
+            optional(
+                "replace",
+                ParamType::Bool,
+                "true removes a note the moved ones land on: the same key and the same start (default false: \
+                 both play)",
+            ),
         ],
         kind: CommandKind::Edit,
         run: notes::move_notes,
@@ -2279,6 +2642,18 @@ fn set_volume(session: &mut Session, params: &Value) -> Result<Value, CommandErr
     Ok(with_override(json!({ "tracks": track_ids(&channels), "volume_db": vec![to_db(gain); channels.len()] }), off))
 }
 
+fn set_main_volume(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let db = number_or_neg_infinity(params, "db")?;
+    if db > MAX_VOLUME_DB {
+        return Err(format!("db must be at most +{MAX_VOLUME_DB}, got {db}").into());
+    }
+    let Some(main) = session.project.channels.iter_mut().find(|c| c.role == ChannelRole::Master) else {
+        return Err("the project has no main channel".into());
+    };
+    main.volume = gain_of_db(db);
+    Ok(json!({ "volume_db": to_db(main.volume) }))
+}
+
 fn adjust_volume(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let db = number(params, "db")?;
     let channels = channel_ids(&session.project, params)?;
@@ -2352,11 +2727,11 @@ pub(crate) fn with_override(mut answer: Value, off: bool) -> Value {
 
 /// The loudest a track's volume can be, in dB, and the floor `track.adjustVolume` stops at
 /// (silence starts below it).
-const MAX_VOLUME_DB: f64 = 6.0;
+pub(crate) const MAX_VOLUME_DB: f64 = 6.0;
 const MIN_VOLUME_DB: f64 = -150.0;
 
 /// A volume in dB as a linear gain: silence at or below [`MIN_VOLUME_DB`].
-fn gain_of_db(db: f64) -> f64 {
+pub(crate) fn gain_of_db(db: f64) -> f64 {
     if db < MIN_VOLUME_DB { 0.0 } else { 10f64.powf(db / 20.0) }
 }
 
@@ -2640,7 +3015,7 @@ fn delete_track(session: &mut Session, params: &Value) -> Result<Value, CommandE
 
 /// The clips `params.clips` names, each `{ "track": …, "index": n }` as `project.clips` lists
 /// them: at least one, without duplicates, every one of them there.
-fn clip_list(p: &Project, params: &Value) -> Result<Vec<(TrackId, usize)>, CommandError> {
+pub(crate) fn clip_list(p: &Project, params: &Value) -> Result<Vec<(TrackId, usize)>, CommandError> {
     let list = params.get("clips").and_then(Value::as_array).ok_or("clips must be a list of {track, index}")?;
     let mut out: Vec<(TrackId, usize)> = Vec::new();
     for entry in list {
@@ -2846,6 +3221,7 @@ fn set_clip_fades(session: &mut Session, params: &Value) -> Result<Value, Comman
 fn copy_clips(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let p = &session.project;
     let mut copied: Vec<(Clip, ClipContent)> = Vec::new();
+    let mut from: Vec<TrackId> = Vec::new();
     match (params.get("clips"), params.get("scene")) {
         (Some(_), None) => {
             if params.get("track").is_some() {
@@ -2862,6 +3238,7 @@ fn copy_clips(session: &mut Session, params: &Value) -> Result<Value, CommandErr
                     .ok_or("the clip is missing")?;
                 let content = p.content(clip.content).cloned().ok_or("the clip's content is missing")?;
                 copied.push((clip, content));
+                from.push(track);
             }
         }
         (None, Some(_)) => {
@@ -2876,11 +3253,12 @@ fn copy_clips(session: &mut Session, params: &Value) -> Result<Value, CommandErr
     }
     let names: Vec<String> = copied.iter().map(|(_, content)| content.name.clone()).collect();
     session.clipboard = copied;
+    session.clipboard_tracks = from;
     Ok(json!({ "copied": names }))
 }
 
 /// An id no clip content of `p` has yet.
-fn new_content_id(p: &Project) -> Result<suhina_model::ContentId, CommandError> {
+pub(crate) fn new_content_id(p: &Project) -> Result<suhina_model::ContentId, CommandError> {
     let id = p.contents.iter().map(|c| c.id.0).max().unwrap_or(0).checked_add(1).ok_or("too many clips")?;
     Ok(suhina_model::ContentId(id))
 }
@@ -2922,6 +3300,12 @@ fn paste_clip(session: &mut Session, params: &Value) -> Result<Value, CommandErr
         None => false,
         Some(v) => v.as_bool().ok_or("stack must be true or false")?,
     };
+    // No track: each copied clip goes back to the track it came from.
+    if params.get("track").is_none()
+        && let PasteAt::Beat(start) = at
+    {
+        return crate::range::paste_to_sources(session, start, stack);
+    }
     let track = track_id(&session.project, params)?;
     {
         let p = &session.project;
@@ -3333,12 +3717,27 @@ fn set_metronome(session: &mut Session, params: &Value) -> Result<Value, Command
             Some(if db < -150.0 { 0.0 } else { 10f64.powf(db / 20.0) })
         }
     };
+    let sound = match params.get("sound") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(name)) => Some(
+            suhina_engine::ClickSound::from_name(name)
+                .ok_or_else(|| CommandError(format!("sound must be beep, wood or soft, got {name}")))?,
+        ),
+        Some(other) => return Err(format!("sound must be beep, wood or soft, got {other}").into()),
+    };
     send(session, LaunchCommand::SetMetronome { on, gain: gain.map(|g| g as f32) })?;
-    let mut result = json!({ "metronome": on });
-    if let Some(gain) = gain {
-        result["db"] = json!(to_db(gain));
+    if let Some(sound) = sound {
+        send(session, LaunchCommand::SetMetronomeSound(sound))?;
     }
-    Ok(result)
+    session.metronome.0 = on;
+    if let Some(gain) = gain {
+        session.metronome.1 = to_db(gain).unwrap_or(f64::NEG_INFINITY);
+    }
+    if let Some(sound) = sound {
+        session.metronome.2 = sound;
+    }
+    let (_, db, sound) = session.metronome;
+    Ok(json!({ "metronome": on, "db": if db.is_finite() { json!(db) } else { json!("-inf") }, "sound": sound.name() }))
 }
 
 fn move_clip(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
@@ -3355,6 +3754,11 @@ fn move_clip(session: &mut Session, params: &Value) -> Result<Value, CommandErro
     let to = match params.get("to_track") {
         Some(_) => track_at(&session.project, params, "to_track")?,
         None => track,
+    };
+    // The colour the clip shows on its track, kept when it goes to another (`color`).
+    let keep = match params.get("color") {
+        None | Some(Value::Null) => None,
+        Some(_) => crate::clip_color::parse_color(params, "color")?,
     };
     let p = &mut session.project;
     let from_lane =
@@ -3390,6 +3794,9 @@ fn move_clip(session: &mut Session, params: &Value) -> Result<Value, CommandErro
     };
     let mut clip = p.arrangement.lanes.get_mut(from_lane).ok_or("the lane is missing")?.clips.remove(index);
     clip.start = start;
+    if to != track && clip.color.is_none() {
+        clip.color = keep;
+    }
     let lane = p.arrangement.lanes.get_mut(to_lane).ok_or("the lane is missing")?;
     if !stack {
         make_room(&mut lane.clips, start, start + clip.length);
@@ -4148,6 +4555,19 @@ pub(crate) fn channel_param<'a>(session: &'a mut Session, params: &Value) -> Res
     session.project.channels.iter_mut().find(|c| c.id == channel).ok_or_else(|| "the track's channel is missing".into())
 }
 
+/// The read-only form of [`channel_param`], for the `Read` commands that do not edit.
+pub(crate) fn channel_read<'a>(session: &'a Session, params: &Value) -> Result<&'a Channel, CommandError> {
+    let track = track_id(&session.project, params)?;
+    let channel = session
+        .project
+        .tracks
+        .iter()
+        .find(|t| t.id == track)
+        .and_then(|t| t.channel)
+        .ok_or("the track has no mixer channel")?;
+    session.project.channels.iter().find(|c| c.id == channel).ok_or_else(|| "the track's channel is missing".into())
+}
+
 fn channel_of<'a>(p: &'a Project, track: &Track) -> Option<&'a Channel> {
     let id = track.channel?;
     p.channels.iter().find(|c| c.id == id)
@@ -4162,7 +4582,7 @@ pub(crate) fn number(params: &Value, name: &str) -> Result<f64, CommandError> {
 }
 
 /// Like [`number`], but also accepts the string "-inf".
-fn number_or_neg_infinity(params: &Value, name: &str) -> Result<f64, CommandError> {
+pub(crate) fn number_or_neg_infinity(params: &Value, name: &str) -> Result<f64, CommandError> {
     match params.get(name) {
         Some(Value::String(s)) if s == "-inf" => Ok(f64::NEG_INFINITY),
         _ => number(params, name),

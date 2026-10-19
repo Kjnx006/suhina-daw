@@ -8,19 +8,150 @@
 use serde_json::{Value, json};
 use suhina_device_api::{DeviceInfo, ParamKind, Role, Unit};
 use suhina_engine::param_id;
-use suhina_model::{AutomationLane, AutomationPoint, Device, DeviceKind, DeviceParam, Extensions};
+use suhina_model::{AutomationLane, AutomationPoint, Device, DeviceKind, DeviceParam};
 
-use crate::commands::{channel_param, number, track_id, with_override};
+use crate::commands::{channel_param, channel_read, number, track_id, with_override};
+use crate::device_groups::{device_path, path_value};
 use crate::{CommandError, ParamEdit, Session};
+use suhina_model::{MAX_DEVICES, device_at, device_at_mut};
 
-/// Devices one track may hold.
-const MAX_DEVICES: usize = 64;
+fn source_tempo(path: &std::path::Path, audio: &suhina_engine::AudioData, fallback: f64) -> f64 {
+    crate::files::file_tempo(path, audio)
+        .map(|tempo| tempo.bpm)
+        .or_else(|| suhina_media::info::tempo_from_name(&path.to_string_lossy()))
+        .filter(|bpm| bpm.is_finite() && *bpm > 0. && *bpm <= 999.)
+        .unwrap_or(fallback.clamp(1., 999.))
+}
+
+fn initial_sampler_tempo(session: &mut Session, params: &Value, detect: bool) -> Result<Option<f64>, CommandError> {
+    let channel = channel_param(session, params)?;
+    let index = device_index(channel.devices.len(), params)?;
+    let device = channel.devices.get(index).ok_or("device is missing")?;
+    if !matches!(&device.kind, DeviceKind::Builtin(id) if id == "sampler")
+        || (!detect && device.params.iter().any(|p| p.id == "source_bpm" && p.value > 0.))
+    {
+        return Ok(None);
+    }
+    let Some(file) = device.sample_file().map(str::to_owned) else {
+        return Ok(None);
+    };
+    let beats = (!detect).then(|| device.params.iter().find(|p| p.id == "warp_beats").map(|p| p.value)).flatten();
+    let start = device.params.iter().find(|p| p.id == "start").map_or(0., |p| p.value);
+    let end = device.params.iter().find(|p| p.id == "end").map_or(1., |p| p.value);
+    let Some(audio) = session.audio().files.get(&file) else {
+        return Ok(None);
+    };
+    let duration = audio.frames() as f64 / f64::from(audio.sample_rate.max(1));
+    let fallback = session.player().map_or(session.project().transport.tempo_bpm, |p| p.monitor().tempo_bpm());
+    let bpm = beats
+        .filter(|_| duration > 0. && end > start)
+        .map(|beats| (beats * 60. / (duration * (end - start))).clamp(1., 999.))
+        .unwrap_or_else(|| source_tempo(std::path::Path::new(&file), audio, fallback));
+    Ok(Some(bpm))
+}
+
+pub(crate) fn load_sample(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let path = params.get("path").and_then(Value::as_str).ok_or("path must be an audio file")?;
+    let path = crate::files::absolute(std::path::Path::new(path));
+    let channel = channel_param(session, params)?;
+    let index = device_index(channel.devices.len(), params)?;
+    if !channel.devices.get(index).is_some_and(|d| matches!(&d.kind, DeviceKind::Builtin(id) if id == "sampler")) {
+        return Err("loadSample needs a Sampler instrument".into());
+    }
+    let audio = session.decoded_audio(&path)?;
+    if audio.frames() < 2 || !(1..=32).contains(&audio.channels) || !(1000..=384000).contains(&audio.sample_rate) {
+        return Err("sample needs at least two frames, 1..32 channels and a sample rate of 1000..384000 Hz".into());
+    }
+    let file = path.display().to_string();
+    let fallback = session.player().map_or(session.project().transport.tempo_bpm, |p| p.monitor().tempo_bpm());
+    let bpm = source_tempo(&path, &audio, fallback);
+    let beats = (audio.frames() as f64 / f64::from(audio.sample_rate) * bpm / 60.).clamp(0.25, 1024.);
+    let device = channel_param(session, params)?.devices.get_mut(index).ok_or("device is missing")?;
+    device.set_sample_file(&file);
+    for (id, value) in [("warp_beats", beats), ("source_bpm", bpm)] {
+        if let Some(p) = device.params.iter_mut().find(|p| p.id == id) {
+            p.value = value;
+        } else {
+            device.params.push(DeviceParam::new(id, value));
+        }
+    }
+    Ok(json!({"device": index, "path": file, "frames": audio.frames(), "source_bpm": bpm}))
+}
+
+pub(crate) fn set_sample_slices(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let values =
+        params.get("points").and_then(Value::as_array).ok_or("points must be a list of normalized positions")?;
+    if values.len() > suhina_model::MAX_SAMPLE_SLICES {
+        return Err("slice map exceeds the input memory budget".into());
+    }
+    let mut points = Vec::with_capacity(values.len());
+    for value in values {
+        let point = value
+            .as_f64()
+            .filter(|v| v.is_finite() && *v > 0. && *v < 1.)
+            .ok_or("slice positions must be finite and strictly between 0 and 1")?;
+        points.push(point);
+    }
+    points.sort_unstable_by(f64::total_cmp);
+    points.dedup();
+    let channel = channel_param(session, params)?;
+    let index = device_index(channel.devices.len(), params)?;
+    let device = channel.devices.get_mut(index).ok_or("device is missing")?;
+    if !matches!(&device.kind, DeviceKind::Builtin(id) if id == "sampler") {
+        return Err("slice editing needs a Sampler instrument".into());
+    }
+    device.set_sample_slices(&points)?;
+    Ok(json!({"points":points}))
+}
 
 fn sd_role(device: &Device) -> Option<suhina_device_sdk::DeviceRole> {
     (device.kind == DeviceKind::Sd).then_some(())?;
     let bytes = device.state.as_deref()?;
     let text = std::str::from_utf8(bytes).ok()?;
     suhina_device_sdk::DeviceGraph::from_sd(text).ok().map(|graph| graph.role)
+}
+
+/// What a `.sd` graph's role is as a device role.
+fn role_of_sd(role: suhina_device_sdk::DeviceRole) -> Role {
+    match role {
+        suhina_device_sdk::DeviceRole::Effect => Role::Effect,
+        suhina_device_sdk::DeviceRole::Instrument => Role::Instrument,
+        suhina_device_sdk::DeviceRole::MidiEffect => Role::MidiEffect,
+    }
+}
+
+/// The role a built-in or `.sd` device plays in a chain; `None` for a plug-in or an unknown id.
+fn chain_role(device: &Device) -> Option<Role> {
+    match &device.kind {
+        DeviceKind::Builtin(id) => suhina_device_registry::info(id).map(|info| info.role),
+        DeviceKind::Sd => sd_role(device).map(role_of_sd),
+        _ => None,
+    }
+}
+
+/// How many MIDI effects lead a chain: the instrument goes right after them.
+fn midi_prefix(devices: &[Device]) -> usize {
+    devices.iter().take_while(|device| chain_role(device) == Some(Role::MidiEffect)).count()
+}
+
+/// The first position an audio effect may take: after the MIDI effects that lead the chain and
+/// the instrument right after them, whether or not there is one.
+fn first_effect_position(devices: &[Device]) -> usize {
+    let prefix = midi_prefix(devices);
+    prefix + usize::from(devices.get(prefix).and_then(chain_role) == Some(Role::Instrument))
+}
+
+/// Refuses an audio effect at `position` before the track's MIDI effects or its instrument.
+fn check_effect_position(devices: &[Device], position: usize) -> Result<(), CommandError> {
+    let first = first_effect_position(devices);
+    if position < first {
+        return Err(format!(
+            "an effect goes after the track's MIDI effects and instrument (position {first} to {})",
+            devices.len()
+        )
+        .into());
+    }
+    Ok(())
 }
 
 pub(crate) fn sd_graph(device: &Device) -> Result<suhina_device_sdk::DeviceGraph, CommandError> {
@@ -75,7 +206,7 @@ fn info_json(info: &DeviceInfo) -> Value {
     json!({
         "id": info.id,
         "name": info.name,
-        "role": match info.role { Role::Effect => "effect", Role::Instrument => "instrument" },
+        "role": role_name(info.role),
         "params": info.params.iter().map(|p| {
             let mut v = json!({
                 "id": p.id,
@@ -100,6 +231,15 @@ fn info_json(info: &DeviceInfo) -> Value {
     })
 }
 
+/// A device role as commands name it: `effect`, `instrument` or `midi_effect`.
+pub(crate) fn role_name(role: Role) -> &'static str {
+    match role {
+        Role::Effect => "effect",
+        Role::Instrument => "instrument",
+        Role::MidiEffect => "midi_effect",
+    }
+}
+
 fn unit_name(unit: Unit) -> &'static str {
     match unit {
         Unit::None => "",
@@ -109,6 +249,9 @@ fn unit_name(unit: Unit) -> &'static str {
         Unit::Percent => "%",
         Unit::Balance => "balance",
         Unit::Octaves => "octaves",
+        Unit::Semitones => "semitones",
+        Unit::ScaleDegrees => "scale degrees",
+        Unit::Key => "key",
     }
 }
 
@@ -116,28 +259,38 @@ fn unit_name(unit: Unit) -> &'static str {
 pub(crate) fn track_devices(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let track = track_id(&session.project, params)?;
     let devices = channel_param(session, params)?.devices.clone();
-    Ok(Value::Array(
-        devices
-            .iter()
-            .enumerate()
-            .map(|(index, d)| {
-                let mut value = device_json(index, d);
-                if matches!(d.kind, DeviceKind::Clap { .. } | DeviceKind::Vst3 { .. } | DeviceKind::Vst2 { .. }) {
-                    value["plugin"] = plugin_json(session.plugin_report(track, index));
-                }
-                value
-            })
-            .collect(),
-    ))
+    // Plug-in reports first, by path, so the listing below can be made without the session.
+    let mut reports = Vec::new();
+    for (path, device) in suhina_model::walk_devices(&devices) {
+        if is_plugin(&device.kind) {
+            reports.push((path.clone(), plugin_json(session.plugin_report_at(track, &path))));
+        }
+    }
+    fn listed(path: &[usize], device: &Device, reports: &[(Vec<usize>, Value)]) -> Value {
+        let mut value = device_json(path, device);
+        if let Some((_, report)) = reports.iter().find(|(p, _)| p == path) {
+            value["plugin"] = report.clone();
+        }
+        if let Some(group) = device.as_group() {
+            let inner = |path: &[usize], d: &Device| listed(path, d, reports);
+            let fields = crate::device_groups::group_json(group, device, path, &inner);
+            if let (Some(value), Value::Object(fields)) = (value.as_object_mut(), fields) {
+                value.extend(fields);
+            }
+        }
+        value
+    }
+    Ok(Value::Array(devices.iter().enumerate().map(|(index, d)| listed(&[index], d, &reports)).collect()))
 }
 
-fn device_json(index: usize, device: &Device) -> Value {
+fn device_json(path: &[usize], device: &Device) -> Value {
     let (kind, id) = match &device.kind {
         DeviceKind::Builtin(id) => ("builtin", Some(id.clone())),
         DeviceKind::Sd => ("sd", None),
         DeviceKind::Clap { id } => ("clap", Some(id.clone())),
         DeviceKind::Vst3 { id } => ("vst3", Some(id.clone())),
         DeviceKind::Vst2 { id } => ("vst2", Some(id.to_string())),
+        DeviceKind::Group(_) => ("group", None),
         _ => ("other", None),
     };
     let info = id.as_deref().filter(|_| kind == "builtin").and_then(suhina_device_registry::info);
@@ -183,15 +336,12 @@ fn device_json(index: usize, device: &Device) -> Value {
         })
     });
     let mut value = json!({
-        "index": index,
+        "index": path.last().copied().unwrap_or(0),
+        "path": path_value(path),
         "name": device.name,
         "kind": kind,
         "id": id,
-        "role": graph.as_ref().map(|graph| match graph.role {
-            suhina_device_sdk::DeviceRole::Effect => "effect",
-            suhina_device_sdk::DeviceRole::Instrument => "instrument",
-            suhina_device_sdk::DeviceRole::MidiEffect => "midi_effect",
-        }),
+        "role": graph.as_ref().map(|graph| role_of_sd(graph.role)).or(info.map(|info| info.role)).map(role_name),
         "enabled": device.enabled,
         "known": kind != "builtin" || info.is_some(),
         "params": params,
@@ -200,6 +350,9 @@ fn device_json(index: usize, device: &Device) -> Value {
             json!({ "id": node.id, "kind": kind })
         }).collect::<Vec<_>>()),
     });
+    if let Some(points) = device.sample_slices() {
+        value["sample_slices"] = json!(points);
+    }
     if !device.automation.is_empty() {
         value["automation"] = device
             .automation
@@ -256,30 +409,32 @@ pub(crate) fn add(session: &mut Session, params: &Value) -> Result<Value, Comman
     };
     let info = suhina_device_registry::info(id)
         .ok_or_else(|| format!("no built-in effect or instrument {id:?}; devices.list lists them"))?;
-    if info.role == Role::Instrument {
+    let params_of_preset = preset
+        .as_ref()
+        .map_or_else(Vec::new, |p| p.params.iter().map(|(id, value)| DeviceParam::new(*id, *value)).collect());
+    let device =
+        Device { params: params_of_preset, ..Device::new(info.name, DeviceKind::Builtin(info.id.to_string())) };
+    if let Some(value) = crate::device_groups::insert_into_group(session, params, device.clone())? {
+        return Ok(json!({ "device": value, "id": info.id, "name": info.name, "preset": preset.map(|p| p.name) }));
+    }
+    let instrument = info.role == Role::Instrument;
+    let midi_effect = info.role == Role::MidiEffect;
+    if instrument || midi_effect {
         let track = track_id(&session.project, params)?;
         if session.project.tracks.iter().find(|t| t.id == track).is_some_and(|t| !t.content.notes) {
-            return Err("an instrument goes on a MIDI track".into());
+            let what = if instrument { "an instrument" } else { "a MIDI effect" };
+            return Err(format!("{what} goes on a MIDI track").into());
         }
     }
     let channel = channel_param(session, params)?;
-    if channel.devices.len() >= MAX_DEVICES {
+    if suhina_model::count_devices(&channel.devices) >= MAX_DEVICES {
         return Err(format!("a track holds at most {MAX_DEVICES} devices").into());
     }
-    let instrument = info.role == Role::Instrument;
-    let has_instrument = channel.devices.iter().any(|device| match &device.kind {
-        DeviceKind::Builtin(id) => suhina_device_registry::info(id).is_some_and(|info| info.role == Role::Instrument),
-        DeviceKind::Sd => sd_role(device) == Some(suhina_device_sdk::DeviceRole::Instrument),
-        _ => false,
-    });
-    let midi_prefix = channel
-        .devices
-        .iter()
-        .take_while(|device| sd_role(device) == Some(suhina_device_sdk::DeviceRole::MidiEffect))
-        .count();
+    let has_instrument = channel.devices.iter().any(|device| chain_role(device) == Some(Role::Instrument));
+    let midi_prefix = midi_prefix(&channel.devices);
     let position = match params.get("position") {
         None => {
-            if instrument {
+            if instrument || midi_effect {
                 midi_prefix
             } else {
                 channel.devices.len()
@@ -297,20 +452,15 @@ pub(crate) fn add(session: &mut Session, params: &Value) -> Result<Value, Comman
     if instrument && position != midi_prefix {
         return Err(format!("an instrument goes after the track's {midi_prefix} MIDI effects").into());
     }
-    if has_instrument && !instrument && position <= midi_prefix {
-        return Err("position 0 is the track's instrument; effects go after it".into());
+    if midi_effect && position > midi_prefix {
+        return Err(format!(
+            "a MIDI effect goes before the instrument and the audio effects (position 0 to {midi_prefix})"
+        )
+        .into());
     }
-    let device = Device {
-        name: info.name.to_string(),
-        kind: DeviceKind::Builtin(info.id.to_string()),
-        enabled: true,
-        state: None,
-        params: preset
-            .as_ref()
-            .map_or_else(Vec::new, |p| p.params.iter().map(|(id, value)| DeviceParam::new(*id, *value)).collect()),
-        extensions: Extensions::default(),
-        automation: Vec::new(),
-    };
+    if !instrument && !midi_effect {
+        check_effect_position(&channel.devices, position)?;
+    }
     channel.devices.insert(position, device);
     Ok(json!({ "device": position, "id": info.id, "name": info.name, "preset": preset.map(|p| p.name) }))
 }
@@ -318,6 +468,36 @@ pub(crate) fn add(session: &mut Session, params: &Value) -> Result<Value, Comman
 pub(crate) fn add_sd(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let path = params.get("path").and_then(Value::as_str).ok_or("path must be a .sd file path")?;
     let graph = suhina_device_sdk::DeviceGraph::read_file(std::path::Path::new(path)).map_err(|e| e.to_string())?;
+    if let Some(id) = graph.native_device_id().map_err(|e| e.to_string())? {
+        let _prepared = graph.prepare_native_at(48000., &suhina_device_registry::create).map_err(|e| e.to_string())?;
+        let mut request = params.clone();
+        let object = request.as_object_mut().ok_or("parameters must be an object")?;
+        object.remove("path");
+        object.insert("id".into(), json!(id));
+        let result = add(session, &request)?;
+        let index =
+            result["device"].as_u64().and_then(|i| usize::try_from(i).ok()).ok_or("missing inserted device index")?;
+        let device = channel_param(session, params)?.devices.get_mut(index).ok_or("inserted device is missing")?;
+        device.name = graph.name.clone();
+        device.params = graph
+            .parameters
+            .iter()
+            .filter(|p| {
+                suhina_device_registry::info(id)
+                    .and_then(|info| info.params.iter().find(|native| native.id == p.id))
+                    .is_some_and(|native| native.default != p.default)
+            })
+            .map(|p| DeviceParam::new(&p.id, p.default))
+            .collect();
+        return Ok(json!({"device":index,"id":graph.id,"name":graph.name,"kind":"sd","implementation":id}));
+    }
+    let values: Vec<DeviceParam> =
+        graph.parameters.iter().map(|parameter| DeviceParam::new(parameter.id.clone(), parameter.default)).collect();
+    let state = graph.to_sd().map_err(|e| e.to_string())?.into_bytes();
+    let device = Device { state: Some(state), params: values, ..Device::new(graph.name.clone(), DeviceKind::Sd) };
+    if let Some(value) = crate::device_groups::insert_into_group(session, params, device.clone())? {
+        return Ok(json!({ "device": value, "id": graph.id, "name": graph.name, "kind": "sd" }));
+    }
     if graph.role != suhina_device_sdk::DeviceRole::Effect {
         let track = track_id(&session.project, params)?;
         if session.project.tracks.iter().find(|t| t.id == track).is_some_and(|t| !t.content.notes) {
@@ -325,70 +505,41 @@ pub(crate) fn add_sd(session: &mut Session, params: &Value) -> Result<Value, Com
         }
     }
     let channel = channel_param(session, params)?;
-    if channel.devices.len() >= MAX_DEVICES {
+    if suhina_model::count_devices(&channel.devices) >= MAX_DEVICES {
         return Err(format!("a track holds at most {MAX_DEVICES} devices").into());
     }
-    if graph.role == suhina_device_sdk::DeviceRole::Instrument
-        && channel.devices.iter().any(|device| match &device.kind {
-            DeviceKind::Builtin(id) => {
-                suhina_device_registry::info(id).is_some_and(|info| info.role == Role::Instrument)
-            }
-            DeviceKind::Sd => sd_role(device) == Some(suhina_device_sdk::DeviceRole::Instrument),
-            _ => false,
-        })
-    {
+    let has_instrument = channel.devices.iter().any(|device| chain_role(device) == Some(Role::Instrument));
+    if graph.role == suhina_device_sdk::DeviceRole::Instrument && has_instrument {
         return Err("the track already has an instrument; remove it first".into());
     }
-    let instrument_position = channel.devices.iter().position(|device| match &device.kind {
-        DeviceKind::Builtin(id) => suhina_device_registry::info(id).is_some_and(|info| info.role == Role::Instrument),
-        DeviceKind::Sd => device
-            .state
-            .as_deref()
-            .and_then(|bytes| std::str::from_utf8(bytes).ok())
-            .and_then(|text| suhina_device_sdk::DeviceGraph::from_sd(text).ok())
-            .is_some_and(|graph| graph.role == suhina_device_sdk::DeviceRole::Instrument),
-        _ => false,
-    });
-    let midi_prefix = channel
-        .devices
-        .iter()
-        .take_while(|device| {
-            device.kind == DeviceKind::Sd
-                && device
-                    .state
-                    .as_deref()
-                    .and_then(|bytes| std::str::from_utf8(bytes).ok())
-                    .and_then(|text| suhina_device_sdk::DeviceGraph::from_sd(text).ok())
-                    .is_some_and(|graph| graph.role == suhina_device_sdk::DeviceRole::MidiEffect)
-        })
-        .count();
-    let max_position = if graph.role == suhina_device_sdk::DeviceRole::MidiEffect {
-        instrument_position.unwrap_or(channel.devices.len())
-    } else if graph.role == suhina_device_sdk::DeviceRole::Instrument {
-        midi_prefix
-    } else {
-        channel.devices.len()
-    };
+    // A MIDI effect or an instrument goes right after the MIDI effects that lead the chain, an
+    // effect at the end.
+    let midi_prefix = midi_prefix(&channel.devices);
     let position = match params.get("position") {
-        None => max_position,
+        None if graph.role == suhina_device_sdk::DeviceRole::Effect => channel.devices.len(),
+        None => midi_prefix,
         Some(value) => value
             .as_u64()
             .and_then(|n| usize::try_from(n).ok())
-            .filter(|&n| n <= max_position)
-            .ok_or_else(|| format!("position must be from 0 to {max_position}"))?,
+            .filter(|&n| n <= channel.devices.len())
+            .ok_or_else(|| format!("position must be from 0 to {}", channel.devices.len()))?,
     };
-    let values: Vec<DeviceParam> =
-        graph.parameters.iter().map(|parameter| DeviceParam::new(parameter.id.clone(), parameter.default)).collect();
-    let state = graph.to_sd().map_err(|e| e.to_string())?.into_bytes();
-    let device = Device {
-        name: graph.name.clone(),
-        kind: DeviceKind::Sd,
-        enabled: true,
-        state: Some(state),
-        params: values,
-        automation: Vec::new(),
-        extensions: Extensions::default(),
-    };
+    match graph.role {
+        suhina_device_sdk::DeviceRole::Instrument if position != midi_prefix => {
+            return Err(format!(
+                "an instrument goes after the track's {midi_prefix} MIDI effects (position {midi_prefix})"
+            )
+            .into());
+        }
+        suhina_device_sdk::DeviceRole::MidiEffect if position > midi_prefix => {
+            return Err(format!(
+                "a MIDI effect goes before the instrument and the audio effects (position 0 to {midi_prefix})"
+            )
+            .into());
+        }
+        suhina_device_sdk::DeviceRole::Effect => check_effect_position(&channel.devices, position)?,
+        _ => {}
+    }
     channel.devices.insert(position, device);
     Ok(json!({ "device": position, "id": graph.id, "name": graph.name, "kind": "sd" }))
 }
@@ -396,8 +547,9 @@ pub(crate) fn add_sd(session: &mut Session, params: &Value) -> Result<Value, Com
 pub(crate) fn update_sd(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let path = params.get("path").and_then(Value::as_str).ok_or("path must be the newer .sd device file")?;
     let channel = channel_param(session, params)?;
-    let index = device_index(channel.devices.len(), params)?;
-    let device = channel.devices.get_mut(index).ok_or("the device is missing")?;
+    let at = device_path(&channel.devices, params, "device")?;
+    let index = path_value(&at);
+    let device = device_at_mut(&mut channel.devices, &at).ok_or("the device is missing")?;
     if device.kind != DeviceKind::Sd {
         return Err("device.updateSd only updates .sd devices".into());
     }
@@ -433,32 +585,199 @@ fn read_preset(path: &std::path::Path, voice: usize) -> Result<suhina_device_reg
     suhina_device_registry::preset(&data, voice).map_err(|e| format!("{}: {e}", path.display()).into())
 }
 
+/// Removes the device at `path` from `devices`.
+fn remove_at(devices: &mut Vec<Device>, path: &[usize]) -> Option<Device> {
+    let (&index, parent) = path.split_last()?;
+    let list = crate::device_groups::container_mut(devices, parent)?;
+    (index < list.len()).then(|| list.remove(index))
+}
+
 pub(crate) fn remove(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let channel = channel_param(session, params)?;
-    let index = device_index(channel.devices.len(), params)?;
-    let removed = channel.devices.remove(index);
+    let path = device_path(&channel.devices, params, "device")?;
+    let removed = remove_at(&mut channel.devices, &path).ok_or("the device is missing")?;
     Ok(json!({ "removed": removed.name, "devices": channel.devices.len() }))
+}
+
+/// The device paths `params.devices` names among `devices`, each once and none inside another
+/// one named, last first (so removing them in this order keeps the others' paths).
+fn device_list(devices: &[Device], params: &Value) -> Result<Vec<Vec<usize>>, CommandError> {
+    let list = params.get("devices").and_then(Value::as_array).ok_or("devices must be a list of device paths")?;
+    let mut out: Vec<Vec<usize>> = Vec::with_capacity(list.len());
+    for value in list {
+        let path = crate::device_groups::parse_path(value)
+            .filter(|p| p.len() % 2 == 1 && device_at(devices, p).is_some())
+            .ok_or("each device must be a device index or path on the track, as in track.devices")?;
+        if !out.contains(&path) {
+            out.push(path);
+        }
+    }
+    if out.is_empty() {
+        return Err("devices must name at least one device".into());
+    }
+    let named = out.clone();
+    out.retain(|p| !named.iter().any(|other| other.len() < p.len() && p.starts_with(other)));
+    out.sort_unstable_by(|a, b| b.cmp(a));
+    Ok(out)
+}
+
+/// `device.removeMany {track, devices}`: removes several devices of a track as one undo step.
+pub(crate) fn remove_many(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let channel = channel_param(session, params)?;
+    let paths = device_list(&channel.devices, params)?;
+    let removed: Vec<String> =
+        paths.iter().filter_map(|p| remove_at(&mut channel.devices, p)).map(|d| d.name).collect();
+    Ok(json!({ "removed": removed, "devices": channel.devices.len() }))
+}
+
+/// `device.copy {track, devices}`: copies devices, with their parameters, automation and a
+/// running plug-in's state as it is now, for `device.paste`.
+pub(crate) fn copy(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let track = track_id(&session.project, params)?;
+    let (heard, _) = session.heard();
+    let channel = heard
+        .tracks
+        .iter()
+        .find(|t| t.id == track)
+        .and_then(|t| t.channel)
+        .and_then(|c| heard.channels.iter().find(|ch| ch.id == c))
+        .ok_or("the track has no mixer channel")?;
+    let mut paths = device_list(&channel.devices, params)?;
+    paths.reverse();
+    let copied: Vec<Device> = paths.iter().filter_map(|p| device_at(&channel.devices, p).cloned()).collect();
+    let names: Vec<String> = copied.iter().map(|d| d.name.clone()).collect();
+    session.device_clipboard = copied;
+    Ok(json!({ "copied": names }))
+}
+
+/// `device.paste {track, position?}`: puts the copied devices into a track's chain at
+/// `position` (the end when left out), in the order they were copied, as one undo step.
+pub(crate) fn paste(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    if session.device_clipboard.is_empty() {
+        return Err("no devices have been copied".into());
+    }
+    let copied = session.device_clipboard.clone();
+    let channel = channel_param(session, params)?;
+    if suhina_model::count_devices(&channel.devices) + suhina_model::count_devices(&copied) > MAX_DEVICES {
+        return Err(format!("a track holds at most {MAX_DEVICES} devices").into());
+    }
+    let (parent, position) = crate::device_groups::position_path(&channel.devices, params, "position")?
+        .unwrap_or_else(|| (Vec::new(), channel.devices.len()));
+    let list = crate::device_groups::container_mut(&mut channel.devices, &parent).ok_or("the position is missing")?;
+    let count = copied.len();
+    for (offset, device) in copied.into_iter().enumerate() {
+        list.insert(position + offset, device);
+    }
+    let pasted: Vec<Value> = (position..position + count)
+        .map(|i| {
+            let mut path = parent.clone();
+            path.push(i);
+            path_value(&path)
+        })
+        .collect();
+    Ok(json!({ "devices": pasted }))
 }
 
 pub(crate) fn set_enabled(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let enabled = params.get("enabled").and_then(Value::as_bool).ok_or("enabled must be true or false")?;
     let channel = channel_param(session, params)?;
-    let index = device_index(channel.devices.len(), params)?;
-    let device = channel.devices.get_mut(index).ok_or("the device is missing")?;
+    let path = device_path(&channel.devices, params, "device")?;
+    let device = device_at_mut(&mut channel.devices, &path).ok_or("the device is missing")?;
     device.enabled = enabled;
-    Ok(json!({ "device": index, "enabled": enabled }))
+    Ok(json!({ "device": path_value(&path), "enabled": enabled }))
+}
+
+/// `device.setNamFile` ([docs/spec/nam-amp-and-cab.md]): the file a NAM Amp Modeler or a NAM
+/// Cab Loader runs. The device's state becomes the file's absolute path; the parsed model or
+/// decoded IR goes into the session's assets with this command, so the playing engine hears it
+/// with the next edit. One undo step, like the other device edits.
+pub(crate) fn set_file(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let path = params
+        .get("path")
+        .and_then(Value::as_str)
+        .filter(|p| !p.is_empty())
+        .ok_or("path must be a .nam model or a .wav IR file's path")?;
+    // The device's kind first, from a read; no mutation until the file has loaded.
+    let kind = {
+        let track = track_id(&session.project, params)?;
+        let channel = session
+            .project
+            .tracks
+            .iter()
+            .find(|t| t.id == track)
+            .and_then(|t| t.channel)
+            .ok_or("the track has no mixer channel")?;
+        let channel =
+            session.project.channels.iter().find(|c| c.id == channel).ok_or("the track's channel is missing")?;
+        let path = device_path(&channel.devices, params, "device")?;
+        match device_at(&channel.devices, &path) {
+            Some(device) => match &device.kind {
+                DeviceKind::Builtin(id) if suhina_device_registry::is_file_device(id) => id.clone(),
+                _ => return Err("the device does not run a file".into()),
+            },
+            None => return Err("the device is missing".into()),
+        }
+    };
+    let want_extension = match kind.as_str() {
+        "nam-amp-modeler" => "nam",
+        "nam-cab-loader" => "wav",
+        _ => return Err("the device does not run a file".into()),
+    };
+    if !path.to_lowercase().ends_with(&format!(".{want_extension}")) {
+        return Err(format!("a {kind} runs a .{want_extension} file").into());
+    }
+    let absolute = crate::files::absolute(std::path::Path::new(path));
+    let absolute_text = absolute.display().to_string();
+    let asset = session.load_device_file(&kind, &absolute_text).map_err(CommandError)?;
+    let name = match &asset {
+        suhina_device_registry::DeviceAsset::Nam(model) => {
+            suhina_device_nam_amp_modeler::model::display_name(model).unwrap_or_default()
+        }
+        suhina_device_registry::DeviceAsset::Ir(_) => absolute
+            .parent()
+            .and_then(|folder| folder.file_name())
+            .map_or_else(String::new, |folder| folder.to_string_lossy().into_owned()),
+    };
+    let channel = channel_param(session, params)?;
+    let path = device_path(&channel.devices, params, "device")?;
+    let device = device_at_mut(&mut channel.devices, &path).ok_or("the device is missing")?;
+    device.state = Some(absolute_text.as_bytes().to_vec());
+    Ok(json!({ "device": path_value(&path), "file": absolute_text, "name": name }))
+}
+
+/// `device.file`: the file a NAM device runs — its absolute path (empty when none is set) and
+/// the model's own name or the cab's (the IR's parent folder's name), for a device panel.
+pub(crate) fn device_file(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let channel = channel_read(session, params)?;
+    let path = device_path(&channel.devices, params, "device")?;
+    let device = device_at(&channel.devices, &path).ok_or("the device is missing")?;
+    let kind = match &device.kind {
+        DeviceKind::Builtin(id) => id.clone(),
+        _ => return Err("the device does not run a file".into()),
+    };
+    if !suhina_device_registry::is_file_device(&kind) {
+        return Err("the device does not run a file".into());
+    }
+    let file = device.state.as_deref().and_then(|state| std::str::from_utf8(state).ok()).unwrap_or_default();
+    let name = if file.is_empty() { String::new() } else { session.device_asset_name(file).unwrap_or_default() };
+    Ok(json!({ "file": file, "name": name }))
 }
 
 pub(crate) fn set_param(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let param = params.get("param").and_then(Value::as_str).ok_or("param must be a parameter id, from devices.list")?;
-    let value = number(params, "value")?;
+    let mut value = number(params, "value")?;
+    let source_tempo =
+        if param == "warp" && value > 0. { initial_sampler_tempo(session, params, false)? } else { None };
+    if param == "source_bpm" && value == 0. {
+        value = initial_sampler_tempo(session, params, true)?.unwrap_or(0.);
+    }
     let track = track_id(&session.project, params)?;
     let channel = channel_param(session, params)?;
-    let index = device_index(channel.devices.len(), params)?;
-    if channel.devices.get(index).is_some_and(|d| is_plugin(&d.kind)) {
-        return set_plugin_param(session, params, track, index, param, value);
+    let path = device_path(&channel.devices, params, "device")?;
+    if device_at(&channel.devices, &path).is_some_and(|d| is_plugin(&d.kind)) {
+        return set_plugin_param(session, params, track, &path, param, value);
     }
-    let device = channel.devices.get_mut(index).ok_or("the device is missing")?;
+    let device = device_at_mut(&mut channel.devices, &path).ok_or("the device is missing")?;
     let mut edits = Vec::new();
     let (param_index, value) = match &device.kind {
         DeviceKind::Builtin(id) => {
@@ -492,10 +811,23 @@ pub(crate) fn set_param(session: &mut Session, params: &Value) -> Result<Value, 
                 .collect();
             (index, parameter.clamp(value))
         }
+        DeviceKind::Group(_) => {
+            let index = suhina_engine::group_param_index(param).ok_or_else(|| {
+                format!("a device group has no parameter {param:?}; it has mix, gain and macro.1 to macro.8")
+            })?;
+            let &(_, min, max, _) = suhina_engine::GROUP_PARAMS.get(index).ok_or("the parameter is missing")?;
+            (index, value.clamp(min, max))
+        }
         _ => return Err("this device has no parameters Suhina can set (it is from another program)".into()),
     };
     if edits.is_empty() {
         edits.push((param_index, param.to_string(), value));
+    }
+    if matches!(&device.kind, DeviceKind::Builtin(id) if id == "sampler")
+        && let Some(value) = source_tempo.or((param == "warp_beats").then_some(0.))
+        && let Some(index) = suhina_device_sdk::sampler::INFO.param_index("source_bpm")
+    {
+        edits.push((index, "source_bpm".into(), value));
     }
     let mut messages = Vec::new();
     let mut off = false;
@@ -505,14 +837,16 @@ pub(crate) fn set_param(session: &mut Session, params: &Value) -> Result<Value, 
             None => device.params.push(DeviceParam::new(id.clone(), value)),
         }
         off |= crate::automation::override_lane(&mut device.automation, |l| l.param == id);
-        messages.push(ParamEdit { track, device: index, param: param_index, value });
+        if let [index] = path.as_slice() {
+            messages.push(ParamEdit { track, device: *index, param: param_index, value });
+        }
     }
     // A playing engine takes this as messages, without a new graph; one that turned a lane
-    // off needs the new graph, which holds the values too.
-    if !off {
+    // off needs the new graph, which holds the values too, and so does a device inside a group.
+    if !off && path.len() == 1 {
         session.param_edits = messages;
     }
-    Ok(with_override(json!({ "device": index, "param": param, "value": value }), off))
+    Ok(with_override(json!({ "device": path_value(&path), "param": param, "value": value }), off))
 }
 
 /// Sets parameter `param` (its id) of the plug-in device at `index` on `track`: kept in the
@@ -521,14 +855,14 @@ fn set_plugin_param(
     session: &mut Session,
     params: &Value,
     track: suhina_model::TrackId,
-    index: usize,
+    path: &[usize],
     param: &str,
     value: f64,
 ) -> Result<Value, CommandError> {
     let id = plugin_param_id(param)?;
-    let value = plugin_value(session, track, index, id, value)?;
+    let value = plugin_value(session, track, path, id, value)?;
     let channel = channel_param(session, params)?;
-    let device = channel.devices.get_mut(index).ok_or("the device is missing")?;
+    let device = device_at_mut(&mut channel.devices, path).ok_or("the device is missing")?;
     match device.params.iter_mut().find(|p| param_id(&p.id) == Some(id)) {
         Some(stored) => {
             stored.id = id.to_string();
@@ -539,10 +873,10 @@ fn set_plugin_param(
     let off = crate::automation::override_lane(&mut device.automation, |l| param_id(&l.param) == Some(id));
     // A plug-in's parameter goes to the engine by its id.
     let param = usize::try_from(id).map_err(|_| "the parameter id is too large")?;
-    if !off {
-        session.param_edits = vec![ParamEdit { track, device: index, param, value }];
+    if !off && let [index] = path {
+        session.param_edits = vec![ParamEdit { track, device: *index, param, value }];
     }
-    Ok(with_override(json!({ "device": index, "param": id, "value": value }), off))
+    Ok(with_override(json!({ "device": path_value(path), "param": id, "value": value }), off))
 }
 
 /// Most points one automation lane holds.
@@ -562,7 +896,11 @@ pub(crate) fn set_automation(session: &mut Session, params: &Value) -> Result<Va
     }
     let track = track_id(&session.project, params)?;
     let channel = channel_param(session, params)?;
-    let index = device_index(channel.devices.len(), params)?;
+    let path = device_path(&channel.devices, params, "device")?;
+    let [index] = path.as_slice() else {
+        return Err("automation of devices inside a device group does not play yet".into());
+    };
+    let index = *index;
     // A built-in device's parameter: its spec, to keep values as the device takes them.
     let device = channel.devices.get(index).ok_or("the device is missing")?;
     let (builtin, sd_graph) = match &device.kind {
@@ -601,7 +939,7 @@ pub(crate) fn set_automation(session: &mut Session, params: &Value) -> Result<Va
             None if let Some(graph) = &sd_graph => {
                 graph.parameters.iter().find(|p| p.id == param).map_or(value, |p| p.clamp(value))
             }
-            None => plugin_value(session, track, index, id, value)?,
+            None => plugin_value(session, track, &[index], id, value)?,
         };
         points.push(AutomationPoint { beat, value, curve: 0.0 });
     }
@@ -648,11 +986,11 @@ pub(crate) fn plugin_param_id(param: &str) -> Result<u32, CommandError> {
 pub(crate) fn plugin_value(
     session: &Session,
     track: suhina_model::TrackId,
-    index: usize,
+    path: &[usize],
     id: u32,
     value: f64,
 ) -> Result<f64, CommandError> {
-    let key = crate::plugin_key_at(&session.project, track, index);
+    let key = crate::plugin_key_at_path(&session.project, track, path);
     match key.and_then(|key| session.plugins.param_range(key, id)) {
         Some(Some((min, max))) => Ok(value.clamp(min, max)),
         Some(None) => Err(format!("the plug-in has no parameter {id}; device.pluginParams lists them").into()),
@@ -663,13 +1001,9 @@ pub(crate) fn plugin_value(
 /// The key of the plug-in device the `track` and `device` parameters name.
 fn plugin_key(session: &Session, params: &Value) -> Result<u64, CommandError> {
     let track = track_id(&session.project, params)?;
-    let index = params
-        .get("device")
-        .and_then(Value::as_u64)
-        .and_then(|n| usize::try_from(n).ok())
-        .ok_or("device must be a device index, from 0, as in track.devices")?;
-    crate::plugin_key_at(&session.project, track, index)
-        .ok_or_else(|| format!("device {index} on the track is not a plug-in").into())
+    let path = device_path(&channel_read(session, params)?.devices, params, "device")?;
+    crate::plugin_key_at_path(&session.project, track, &path)
+        .ok_or_else(|| format!("device {} on the track is not a plug-in", path_value(&path)).into())
 }
 
 /// Adds an installed plug-in from the catalog to a track.
@@ -683,6 +1017,12 @@ pub(crate) fn add_plugin(session: &mut Session, params: &Value) -> Result<Value,
         .ok_or_else(|| format!("no plug-in {name:?} in the catalog; plugins.list lists them"))?
         .clone();
     let instrument = crate::is_instrument(&plugin);
+    let device = Device::new(plugin.name.clone(), crate::rack::device_kind(&plugin));
+    if let Some(value) = crate::device_groups::insert_into_group(session, params, device.clone())? {
+        return Ok(json!({
+            "device": value, "name": plugin.name, "vendor": plugin.vendor, "format": plugin.format(), "instrument": instrument,
+        }));
+    }
     if instrument {
         let track = track_id(&session.project, params)?;
         if session.project.tracks.iter().find(|t| t.id == track).is_some_and(|t| !t.content.notes) {
@@ -690,11 +1030,14 @@ pub(crate) fn add_plugin(session: &mut Session, params: &Value) -> Result<Value,
         }
     }
     let channel = channel_param(session, params)?;
-    if channel.devices.len() >= MAX_DEVICES {
+    if suhina_model::count_devices(&channel.devices) >= MAX_DEVICES {
         return Err(format!("a track holds at most {MAX_DEVICES} devices").into());
     }
+    // An instrument goes right after the MIDI effects that lead the chain, first when there are
+    // none.
+    let midi_prefix = midi_prefix(&channel.devices);
     let position = match params.get("position") {
-        None if instrument => 0,
+        None if instrument => midi_prefix,
         None => channel.devices.len(),
         Some(v) => v
             .as_u64()
@@ -702,18 +1045,19 @@ pub(crate) fn add_plugin(session: &mut Session, params: &Value) -> Result<Value,
             .filter(|&n| n <= channel.devices.len())
             .ok_or_else(|| format!("position must be from 0 to {}", channel.devices.len()))?,
     };
-    if instrument && position != 0 {
-        return Err("an instrument goes first in a track's chain (position 0)".into());
+    if instrument && position != midi_prefix {
+        return Err(format!(
+            "an instrument goes after the track's {midi_prefix} MIDI effects (position {midi_prefix})"
+        )
+        .into());
     }
-    let device = Device {
-        name: plugin.name.clone(),
-        kind: crate::rack::device_kind(&plugin),
-        enabled: true,
-        state: None,
-        params: Vec::new(),
-        automation: Vec::new(),
-        extensions: Extensions::default(),
-    };
+    if !instrument {
+        check_effect_position(&channel.devices, position)?;
+    }
+    // A plug-in that edits clips (ARA, ADR 0028) plays the clips from their files, so a device
+    // before it would not be heard: it goes first, wherever it was asked for.
+    let moved_first = plugin.ara && params.get("position").is_some() && position != 0;
+    let position = if plugin.ara { 0 } else { position };
     channel.devices.insert(position, device);
     Ok(json!({
         "device": position,
@@ -721,6 +1065,8 @@ pub(crate) fn add_plugin(session: &mut Session, params: &Value) -> Result<Value,
         "vendor": plugin.vendor,
         "format": plugin.format(),
         "instrument": instrument,
+        "ara": plugin.ara,
+        "moved_first": moved_first,
     }))
 }
 
@@ -739,6 +1085,7 @@ pub(crate) fn plugin_json(report: Option<crate::PluginReport>) -> Value {
         "longest_us": report.longest_us,
         "no_time": report.no_time,
         "state_refused": report.state_refused,
+        "ara": report.ara,
     })
 }
 

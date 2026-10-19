@@ -42,10 +42,10 @@ use interprocess::local_socket::{
     GenericFilePath, GenericNamespaced, ListenerNonblockingMode, ListenerOptions, Name, NameType, Stream, ToFsName,
     ToNsName,
 };
-pub use suhina_ipc::{Event, EventKind, MAX_EVENTS, Outcome};
+pub use suhina_ipc::{AudioSource, Event, EventKind, MAX_EVENTS, Outcome};
 use suhina_ipc::{IpcError, Link};
 
-use protocol::{MAX_LINE, Message, VERSION};
+use protocol::{AraDocument, MAX_LINE, Message, VERSION};
 pub use protocol::{ParamInfo, Placement};
 
 /// Blocks in a row without an answer after which a running host counts as hung.
@@ -108,6 +108,9 @@ pub struct Launch {
     /// (ADR 0006: by default one per plug-in file; see [`library::group_for`]). `None` gives
     /// the instance a process of its own.
     pub group: Option<String>,
+    /// The ARA document to bind the plug-in to as it loads, for an ARA plug-in on a track
+    /// (ADR 0028); `None` for every other plug-in.
+    pub ara: Option<protocol::AraDocument>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -362,6 +365,9 @@ struct Group {
     resized_editors: Vec<(u32, (u32, u32))>,
     /// Instances whose plug-in reported another latency (the latest), not yet taken in.
     latencies: Vec<(u32, u32)>,
+    /// The process's resident memory, in bytes, the host last reported; gone once the
+    /// process ends, so a dead host is never counted.
+    ram: Option<u64>,
     next_ping: u64,
 }
 
@@ -373,6 +379,7 @@ impl Group {
             closed_editors: Vec::new(),
             resized_editors: Vec::new(),
             latencies: Vec::new(),
+            ram: None,
             next_ping: 0,
         }
     }
@@ -389,6 +396,7 @@ impl Group {
         self.closed_editors.clear();
         self.resized_editors.clear();
         self.latencies.clear();
+        self.ram = None;
     }
 
     /// Ends the current process and starts a new one for the group.
@@ -431,6 +439,14 @@ impl Group {
                 if self.latencies.len() < MAX_CLOSED_EDITORS {
                     self.latencies.push((*instance, *latency));
                 }
+            }
+            Message::TransportKey => {
+                TRANSPORT_KEYS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+            Message::Memory { bytes } => {
+                // Only a process that is still there reports; the host sends it once a second,
+                // so the latest is what the control bar adds.
+                self.ram = Some(*bytes);
             }
             _ => {}
         }
@@ -511,7 +527,7 @@ impl Group {
 
     /// Loads `instance` as `launch` says into the group's process, starting one if none runs.
     /// Returns the generation it was loaded into, its latency and its link.
-    fn load(&mut self, launch: &Launch, instance: u32) -> Result<(u64, u32, Link), PluginError> {
+    fn load(&mut self, launch: &Launch, instance: u32) -> Result<(u64, u32, bool, Link), PluginError> {
         let link = Link::create(launch.channels, launch.max_frames)?;
         if !self.alive() {
             self.spawn(launch)?;
@@ -521,6 +537,7 @@ impl Group {
             plugin: launch.plugin.clone(),
             link: link.address(),
             sample_rate: launch.sample_rate,
+            ara: launch.ara.clone(),
         };
         let loaded = self.request(
             Some(instance),
@@ -529,11 +546,11 @@ impl Group {
             launch.timeout,
             |m| matches!(m, Message::Loaded { instance: i, .. } if *i == instance),
         )?;
-        let latency = match loaded {
-            Message::Loaded { latency, .. } => latency,
-            _ => 0,
+        let (latency, edits_clips) = match loaded {
+            Message::Loaded { latency, edits_clips, .. } => (latency, edits_clips),
+            _ => (0, false),
         };
-        Ok((self.generation, latency, link))
+        Ok((self.generation, latency, edits_clips, link))
     }
 }
 
@@ -554,11 +571,18 @@ static GROUPS: Mutex<BTreeMap<GroupKey, Weak<Mutex<Group>>>> = Mutex::new(BTreeM
 
 /// The group `launch` asks for: the shared one for its host and group name, or one of its own.
 fn group_for_launch(launch: &Launch) -> Arc<Mutex<Group>> {
-    let Some(name) = &launch.group else {
-        return Arc::new(Mutex::new(Group::new()));
-    };
     let mut groups = lock(&GROUPS);
     groups.retain(|_, group| group.strong_count() > 0);
+    let Some(name) = &launch.group else {
+        // A group of its own is still one host process whose RAM the control bar counts, so it
+        // is tracked like the named ones, under a key no other group takes. The last instance
+        // dropping its half drops the entry with it (the register keeps weak references).
+        static UNNAMED: AtomicU64 = AtomicU64::new(0);
+        let key = (launch.host.clone(), format!("instance:{}", UNNAMED.fetch_add(1, Ordering::Relaxed)));
+        let group = Arc::new(Mutex::new(Group::new()));
+        groups.insert(key, Arc::downgrade(&group));
+        return group;
+    };
     let key = (launch.host.clone(), name.clone());
     if let Some(group) = groups.get(&key).and_then(Weak::upgrade) {
         return group;
@@ -589,6 +613,8 @@ pub struct Plugin {
     generation: u64,
     unanswered: Arc<AtomicU32>,
     latency: u32,
+    /// The plug-in supports ARA, as the host found when it loaded it.
+    edits_clips: bool,
     /// The state last read from the plug-in; loaded again after a restart.
     last_state: Option<SavedState>,
     /// Parameters set since the state was last read or loaded, in order; set again after a
@@ -609,7 +635,7 @@ impl Plugin {
     pub fn start(launch: Launch) -> Result<(Self, PluginAudio), PluginError> {
         let group = group_for_launch(&launch);
         let instance = next_instance();
-        let (generation, latency, link) = lock(&group).load(&launch, instance)?;
+        let (generation, latency, edits_clips, link) = lock(&group).load(&launch, instance)?;
         let unanswered = Arc::new(AtomicU32::new(0));
         let plugin = Self {
             launch,
@@ -618,6 +644,7 @@ impl Plugin {
             generation,
             unanswered: unanswered.clone(),
             latency,
+            edits_clips,
             last_state: None,
             params_since: Vec::new(),
             editor_open: false,
@@ -631,6 +658,12 @@ impl Plugin {
     /// [`Plugin::follow_latency`]).
     pub fn latency(&self) -> u32 {
         self.latency
+    }
+
+    /// Whether the plug-in supports ARA (it can edit clips, ADR 0028), as the host found when
+    /// it loaded it: true even when the scan did not see it, or it was loaded without a document.
+    pub fn edits_clips(&self) -> bool {
+        self.edits_clips
     }
 
     /// Takes in a latency the plug-in reported while it runs (a lookahead it was given, say:
@@ -820,6 +853,44 @@ impl Plugin {
         Ok(true)
     }
 
+    /// Asks an embedded editor to take `width` × `height` pixels, the room the engine has for
+    /// it. Never waits, as [`Plugin::place_editor`]: `false` when it was not sent.
+    pub fn fit_editor(&mut self, width: u32, height: u32) -> Result<bool, PluginError> {
+        let Some(mut group) = try_lock(&self.group) else { return Ok(false) };
+        if group.generation != self.generation {
+            return Err(PluginError::Protocol("the host process was replaced; restart the plug-in".into()));
+        }
+        let process = group.process.as_mut().ok_or_else(|| PluginError::Protocol("the host is not running".into()))?;
+        process.send(&Message::FitEditor { instance: self.instance, width, height })?;
+        Ok(true)
+    }
+
+    /// Brings the ARA document of a plug-in loaded with one in line with `document`, its
+    /// track's clips as they are now (moved, trimmed, added or removed), without loading it
+    /// again. Waits for the answer.
+    pub fn ara_update(&mut self, document: AraDocument) -> Result<(), PluginError> {
+        let instance = self.instance;
+        self.request(
+            &Message::AraUpdate { instance, document },
+            "ara_update",
+            |m| matches!(m, Message::AraUpdated { instance: i } if *i == instance),
+        )?;
+        Ok(())
+    }
+
+    /// Tells a plug-in bound to an ARA document which region (`clip-<id>`) the engine has
+    /// selected, or none. Never waits, as [`Plugin::place_editor`]: returns `false` when the
+    /// host process was busy and it was not sent, so the caller sends it again later.
+    pub fn ara_select(&mut self, region: Option<&str>) -> Result<bool, PluginError> {
+        let Some(mut group) = try_lock(&self.group) else { return Ok(false) };
+        if group.generation != self.generation {
+            return Err(PluginError::Protocol("the host process was replaced; restart the plug-in".into()));
+        }
+        let process = group.process.as_mut().ok_or_else(|| PluginError::Protocol("the host is not running".into()))?;
+        process.send(&Message::AraSelect { instance: self.instance, region: region.map(str::to_string) })?;
+        Ok(true)
+    }
+
     /// Closes the plug-in's editor, if it is open.
     pub fn close_editor(&mut self) -> Result<(), PluginError> {
         let instance = self.instance;
@@ -904,8 +975,9 @@ impl Plugin {
             locked.take_latency(instance);
         }
         let instance = next_instance();
-        let (generation, latency, link) = locked.load(&self.launch, instance)?;
+        let (generation, latency, edits_clips, link) = locked.load(&self.launch, instance)?;
         drop(locked);
+        self.edits_clips = edits_clips;
         self.instance = instance;
         self.generation = generation;
         self.latency = latency;
@@ -993,6 +1065,49 @@ pub fn parse_address(address: &str) -> Result<(String, Name<'static>), PluginErr
     Ok((address.to_string(), name))
 }
 
+/// Space presses the hosts' editor windows sent and the window has not taken yet.
+static TRANSPORT_KEYS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// How many times Space was pressed in a plug-in's editor window since the last call: the window
+/// plays or stops that many times, as Space in its own window does. Takes in what the hosts sent
+/// without waiting for any of them.
+pub fn take_transport_keys() -> u32 {
+    let groups = lock(&GROUPS);
+    for group in groups.values().filter_map(Weak::upgrade) {
+        if let Some(mut group) = try_lock(&group) {
+            group.drain();
+        }
+    }
+    drop(groups);
+    TRANSPORT_KEYS.swap(0, std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The resident memory, in bytes, of every host process that has reported it and still runs,
+/// once per process (the instances of one group share a process). Reads what the hosts sent;
+/// never waits: a group busy with a sibling's load keeps its last report for next time. The
+/// control bar adds these to the program's own RAM.
+pub fn host_memory() -> Vec<u64> {
+    let mut groups = lock(&GROUPS);
+    groups.retain(|_, group| group.strong_count() > 0);
+    groups
+        .values()
+        .filter_map(Weak::upgrade)
+        .filter_map(|group| {
+            let mut group = try_lock(&group)?;
+            // What is waiting is taken in here and now, so an editor's events still reach the
+            // instances on their next request.
+            group.drain();
+            // A process that has gone may have reported before it did; its report is stale.
+            if group.alive() {
+                group.ram
+            } else {
+                group.ram = None;
+                None
+            }
+        })
+        .collect()
+}
+
 /// Reads messages from `stream` on a thread of its own, so replies can be waited for with a
 /// timeout. Unknown lines are skipped; the channel closes when the stream ends.
 pub fn read_lines(stream: Stream) -> Receiver<Message> {
@@ -1021,4 +1136,80 @@ pub fn read_lines(stream: Stream) -> Receiver<Message> {
 pub fn connect(address: &str) -> Result<Stream, PluginError> {
     let (_, name) = parse_address(address)?;
     Ok(Stream::connect(name)?)
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::panic, clippy::unwrap_used)] // test helpers outside #[test] functions
+    use super::*;
+    use std::sync::mpsc::Sender;
+
+    /// A host process that is alive but runs nothing: a real child and a control socket, with
+    /// what the test `feed`s a group, so `host_memory` can be tried without the executable.
+    fn living_process() -> (HostProcess, Sender<Message>) {
+        let (address, name) = control_name().unwrap();
+        let listener =
+            ListenerOptions::new().name(name).nonblocking(ListenerNonblockingMode::Accept).create_sync().unwrap();
+        let remote = thread::spawn({
+            let address = address.clone();
+            move || connect(&address).unwrap()
+        });
+        let started = Instant::now();
+        let control = loop {
+            match listener.accept() {
+                Ok(stream) => break stream,
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(e) => panic!("the listener gave up: {e}"),
+            }
+            assert!(started.elapsed() < Duration::from_secs(2), "the remote half never connected");
+            thread::sleep(Duration::from_millis(1));
+        };
+        remote.join().unwrap();
+        // A child that lives on and ends by itself. `timeout` waits for a key and errors when
+        // there is no console to take it from; a ping to no host waits without input.
+        let mut child = Command::new(if cfg!(windows) { "cmd" } else { "sleep" });
+        if cfg!(windows) {
+            child.args(["/c", "ping", "-n", "11", "127.0.0.1", ">nul"]);
+        } else {
+            child.arg("10");
+        }
+        let child = child.stdout(Stdio::null()).stderr(Stdio::null()).spawn().unwrap();
+        let (feed, replies) = mpsc::channel();
+        (HostProcess { child, control, replies }, feed)
+    }
+
+    #[test]
+    fn a_host_that_reports_memory_is_counted_and_one_that_died_is_not() {
+        let (process, feed) = living_process();
+        let mut group = Group::new();
+        group.process = Some(process);
+        let group = Arc::new(Mutex::new(group));
+        lock(&GROUPS).insert((PathBuf::from("the test host"), "memory-test".into()), Arc::downgrade(&group));
+
+        // What the host sent is taken in and counted.
+        feed.send(Message::Memory { bytes: 300 }).unwrap();
+        assert_eq!(host_memory(), vec![300]);
+        // Reading does not consume the report; it stands until the next one.
+        assert_eq!(host_memory(), vec![300]);
+
+        // A process that has stopped is not counted, even with its last report in hand.
+        {
+            let mut locked = lock(&group);
+            if let Some(process) = locked.process.as_mut() {
+                let _ = process.child.kill();
+            }
+        }
+        // An ended child stays "running" its own last moment: let it be gone. (`alive` reaps
+        // what has gone, so the loop is what reads it.)
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while {
+            let mut locked = lock(&group);
+            locked.alive()
+        } {
+            assert!(Instant::now() < deadline, "the ended host still looks alive");
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(host_memory().is_empty(), "a dead host's report must not be counted");
+        assert_eq!(lock(&group).ram, None, "the dead host's report is let go of");
+    }
 }

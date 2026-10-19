@@ -14,6 +14,7 @@ use crate::settings::{
     AtStart, DeviceLayout, EditorPlacement, Graphics, MixerControls, OnOpen, PianoRollTop, PlayFrom, Side, StopReturn,
     ToolbarSize, WarpMode,
 };
+use suhina_update::Channel;
 
 /// The keys of `keymap.json`, where the keys and the mouse switches are saved.
 pub(crate) const KEYMAP: &[&str] = &["keymap.json"];
@@ -84,6 +85,28 @@ pub(crate) static ROWS: &[Entry] = &[
     .when(|s| s.at_start == AtStart::Template),
     row(
         Page::General,
+        "NAM",
+        "NAM models folder",
+        "Where the NAM Amp Modeler lists .nam models ([docs/spec/nam-amp-and-cab.md])",
+        &["nam_models_folder"],
+        |cx, r| {
+            let default = cx.about.nam_models_default.clone();
+            cx.folder(r, &default, crate::interaction::pick::PickField::NamModelsFolder, |s| &mut s.nam_models_folder);
+        },
+    ),
+    row(
+        Page::General,
+        "NAM",
+        "IR folder",
+        "Where the NAM Cab Loader lists .wav impulse responses",
+        &["irs_folder"],
+        |cx, r| {
+            let default = cx.about.irs_default.clone();
+            cx.folder(r, &default, crate::interaction::pick::PickField::IrFolder, |s| &mut s.irs_folder);
+        },
+    ),
+    row(
+        Page::General,
         "Backups",
         "Backups",
         "When a copy of each changed project is written to .backup beside it",
@@ -132,6 +155,37 @@ pub(crate) static ROWS: &[Entry] = &[
             let options: Vec<(&str, WarpMode)> = WarpMode::ALL.iter().map(|m| (m.title(), *m)).collect();
             cx.choose(r, &options, |s| &mut s.warp_mode);
         },
+    ),
+    row(
+        Page::General,
+        "Updates",
+        "Check for updates",
+        "Once per start, asks GitHub whether a newer build is out; sends nothing about you",
+        &["check_updates"],
+        |cx, r| cx.on_off(r, |s| &mut s.updates.check),
+    ),
+    row(
+        Page::General,
+        "Updates",
+        "Channel",
+        "Which builds an update comes from: the nightly, or in developer mode a pull request's test build",
+        &["update_channel"],
+        |cx, r| {
+            if cx.settings.updates.test_builds_listed() {
+                let options = [("Nightly", Channel::Nightly), ("Test builds", Channel::TestBuilds)];
+                cx.choose(r, &options, |s| &mut s.updates.channel);
+            } else {
+                cx.choose(r, &[("Nightly", Channel::Nightly)], |s| &mut s.updates.channel);
+            }
+        },
+    ),
+    row(
+        Page::General,
+        "Updates",
+        "Developer mode",
+        "Lists test builds of pull requests as an update channel; downloading one needs the GitHub CLI",
+        &["developer_mode"],
+        |cx, r| cx.on_off(r, |s| &mut s.updates.developer),
     ),
     // Audio.
     block(
@@ -217,6 +271,38 @@ pub(crate) static ROWS: &[Entry] = &[
     ),
     row(
         Page::Arrangement,
+        "Clips",
+        "Name field in clip menus",
+        "A clip's right-click menu carries its name to edit; off, Rename (Ctrl+R) edits the name on the clip",
+        &["menu_name_field"],
+        |cx, r| cx.on_off(r, |s| &mut s.view.menu_name_field),
+    ),
+    row(
+        Page::Arrangement,
+        "Clips",
+        "Moved notes replace the notes under them",
+        "In the piano roll, a note moved onto another of the same key and start takes its place; off, both play",
+        &["notes_replace"],
+        |cx, r| cx.on_off(r, |s| &mut s.view.notes_replace),
+    ),
+    row(
+        Page::Arrangement,
+        "Clips",
+        "Ctrl+drag selects time over clips",
+        "On, a plain drag moves clips and Ctrl+drag selects time; off, a drag from a lane's or a clip's upper half paints time and from the lower half moves clips or picks them. A drag on the ruler always selects time",
+        &["time_select"],
+        |cx, r| cx.on_off(r, |s| &mut s.view.time_select_ctrl),
+    ),
+    row(
+        Page::Arrangement,
+        "Clips",
+        "Alt-drag on an edge stretches audio",
+        "An audio clip's edge dragged with Alt held time-stretches its audio to the new length, its pitch kept; off, Alt does nothing there",
+        &["stretch_alt_drag"],
+        |cx, r| cx.on_off(r, |s| &mut s.view.stretch_alt),
+    ),
+    row(
+        Page::Arrangement,
         "Tracks",
         "Track headers",
         "Which side of the timeline they are on",
@@ -288,7 +374,7 @@ pub(crate) static ROWS: &[Entry] = &[
         "Play and stop",
         "Play from",
         "Where Play starts: the play start marker, or the start of the clip selected in the Arrangement view",
-        &["play_from"],
+        &["play_start"],
         |cx, r| {
             let options = [("Marker", PlayFrom::Marker), ("Selected clip", PlayFrom::Clip)];
             cx.choose(r, &options, |s| &mut s.play_from);
@@ -422,8 +508,9 @@ pub(crate) static ROWS: &[Entry] = &[
             cx.choose(r, &[("GPU", Graphics::Gpu), ("OpenGL", Graphics::OpenGl)], |s| &mut s.graphics);
         },
     ),
+    // Theme.
     block(
-        Page::Appearance,
+        Page::Theme,
         "Theme",
         "Theme",
         "The themes to pick from, the theme in use and its colours",
@@ -448,8 +535,15 @@ mod tests {
 
     /// Kept in `settings.json` but changed outside the Settings window: the browser and the map
     /// window as they were left.
-    const NOT_IN_THE_WINDOW: [&str; 6] =
-        ["browser", "browser_width", "map_dot_size", "map_window", "map_window_rect", "session_mixer_height"];
+    const NOT_IN_THE_WINDOW: [&str; 7] = [
+        "browser",
+        "browser_width",
+        "map_dot_size",
+        "map_window",
+        "map_window_rect",
+        "session_mixer_height",
+        "session_strip_fader",
+    ];
 
     fn saved_keys() -> Vec<String> {
         let settings = Settings { midi_inputs_off: vec!["Keys".into()], ..Settings::default() };

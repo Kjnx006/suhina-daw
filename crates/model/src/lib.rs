@@ -12,6 +12,7 @@ use std::fmt;
 
 pub mod automation;
 mod build;
+mod groups;
 mod ids;
 mod tempo;
 
@@ -20,6 +21,10 @@ pub use tempo::{
     TempoPoint, TimeSignatureChange, valid_bpm,
 };
 
+pub use groups::{
+    Branch, DeviceGroup, MACROS, MAX_BRANCHES, MAX_DEVICE_GROUP_DEPTH, MAX_DEVICES, MAX_MACRO_MAPPINGS, Macro,
+    MacroMapping, count_devices, device_at, device_at_mut, group_depth as device_group_depth, has_groups, walk_devices,
+};
 pub use ids::{ClipId, ClipPlace, IdsExhausted, LaneId, SceneId};
 
 mod launch;
@@ -263,6 +268,9 @@ pub enum DeviceKind {
         format: String,
         id: String,
     },
+    /// Devices of Suhina's own that hold other devices in parallel branches
+    /// (`docs/spec/device-groups.md`).
+    Group(Box<DeviceGroup>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -285,6 +293,62 @@ pub struct Device {
     /// in `params`), for plug-ins and built-in effects and instruments alike.
     pub automation: Vec<AutomationLane>,
     pub extensions: Extensions,
+}
+
+/// Maximum persisted manual slice boundaries per source.
+pub const MAX_SAMPLE_SLICES: usize = 4096;
+
+impl Device {
+    /// Manual source boundaries; None reads legacy fixed slice parameters.
+    pub fn sample_slices(&self) -> Option<Vec<f64>> {
+        let data = &self.extensions.0.iter().find(|e| e.format == "suhina" && e.key == "sample_slices")?.data;
+        if !data.len().is_multiple_of(8) || data.len() > MAX_SAMPLE_SLICES * 8 {
+            return None;
+        }
+        let mut points = Vec::with_capacity(data.len() / 8);
+        for bytes in data.as_chunks::<8>().0 {
+            let value = f64::from_le_bytes(*bytes);
+            if !value.is_finite() || value <= 0. || value >= 1. {
+                return None;
+            }
+            points.push(value);
+        }
+        points.sort_unstable_by(f64::total_cmp);
+        points.dedup();
+        Some(points)
+    }
+    pub fn set_sample_slices(&mut self, points: &[f64]) -> Result<(), &'static str> {
+        if points.len() > MAX_SAMPLE_SLICES || points.iter().any(|p| !p.is_finite() || *p <= 0. || *p >= 1.) {
+            return Err("slice map needs at most 4096 finite points strictly between 0 and 1");
+        }
+        self.extensions.0.retain(|e| !(e.format == "suhina" && e.key == "sample_slices"));
+        self.extensions.0.push(Extension {
+            format: "suhina".into(),
+            key: "sample_slices".into(),
+            data: points.iter().flat_map(|v| v.to_le_bytes()).collect(),
+        });
+        Ok(())
+    }
+    /// A sampler's source path, versioned independently of parameter values.
+    pub fn sample_file(&self) -> Option<&str> {
+        if !matches!(&self.kind, DeviceKind::Builtin(id) if id == "sampler") {
+            return None;
+        }
+        std::str::from_utf8(self.state.as_deref()?).ok()?.strip_prefix("suhina-sample-v1\n")?.split('\0').next()
+    }
+
+    pub fn set_sample_file(&mut self, path: &str) {
+        self.set_sample_reference(path, path);
+    }
+
+    pub fn sample_absolute_file(&self) -> Option<&str> {
+        self.sample_file()?;
+        std::str::from_utf8(self.state.as_deref()?).ok()?.split_once('\0').map(|(_, absolute)| absolute)
+    }
+
+    pub fn set_sample_reference(&mut self, file: &str, absolute: &str) {
+        self.state = Some(format!("suhina-sample-v1\n{file}\0{absolute}").into_bytes());
+    }
 }
 
 /// A parameter's value over the arrangement (an envelope): points in beat order, the value
@@ -478,6 +542,9 @@ pub struct Clip {
     pub follow_action: FollowAction,
     /// How the clip launches from a launcher slot: mode, legato and its own quantisation.
     pub launch: LaunchSettings,
+    /// The clip's own colour; `None` shows its track's, so a new clip takes the track's colour
+    /// and follows it. A clip moved to another track keeps the colour it had.
+    pub color: Option<Rgb>,
     pub extensions: Extensions,
 }
 
@@ -877,6 +944,42 @@ pub enum ValidationError {
     BadMidiInput(TrackId),
     /// The track's audio input names a channel outside 1 … 256.
     BadAudioInput(TrackId),
+    /// The channel holds more than [`MAX_DEVICES`] devices, counting every device at every depth.
+    TooManyDevices(ChannelId),
+    /// The device group at this path on the channel has no branch or more than [`MAX_BRANCHES`].
+    GroupBranches {
+        channel: ChannelId,
+        device: Vec<usize>,
+    },
+    /// The device group at this path does not have [`MACROS`] macros, or a macro has more than
+    /// [`MAX_MACRO_MAPPINGS`] mappings.
+    GroupMacros {
+        channel: ChannelId,
+        device: Vec<usize>,
+    },
+    /// The device group at this path is inside more than [`MAX_DEVICE_GROUP_DEPTH`] levels of groups,
+    /// itself counted.
+    DeviceGroupTooDeep {
+        channel: ChannelId,
+        device: Vec<usize>,
+    },
+    /// A branch of the device group at this path has a volume that is negative or not finite, or a
+    /// pan outside -1 … 1.
+    BadBranch {
+        channel: ChannelId,
+        device: Vec<usize>,
+    },
+    /// A macro of the device group at this path maps a device that is not in the group, or has a
+    /// range outside 0 … 1.
+    BadMacroMapping {
+        channel: ChannelId,
+        device: Vec<usize>,
+    },
+    /// A macro of the device group at this path maps a parameter another macro maps already.
+    MappedTwice {
+        channel: ChannelId,
+        device: Vec<usize>,
+    },
 }
 
 impl fmt::Display for ValidationError {
@@ -912,11 +1015,52 @@ impl fmt::Display for ValidationError {
             }
             Self::BadMarker(index) => write!(f, "arrangement marker {index} is not at a beat from 0 on"),
             Self::BadLoop => write!(f, "the loop region does not start at a beat from 0 on and end after it starts"),
+            Self::TooManyDevices(id) => write!(f, "channel {} holds more than {MAX_DEVICES} devices", id.0),
+            Self::GroupBranches { channel, device } => {
+                write!(
+                    f,
+                    "device group {} on channel {} does not have 1 to {MAX_BRANCHES} branches",
+                    path(device),
+                    channel.0
+                )
+            }
+            Self::GroupMacros { channel, device } => write!(
+                f,
+                "device group {} on channel {} does not have {MACROS} macros of at most {MAX_MACRO_MAPPINGS} mappings",
+                path(device),
+                channel.0
+            ),
+            Self::DeviceGroupTooDeep { channel, device } => write!(
+                f,
+                "device group {} on channel {} is inside more than {MAX_DEVICE_GROUP_DEPTH} levels of groups",
+                path(device),
+                channel.0
+            ),
+            Self::BadBranch { channel, device } => write!(
+                f,
+                "device group {} on channel {} has a branch with a negative volume or a pan outside -1 to 1",
+                path(device),
+                channel.0
+            ),
+            Self::BadMacroMapping { channel, device } => write!(
+                f,
+                "device group {} on channel {} maps a device that is not in it, or a range outside 0 to 1",
+                path(device),
+                channel.0
+            ),
+            Self::MappedTwice { channel, device } => {
+                write!(f, "device group {} on channel {} maps a parameter twice", path(device), channel.0)
+            }
         }
     }
 }
 
 impl std::error::Error for ValidationError {}
+
+/// A device path as the commands write it: `2/1/0`.
+fn path(device: &[usize]) -> String {
+    device.iter().map(ToString::to_string).collect::<Vec<_>>().join("/")
+}
 
 impl Project {
     /// Checks that ids are unique and every reference resolves. Importers call this so a
@@ -996,6 +1140,7 @@ impl Project {
             for send in &channel.sends {
                 channel_ref(send.target, &mut errors);
             }
+            groups::validate_devices(channel.id, &channel.devices, &mut errors);
         }
         for content in &self.contents {
             for lane in &content.lanes {

@@ -53,7 +53,7 @@ CHAPTERS = [
     (4, "Working with the Browser", 60, 0.49, "partial",
      "Search, categories, folders watched on disk, pins, recent, colour tags, preview through the "
      "engine, sample map by sound similarity (smooth with 200 000 items, also while its window is resized) with kinds recognised from the sound and set by hand; samples and MIDI files dragged from the system's file "
-     "manager land like a browser drag (exact placement waits for pointer positions from the "
+     "manager land like a browser drag; dropping one sample on an empty MIDI track adds Sampler (exact placement waits for pointer positions from the "
      "windowing layer); installed plug-ins grouped by vendor in the tree, and in the Plug-ins "
      "category as the instruments or the effects by name and format, with pins and tags on them. "
      "Missing collections/tag editor depth, packs, Splice, "
@@ -80,8 +80,9 @@ CHAPTERS = [
      "colour and a colour palette opened from the channel strip (one palette shared with the "
      "track menu and colour tags), quantised launching, a mixer resized "
      "from its top edge with a channel strip per track that shows more as it grows (volume fader "
-     "with meter and dB, pan, sends, name, device list), a double-click that makes a clip (a "
-     "setting), "
+     "with meter and dB, pan, sends, name, device list), on audio tracks an input block above "
+     "the toggles (Audio From with the source's dropdown and In/Auto/Off), a double-click that "
+     "makes a clip of the track's kind (a setting), "
      "selecting a slot, copying clips between the arrangement and slots (keys, menus, a drag over "
      "the view switch); "
      "scenes inserted, duplicated, deleted and renamed from a menu, with a tempo and time signature "
@@ -123,7 +124,8 @@ CHAPTERS = [
      "velocity lane sets many stems, the lane's height is dragged and an Audition button sounds "
      "drawn and moved notes. Ghost notes of the clips playing together, of the same track or of "
      "one picked clip are drawn faintly behind the notes. An empty "
-     "MIDI clip is made with a double-click on a slot or a lane (clip.create). A clip has a scale "
+     "clip of the track's kind (MIDI or audio, the audio one with no file yet) is made with a "
+     "double-click on a slot or a lane (clip.create). A clip has a scale "
      "(clip.setScale, a project default new clips take) whose keys the rows mark, and Fold and Fold "
      "to scale show only the keys with notes or in the scale. No "
      "chords, probability or MPE lanes."),
@@ -134,7 +136,7 @@ CHAPTERS = [
      "generative or shape-based tools."),
     (12, "Editing MPE", 10, 0.00, "absent", "No MPE data, editing or MPE-aware devices."),
     (13, "Converting Audio to MIDI", 5, 0.05, "planned",
-     "Spec written (docs/spec/audio-to-midi.md); slicing and the four detectors are roadmap."),
+     "Spec written (docs/spec/audio-to-midi.md); Sampler slicing, dynamic manual boundaries and waveform zoom/pan are available; audio-to-MIDI detectors remain roadmap."),
     (14, "Using Grooves", 6, 0.00, "absent", "No groove pool, extraction or commit."),
     (15, "Using Tuning Systems", 9, 0.00, "absent", "No .scl/.ascl tuning systems."),
     (16, "Launching Clips", 12, 0.77, "partial",
@@ -181,17 +183,21 @@ CHAPTERS = [
      "SDK-authored .sd effects and instruments load onto tracks, embed in projects, expose parameters, "
      "graphs and custom panels, and support explicit revision updates. Missing A/B, "
      "hot-swap, preset browser depth, defaults, device delay review."),
-    (24, "Using Plug-Ins", 12, 0.68, "partial",
+    (24, "Using Plug-Ins", 12, 0.72, "partial",
      "CLAP and VST3 hosted out of process, sandboxed, VST3 bundles on Windows, macOS and Linux, "
      "editors (Windows/X11), scans that try failures again and settle files built for another "
      "processor, a plug-in manager (plug-ins switched off, folders per format and switched off), latency "
      "compensation (followed when a plug-in changes its latency while it plays), saved state "
      "(a change in an editor counts as unsaved), VST2 read and matched to VST3, parameters set "
-     "and automated from the engine. Missing AU, VST2 hosting, "
+     "and automated from the engine, ARA plug-ins on audio tracks (arrangement clips, edits saved, "
+     "clip changes followed live, the editor in the clip's place; warped and looped clips not yet). Missing AU, VST2 hosting, "
      "configure mode, VST preset banks, sidechain parameters."),
-    (25, "Instrument, Drum and Effect Racks", 20, 0.03, "absent",
-     "A track's device chain is a single serial chain. No parallel chains, macros, key/velocity/"
-     "chain zones, drum pads or rack presets."),
+    (25, "Instrument, Drum and Effect Racks", 20, 0.25, "partial",
+     "Device groups: Ctrl+G groups picked devices, parallel branches with volume, pan, mute and "
+     "solo in the group's panel, a mix against the dry signal and an output gain, instruments "
+     "layered on the same notes, plug-ins inside, latency compensated, groups nested four deep, "
+     "moved and duplicated by command. No macros, key/velocity/chain zones, drum pads or group "
+     "presets."),
     (26, "Automation and Editing Envelopes", 22, 0.46, "partial",
      "Envelopes for track volume, pan and mute, built-in, .sd and plug-in device parameters: breakpoints "
      "with curved segments and jumps, saved, played in playback and renders (64-frame steps, ramped "
@@ -202,15 +208,18 @@ CHAPTERS = [
      "locking, simplifying envelopes."),
     (27, "Clip Envelopes", 13, 0.00, "absent", "No clip envelopes."),
     (28, "Working with Video", 6, 0.00, "absent", "No video import or window."),
-    (29, "Live Audio Effect Reference", 139, 0.15, "partial",
-     "Suhina has 7 effects (utility, auto-pan, three-band DJ EQ, vinyl distortion, overdrive, "
-     "compressor, limiter) against 42 documented audio effects; several are close equivalents in "
-     "kind but far narrower in parameters and modes."),
-    (30, "Live MIDI Effect Reference", 13, 0.00, "absent",
-     "SDK MIDI-effect graphs run before the instrument; the MIDI-transpose example shifts notes. "
-     "None of the 8 documented MIDI effects is implemented in full."),
-    (31, "Live Instrument Reference", 120, 0.08, "started",
-     "One instrument: the FM synth (DX7-style, MSFA port) against 13 instruments; no sampler, "
+    (29, "Live Audio Effect Reference", 139, 0.19, "partial",
+     "Suhina has 9 effects (utility, auto-pan, three-band DJ EQ, vinyl distortion, overdrive, "
+     "compressor, limiter, delay, reverb) against 42 documented audio effects; the delay and reverb "
+     "take every parameter of their counterparts, several others are close in kind but far "
+     "narrower in parameters and modes."),
+    (30, "Live MIDI Effect Reference", 13, 0.10, "started",
+     "One built-in MIDI effect, pitch: semitones or scale degrees with the clip's scale, and a key "
+     "window that blocks, folds or limits notes; its step buttons are planned. SDK MIDI-effect "
+     "graphs run before the instrument too. The other 7 documented MIDI effects are missing."),
+    (31, "Live Instrument Reference", 120, 0.12, "started",
+     "FM synth and single-source sample/granular instrument against 13 instruments; "
+     "graphical envelope stages with cumulative timing and directly draggable points, persistent waveform with grouped granular controls and a shared six-shape pitch/filter/volume/pan LFO with Random, Hz/time/beat-synced rates, independent source and loop-edge fades and tempo-synchronised sample Warp using editable original BPM; five pitch-preserving modes currently share one stretcher; no multisample zones, "
      "drum sampler, wavetable, subtractive or physical modelling yet."),
     (32, "Max for Live", 6, 0.05, "planned",
      "ADR 0021 defines data-only .sd graphs with a Rust SDK, DSP runtime and custom UI nodes; "

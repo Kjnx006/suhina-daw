@@ -62,6 +62,8 @@ pub struct Slot {
     pub length: f64,
     /// The clip's launch settings; `None` for an empty slot.
     pub launch: Option<LaunchSettings>,
+    /// The clip's own colour; `None` takes its track's.
+    pub color: Option<Rgb>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -118,6 +120,8 @@ pub struct StripDevice {
     pub enabled: bool,
     /// A plug-in, run outside Suhina; otherwise a built-in effect or instrument.
     pub plugin: bool,
+    /// For a device group: how many devices it holds, at every depth.
+    pub group: Option<usize>,
 }
 
 /// A track's send to one return track, as the mixer strip shows it.
@@ -189,6 +193,10 @@ pub struct Grid {
     /// The keys and notes mapped to slots, scenes and stop buttons that still exist, with the
     /// label the mapping mode shows (`docs/spec/ui-session-view.md` › Launch keys).
     pub mapped: Vec<(MappingTarget, String)>,
+    /// The main output's volume in dB.
+    pub main_volume_db: f64,
+    /// The metronome: on, its level in dB, its sound; set by the app.
+    pub metronome: (bool, f64, suhina_engine::ClickSound),
 }
 
 impl Grid {
@@ -225,7 +233,14 @@ impl Grid {
                 (ColumnKind::Return, _) => Vec::new(),
                 (_, None) => {
                     vec![
-                        Slot { state: SlotState::Empty, name: String::new(), enabled: true, length: 0.0, launch: None };
+                        Slot {
+                            state: SlotState::Empty,
+                            name: String::new(),
+                            enabled: true,
+                            length: 0.0,
+                            launch: None,
+                            color: None
+                        };
                         scene_count
                     ]
                 }
@@ -249,6 +264,7 @@ impl Grid {
                             enabled: clip.is_none_or(|c| c.enabled),
                             length: clip.map_or(0.0, |c| c.loop_range.map_or(c.length, |r| r.end - r.start)),
                             launch: clip.map(|c| c.launch),
+                            color: clip.and_then(|c| c.color),
                         }
                     })
                     .collect(),
@@ -308,6 +324,9 @@ impl Grid {
                                     | suhina_engine::model::DeviceKind::Vst3 { .. }
                                     | suhina_engine::model::DeviceKind::Vst2 { .. }
                             ),
+                            group: d.as_group().map(|g| {
+                                g.branches.iter().map(|b| suhina_engine::model::count_devices(&b.devices)).sum()
+                            }),
                         })
                         .collect()
                 }),
@@ -367,6 +386,12 @@ impl Grid {
             meter,
             project_meter: project.transport.meter(),
             mapped,
+            main_volume_db: project
+                .channels
+                .iter()
+                .find(|c| c.role == ChannelRole::Master)
+                .map_or(0.0, |c| gain_to_db(c.volume)),
+            metronome: (false, -6.0, suhina_engine::ClickSound::Beep),
         }
     }
 

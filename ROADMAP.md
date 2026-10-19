@@ -36,7 +36,8 @@ The gaps that matter most, in the order [ADR 0016](docs/decisions/0016-parity-ta
    the cue output works.
 5. **Arrangement editing:** the loop brace ([#98](https://github.com/suhina-daw/suhina-daw/issues/98)),
    locators ([#99](https://github.com/suhina-daw/suhina-daw/issues/99)).
-6. **EQ and filter**, then bus compressor, delays and reverb (see the devices below).
+6. **EQ and filter**, then bus compressor and a modulation delay (see the devices below; the delay
+   and reverb are done).
 7. **Launching from live MIDI notes** (the rest of M4, [#264](https://github.com/suhina-daw/suhina-daw/issues/264)).
 
 Finishing what is in flight (M3's commands, M6's automation and editors, M7, M8's installers and
@@ -66,7 +67,8 @@ its copyright notices kept and credited in [`ATTRIBUTION.md`](ATTRIBUTION.md).
   most used ones. Which stored device lands in which Suhina device, and how each mapping is learnt
   and tested: [`docs/spec/device-import.md`](docs/spec/device-import.md). The sampler and drum
   sampler as import targets: [#101](https://github.com/suhina-daw/suhina-daw/issues/101).
-- **Order:** EQ and filter first, then bus compressor, delays and reverb; multiband dynamics,
+- **Order:** EQ and filter first, then bus compressor and the modulation delay (the delay and
+  reverb are done); multiband dynamics,
   saturation, the sampler and drum sampler later
   ([ADR 0016](docs/decisions/0016-parity-target.md)).
 
@@ -85,15 +87,21 @@ exists in `devices/`, passes its tests and runs in track chains.
 | compressor: stereo-linked, soft knee, side-chain high-pass, dry/wet | own | done |
 | bus compressor | own, Airwindows (MIT) for reference | planned |
 | limiter: brickwall, 1.5 ms lookahead | own | done |
+| NAM Amp Modeler: a `.nam` capture through the pure-Rust `nam-rs` inference (MIT), with trims, its own EQ, HQ for the A2 width dial, a trim delay | nam-rs (MIT) | done |
+| NAM Cab Loader: a `.wav` impulse response through uniform-partitioned FFT convolution, with a phase invert, a high pass, tone cuts, a trim delay and a volume | fft-convolver (MIT) under `dsp` | done |
+| pitch, a MIDI effect: transposes by semitones or scale degrees, Block, Fold or Limit to a key window | own | done; step buttons planned |
 | multiband dynamics, upward and downward | own crossovers and detectors | planned |
-| delays | own delay lines | planned |
-| algorithmic and convolution reverb | Dragonfly Reverb (GPL-3.0), own convolution | planned |
+| delay: stereo, synced or free, filter in the loop, LFO, Repitch/Fade/Jump, ping-pong, freeze | own (`dsp` delay lines) | done |
+| modulation delay | own delay lines | planned |
+| reverb: algorithmic, early reflections, damped feedback delay network, chorus, freeze | own | done |
+| convolution reverb | own convolution | planned |
 | multi-stage saturation | own, oversampled | planned |
 | EQ, filter | own (`dsp` filters) | planned |
 | FM synth | MSFA (Apache-2.0) via Dexed | DX7-style engine (32 algorithms) done; more waveforms and a filter planned |
 | wavetable synth | Vital (GPL-3.0), under its own name | planned |
 | subtractive synth | own, Surge XT (GPL-3.0) for reference | planned |
-| sampler, drum sampler | own | planned |
+| sampler | own | single-source Simple/Grain instrument, SDK panel, source loading and recording, tempo-synchronised sample Warp with six selectable modes and automatically initialized, editable source BPM |
+| drum sampler | own | planned |
 | physical-modelling synth | Mutable Instruments Rings and Elements (MIT) | planned |
 
 ## Audio to MIDI
@@ -131,6 +139,20 @@ refused or suspended, never by losing its edits.
 
 ## What works now
 
+- **Device SDK authoring:** checked Rust graph handles, parameter-source helpers and standard
+  panel-control constructors produce the same data-only `.sd` devices and use the existing runtime.
+
+- **SDK panel composition:** numeric formatting chains, inherited parameter metadata and local
+  control-group coordinates simplify panels without changing their saved format or runtime.
+
+- Stock instruments and effects are generated as validated `.sd` files during
+  application builds and embedded for startup; DSP uses registered Rust implementations.
+
+- **Sampler:** single-source polyphonic sample and granular playback with an editable
+  waveform, SDK controls, browser/system sample drops and recording from the armed
+  track's selected audio input. Sample replacement is undoable; missing sources can
+  be relinked. Multisample zones remain planned.
+
 ### M0 Foundation
 - Rust workspace, GPL-3.0-or-later, CI (fmt, clippy `-D warnings`, tests) on Linux, Windows and
   macOS for every change; macOS does not block merging yet.
@@ -163,6 +185,13 @@ From Live Sets we authored ourselves in Live 12.4 ([format spec](docs/spec/als-f
 - device chains: VST2 and VST3 plug-ins with their id and state kept; the format's own devices:
   those Suhina has a counterpart for with their settings, the rest as placeholders
   ([device import](docs/spec/device-import.md))
+- a delay and an algorithmic reverb; the matching devices in a Live Set to import come in as them
+  with their panel settings; the delay's Equal-Loudness option is not read and imports as the
+  linear mix law ([delay](docs/spec/delay.md), [reverb](docs/spec/reverb.md),
+  [import](docs/spec/device-import.md))
+- the Pitch MIDI effect, with its settings ([pitch](docs/spec/pitch.md))
+- a MIDI clip's scale (root and mode), which Pitch follows; a scale Suhina has no mode for comes
+  in as none, with a warning
 - anything not understood yet is skipped with a warning; the project still opens
 
 ### M2 Playing
@@ -174,6 +203,24 @@ From Live Sets we authored ourselves in Live 12.4 ([format spec](docs/spec/als-f
   master volume and mute apply. A group with devices is a bus: its devices run over the sum of
   its tracks, with latency compensation on every path. `--fm` on `play` and `render` puts the FM synth on every MIDI
   track, with a voice from a DX7 file; `suhina-cli fm-synth voices` lists a file's voices.
+- Device groups play: devices grouped on a track run in parallel branches, each with its own
+  volume, pan, mute and solo, summed with a mix against the dry signal and an output gain;
+  instruments in a group are layered on the same notes, and groups nest four deep
+  ([spec](docs/spec/device-groups.md)). Ctrl+G puts the devices picked in a strip's list or the
+  chain into a group, Ctrl+Shift+G takes one apart; the group's panel sets its mix and gain and
+  each branch's volume, pan, mute and solo, and shows a branch's devices after it. Plug-ins run
+  inside groups too. Commands: `device.group`, `device.ungroup`, `device.addGroup`,
+  `device.move`, `device.duplicate`, `branch.*`, with device paths such as `"2/1/0"`.
+- The NAM Amp Modeler and NAM Cab Loader run a `.nam` model and a `.wav` impulse response from
+  the NAM folders in Settings, with `device.setNamFile` to load a file and `device.file` to read
+  it ([nam spec](docs/spec/nam-amp-and-cab.md)).
+- MIDI effects run before a track's instrument: the pitch effect transposes the notes by
+  semitones or by steps along the playing clip's scale and keeps them inside a window of keys
+  (Block, Fold, Limit); a note-off always ends the key its note started
+  ([spec](docs/spec/pitch.md)). On a track with no instrument the changed notes play as the
+  track's sine tones. It is in the browser under **MIDI Effects** and is set through
+  `device.setParam` or an automation lane; the device panel shows no controls for built-in
+  devices yet.
 - Sends and return tracks play: each track sends to each return before or after its fader; a
   return runs its devices over what it is sent and plays into the main channel or a group, with
   latency compensation on every send; loops are refused (`track.setSend`, `track.setSendMode`,
@@ -333,7 +380,9 @@ From Live Sets we authored ourselves in Live 12.4 ([format spec](docs/spec/als-f
   followed: Suhina hears of it, restarts the plug-in's processing as its format asks, and lines
   the tracks up again.
 - The device panel shows each plug-in's state (loading, running, missing, crashed) with Open
-  editor, Close editor or Restart; the same commands work from the CLI and MCP. Editors float
+  editor, Close editor or Restart; the same commands work from the CLI and MCP. P opens or
+  closes the shown track's plug-in's editor (the device the chain panel selects, else the
+  track's first running one; mappable, Settings › Shortcuts). Editors float
   above Suhina's window, owned by it (Windows, X11), and respond at once; a setting
   (Plug-ins › Editors › Device view) shows them inside the device panel instead, as part of
   the chain. On Linux the window is an X11 one whenever an X server (or XWayland) is there,
@@ -522,7 +571,8 @@ From Live Sets we authored ourselves in Live 12.4 ([format spec](docs/spec/als-f
 - The control bar has tempo, launch quantisation, play, stop, the position, the CPU load
   (how much of the time the audio engine spends rendering, from the engine's monitor; hidden
   while no engine plays) and the program's RAM in megabytes or gigabytes (its resident
-  memory, measured once a second); Space plays and stops, Ctrl+Z and Ctrl+Shift+Z undo and
+  memory, measured once a second, with every plug-in host process's own added, which each
+  reports to the engine once a second); Space plays and stops, Ctrl+Z and Ctrl+Shift+Z undo and
   redo. Every click is a command, the same the CLI and MCP run.
 - Level meters for every track, group and return and the main output, in the Session mixer and
   the Arrangement headers: peak and RMS per side on the volume's dB scale, a held peak line and a
@@ -548,7 +598,7 @@ From Live Sets we authored ourselves in Live 12.4 ([format spec](docs/spec/als-f
   project setting); a project that is gone says so in the status bar.
 - **Double-click makes a clip** ([#493](https://github.com/suhina-daw/suhina-daw/issues/493)):
   a setting in Settings › Interface, On by default; Off, a double-click on an empty slot or lane
-  spot no longer makes an empty MIDI clip.
+  spot no longer makes an empty clip of the track's kind.
 - Mixer commands take a list of tracks, so a selection moves together: `track.adjustVolume` and
   `track.adjustPan` move each track by the same amount, keeping what is between them, and
   `track.setMute`/`track.setSolo` take the whole list as one undo step. Dragging one header's
@@ -567,6 +617,20 @@ From Live Sets we authored ourselves in Live 12.4 ([format spec](docs/spec/als-f
 - A clip dropped over others replaces what it covers (shortens, splits or removes them), or
   stacks with them when Allow sample / MIDI stacking is on; stacked clips share the lane in
   sub-rows ([spec](docs/spec/arrangement-editing.md)).
+- A plug-in scan notes which VST3 plug-ins support ARA (`plugins.list` shows `ara`), and such a
+  plug-in is never given a host process of its own, since its document and every instance
+  editing it share one ([ADR 0028](docs/decisions/0028-ara-hosting.md)).
+- A plug-in that edits clips (ARA, such as a pitch editor) on an audio track is loaded with the
+  track's arrangement audio clips: its editor shows them and it plays its edited version of them
+  in time with the song. Its edits are saved with the project, and it follows the clips as they
+  are moved, trimmed, added or deleted while it plays, without loading again; an undo brings a
+  deleted clip back with its edits. Warped and looped
+  clips and the overlap guard come later ([ADR 0028](docs/decisions/0028-ara-hosting.md)).
+- Selecting an audio clip on such a track shows the plug-in's editor in the detail area, where a
+  MIDI clip has its piano roll, with that clip shown in it; the clip's menu (**Open in** the
+  plug-in) and Alt+M open it, adding the installed one (Melodyne first) to the track when it has
+  none. The plug-in goes first in its track's chain
+  ([clip editor](docs/spec/ui-clip-editor.md) › Where it opens).
 - `arrangement.audioOverlaps` lists the audio clips that sound together on one track because their
   spans overlap, clips that only touch left out, for agents and the CLI; the first step towards ARA
   ([ADR 0028](docs/decisions/0028-ara-hosting.md)).
@@ -588,9 +652,10 @@ From Live Sets we authored ourselves in Live 12.4 ([format spec](docs/spec/als-f
   nesting, and the fold triangle on a group's header hides its tracks in both views. Drag a header
   into a group, or use Move into group / Move out of group in its menu (`track.setGroup`); nested
   groups are saved and read from Live Sets ([spec](docs/spec/arrangement-editing.md#groups-inside-groups)).
-- A double-click on an empty Session slot or an empty spot of an Arrangement lane of a MIDI track
-  makes an empty MIDI clip there, a bar long and on the grid (`clip.create`, also over MCP); in
-  the Arrangement it is selected ([spec](docs/spec/arrangement-editing.md#making-an-empty-midi-clip)).
+- A double-click on an empty Session slot or an empty spot of an Arrangement lane makes an empty
+  clip of the track's kind — MIDI on a notes track, an audio clip with no file yet on an audio
+  track — a bar long and on the grid (`clip.create`, also over MCP); in the Arrangement it is
+  selected ([spec](docs/spec/arrangement-editing.md#making-an-empty-clip)).
 - Clips: Ctrl-click adds one to the selection and Shift-click takes the run up to one, Ctrl+A
   selects the lot, and Ctrl+C, Ctrl+X, Ctrl+D, Delete and 0 (clip mute) act on the whole
   selection as one undo step ([spec](docs/spec/arrangement-editing.md#selecting-clips)). Header
@@ -642,8 +707,9 @@ From Live Sets we authored ourselves in Live 12.4 ([format spec](docs/spec/als-f
 - **Audio input and monitoring:** choose an input device in Settings › Audio (off by default);
   each audio track hears one channel or a stereo pair of it, monitored while armed (Auto),
   always (In) or never (Off), through its devices and mix (`track.setAudioInput`); arm many
-  tracks at once to hear a band on separate tracks
-  ([#267](https://github.com/suhina-daw/suhina-daw/issues/267), ADR 0017).
+  tracks at once to hear a band on separate tracks; the source and the monitor sit on the
+  track's strip — Audio From and the three buttons — where the picker is visible without a
+  menu ([#267](https://github.com/suhina-daw/suhina-daw/issues/267), ADR 0017).
 - **A MIDI input per track:** each track hears every MIDI port, one port, or none, and every
   channel or one, so a keyboard and a pad controller (or two players) each play their own armed
   track; set from the track's menu or the Arrangement header (`track.setMidiInput`), saved with
@@ -800,3 +866,28 @@ From Live Sets we authored ourselves in Live 12.4 ([format spec](docs/spec/als-f
   ([#64](https://github.com/suhina-daw/suhina-daw/issues/64)) and the rest of the clip editor
   ([#200](https://github.com/suhina-daw/suhina-daw/issues/200)) in the detail area, installers and
   signed builds ([#180](https://github.com/suhina-daw/suhina-daw/issues/180)).
+
+- Sampler: Poly/Mono selection, mono glide control, pitch attack/decay envelope, live sample read head, and recording controls beside the editor tabs.
+
+- Sampler panel: full-width waveform with context-sensitive S/E source/loop handles, grouped controls, fine drag calibration, compact filter dials and 12/24 buttons, and LFO modulation of pitch/filter/volume/pan within a 200-pixel device height.
+
+- Sampler envelope editing: AMP/PITCH tabs with stage points and a responsive release display; playback-mode changes stop held voices.
+
+- Sampler voice controls: independent polyphonic waveform heads, smooth voice replacement, Retrigger, filter response buttons, 12/24 slopes, filter ADSR and velocity/key cutoff modulation.
+
+- Sampler has waveform LFO selection including Random, independent source Fade In/Out, conditional loop fields and adjacent header Input/Record controls.
+
+- Sampler offers Slices playback with Transient, Beat, Region and editable Manual boundaries, mapped from the root note.
+
+- Sampler envelope graphs have padded dark surfaces, large editable points, cumulative stage timing and direct point dragging without value jumps.
+
+- Sampler waveform: dynamic manual slice maps with double-click add/remove, draggable
+  lines, gray areas outside S/E, anchored zoom and horizontal navigation.
+
+- Sampler LFO rate supports Hz, milliseconds, beat divisions, triplets, dotted notes and sixteenth-note counts.
+
+- Drop one audio file onto an empty MIDI track to add Sampler with that source.
+
+- Project-open audio references stay inside the project folder; external files require explicit relinking.
+
+- Sampler Loop playback uses Fade in and Fade out for its edges, without a separate Loop fade field or a shortened loop.

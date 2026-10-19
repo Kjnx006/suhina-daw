@@ -115,6 +115,8 @@ pub enum LaunchCommand {
         on: bool,
         gain: Option<f32>,
     },
+    /// The metronome's click sound from the next click on.
+    SetMetronomeSound(crate::ClickSound),
     /// While the transport runs, playback jumps to `beat` at once, as [`LaunchCommand::SetPosition`]
     /// does, but the play start marker stays where it is. Ignored while stopped (the playhead is
     /// at the marker then) and for non-finite beats. For an output that is opened again.
@@ -493,6 +495,8 @@ struct PlanNote {
     bus: u32,
     /// The track's meter slot.
     meter: u32,
+    /// The scale of the clip.
+    scale: Option<suhina_device_api::MusicalScale>,
 }
 
 struct PlanAudio {
@@ -1038,6 +1042,7 @@ fn plan_clip(
                         gain_right: gain_right * velocity,
                         bus,
                         meter,
+                        scale: crate::musical_scale(content.scale),
                     });
                 }
             }
@@ -1174,6 +1179,7 @@ impl Renderer {
                 self.metronome.set(on, gain);
                 self.graph.launcher.monitor.metronome.store(self.metronome.on(), Ordering::Relaxed);
             }
+            LaunchCommand::SetMetronomeSound(sound) => self.metronome.set_sound(sound),
             LaunchCommand::SetCue { gain, separate } => self.cue.set(gain, separate),
             LaunchCommand::FollowTempoMap => {
                 self.graph.launcher.follow_map();
@@ -1760,6 +1766,7 @@ impl Renderer {
                 column: column_id,
                 bus: note.bus,
                 meter: note.meter,
+                scale: note.scale,
             };
             start_note(voices, chains, frame, *position, *sample_rate, end, start);
         };
@@ -1815,6 +1822,7 @@ mod tests {
             fade_out_curve: Default::default(),
             follow_action: Default::default(),
             launch: Default::default(),
+            color: None,
             extensions: Extensions::default(),
         }
     }

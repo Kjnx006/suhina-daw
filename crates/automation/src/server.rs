@@ -478,12 +478,14 @@ impl SuhinaMcp {
                     _ => heard,
                 };
                 let audio = audio_snapshot(session);
-                Ok((path, env, project, audio, launches))
+                // The NAM devices' files, read when the project opened.
+                let assets = session.device_assets().clone();
+                Ok((path, env, project, audio, assets, launches))
             })
             .await;
         let result = match prepared {
             Err(e) => Err(e),
-            Ok((path, env, project, audio, launches)) => {
+            Ok((path, env, project, audio, assets, launches)) => {
                 tokio::task::spawn_blocking(move || -> Result<Value, String> {
                     // Files the session has not decoded yet are decoded here, off the window's thread.
                     let (audio, warnings) = audio.complete(&project);
@@ -501,7 +503,7 @@ impl SuhinaMcp {
                             "steps": steps,
                         }));
                     }
-                    let summary = render_wav(&project, &audio, &path, sample_rate, Some(&env))?;
+                    let summary = render_wav(&project, &audio, &assets, &path, sample_rate, Some(&env))?;
                     Ok(json!({
                         "output": display_path(&path),
                         "warnings": warnings,
@@ -627,7 +629,7 @@ fn confine(workspace: &Workspace, id: &str, mut params: Value, source: Option<&P
             confine_file(workspace, &mut params, "preset")?;
             confine_file(workspace, &mut params, "sd")?;
         }
-        "device.addSd" => confine_file(workspace, &mut params, "path")?,
+        "device.addSd" | "device.updateSd" | "device.loadSample" => confine_file(workspace, &mut params, "path")?,
         "library.list" => {
             let folder = params.get("folder").and_then(Value::as_str).ok_or("folder must be a text")?;
             params["folder"] = json!(display_path(&workspace.readable_folder(folder)?));
@@ -997,11 +999,14 @@ mod confine_tests {
             confine(&workspace, "clip.addFiles", json!({ "paths": ["pack/kick.wav"], "start": 0.0 }), None).unwrap();
         assert!(ok["paths"][0].as_str().unwrap().ends_with("kick.wav"));
         assert!(Path::new(ok["paths"][0].as_str().unwrap()).is_absolute());
+        let update = confine(&workspace, "device.updateSd", json!({"path":"pack/kick.wav"}), None).unwrap();
+        assert!(Path::new(update["path"].as_str().unwrap()).is_absolute());
         let outside = dir.join("outside").join("secret.wav").display().to_string();
         for (id, params) in [
             ("clip.addFiles", json!({ "paths": [outside.clone()] })),
             ("clip.addFiles", json!({ "paths": ["../outside/secret.wav"] })),
             ("preview.play", json!({ "path": outside.clone() })),
+            ("device.updateSd", json!({ "track":1,"device":0,"path": outside.clone() })),
             ("device.add", json!({ "track": 1, "preset": outside.clone() })),
             ("library.list", json!({ "folder": dir.join("outside").display().to_string() })),
             ("library.search", json!({ "place": dir.join("outside").display().to_string() })),

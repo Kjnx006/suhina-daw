@@ -26,6 +26,8 @@ pub enum ItemKind {
     Instrument,
     Effect,
     AudioEffect,
+    /// A built-in MIDI effect: it goes before a MIDI track's instrument.
+    MidiEffect,
     /// A heading in the tree (Instruments, Plug-ins, a vendor).
     Heading,
 }
@@ -38,7 +40,7 @@ impl ItemKind {
 
     /// Whether it becomes a device on a track.
     pub fn is_device(self) -> bool {
-        matches!(self, Self::Instrument | Self::Effect | Self::AudioEffect | Self::Preset)
+        matches!(self, Self::Instrument | Self::Effect | Self::AudioEffect | Self::MidiEffect | Self::Preset)
     }
 }
 
@@ -82,6 +84,8 @@ pub fn system_file(path: &Path) -> Option<BrowserItem> {
 /// Where a drag from the browser can land, as the view under the pointer says.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DropTarget {
+    /// Replace a sampler source, without creating a clip or a track.
+    Sampler { track: TrackId, device: usize },
     /// An arrangement lane, at a beat (already snapped).
     Lane { track: TrackId, beat: f64 },
     /// A clip slot (scene from 0).
@@ -159,6 +163,21 @@ pub fn plan(
     stack: bool,
     track_name: &dyn Fn(TrackId) -> String,
 ) -> Option<DropPlan> {
+    if let DropTarget::Sampler { track, device } = target {
+        let [sample] = items else { return None };
+        if sample.kind != ItemKind::Sample {
+            return None;
+        }
+        let path = sample.path()?;
+        return Some(DropPlan {
+            commands: vec![(
+                "device.loadSample",
+                json!({"track": track.0, "device": device, "path": path.display().to_string()}),
+            )],
+            samples: vec![path],
+            label: "Replace sampler source".into(),
+        });
+    }
     let files: Vec<&BrowserItem> = items.iter().filter(|i| i.kind.is_file_clip()).collect();
     let devices: Vec<&BrowserItem> = items.iter().filter(|i| i.kind.is_device()).collect();
     if files.is_empty() && devices.is_empty() {
@@ -183,7 +202,7 @@ pub fn plan(
                 params["scene"] = json!(scene + 1);
                 label.push(format!("Add {count} to {}", track_name(track)));
             }
-            DropTarget::Track(_) => return None,
+            DropTarget::Track(_) | DropTarget::Sampler { .. } => return None,
             DropTarget::NewTracks { beat, scene } => {
                 match (beat, scene) {
                     (_, Some(scene)) => params["scene"] = json!(scene + 1),
@@ -229,7 +248,10 @@ pub fn plan(
             }
         };
         match target {
-            DropTarget::Lane { track, .. } | DropTarget::Slot { track, .. } | DropTarget::Track(track) => {
+            DropTarget::Lane { track, .. }
+            | DropTarget::Slot { track, .. }
+            | DropTarget::Track(track)
+            | DropTarget::Sampler { track, .. } => {
                 params["track"] = json!(track.0);
                 commands.push((id, params));
                 label.push(format!("Add {} to {}", device.name, track_name(track)));
@@ -285,6 +307,16 @@ mod tests {
         );
         assert_eq!(plan.samples.len(), 1);
         assert_eq!(plan.label, "Add 2 clips to T3");
+    }
+
+    #[test]
+    fn sampler_drop_replaces_source_without_creating_clips() {
+        let target = DropTarget::Sampler { track: TrackId(3), device: 0 };
+        let items = [item("/s/a.wav", ItemKind::Sample)];
+        let result = plan(&items, target, false, "rhythmic", false, &name).unwrap();
+        assert_eq!(result.commands, vec![("device.loadSample", json!({"track":3, "device":0, "path":"/s/a.wav"}))]);
+        assert!(plan(&[item("/s/a.mid", ItemKind::Midi)], target, false, "rhythmic", false, &name).is_none());
+        assert!(plan(&[items[0].clone(), items[0].clone()], target, false, "rhythmic", false, &name).is_none());
     }
 
     #[test]
@@ -359,6 +391,15 @@ mod tests {
             plan(&[synth], DropTarget::NewTracks { beat: Some(0.0), scene: None }, false, "rhythmic", false, &name)
                 .unwrap();
         assert_eq!(new.commands, vec![("track.add", json!({ "device": "fm-synth" }))]);
+        // A MIDI effect is a device like the others: the session puts it before the instrument.
+        let pitch = item("device:pitch", ItemKind::MidiEffect);
+        let on_track =
+            plan(std::slice::from_ref(&pitch), DropTarget::Track(TrackId(2)), false, "rhythmic", false, &name).unwrap();
+        assert_eq!(on_track.commands, vec![("device.add", json!({ "id": "pitch", "track": 2 }))]);
+        let new =
+            plan(&[pitch], DropTarget::NewTracks { beat: Some(0.0), scene: None }, false, "rhythmic", false, &name)
+                .unwrap();
+        assert_eq!(new.commands, vec![("track.add", json!({ "device": "pitch" }))]);
         assert!(
             plan(&[item("/s/dir", ItemKind::Folder)], DropTarget::Track(TrackId(1)), false, "rhythmic", false, &name)
                 .is_none()

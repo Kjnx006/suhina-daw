@@ -236,7 +236,7 @@ fn the_tree_lists_devices_and_folders_and_opens_them() {
     let (settings, folder) = (temp("tree-settings"), temp("tree"));
     pack(&folder);
     let mut harness = window(&settings, &folder);
-    for heading in ["Instruments", "Effects", "Plug-ins"] {
+    for heading in ["Instruments", "Effects", "MIDI Effects", "Plug-ins"] {
         assert!(harness.query_by_label(&row(heading)).is_some(), "{heading}");
     }
     harness.get_by_label(&row("Instruments")).click();
@@ -692,6 +692,47 @@ fn a_device_dragged_onto_a_track_header_joins_its_chain_and_becomes_recent() {
     let _ = std::fs::remove_dir_all(&folder);
 }
 
+/// The browser lists MIDI effects under a heading of their own, and an instrument dragged onto a
+/// track lands after the MIDI effect dragged there first.
+#[test]
+fn midi_effects_have_their_own_heading_and_go_before_the_instrument() {
+    let (settings, folder) = (temp("midi-effect-settings"), temp("midi-effect"));
+    pack(&folder);
+    let mut harness = window(&settings, &folder);
+    assert!(harness.query_by_label(&row("Pitch")).is_none(), "closed headings hide their devices");
+    harness.get_by_label(&row("MIDI Effects")).click();
+    harness.run();
+    assert!(harness.query_by_label(&row("Pitch")).is_some(), "MIDI Effects lists the pitch effect");
+    harness.get_by_label(&row("Effects")).click();
+    harness.run();
+    assert!(harness.query_by_label(&row("Pitch")).is_some(), "and Effects does not take it over");
+    let bass_devices = |app: &App| {
+        app.session().map_or(Vec::new(), |s| {
+            let p = s.project();
+            let channel = p.tracks.iter().find(|t| t.name == "Bass").and_then(|t| t.channel).unwrap_or(ChannelId(0));
+            p.channels
+                .iter()
+                .find(|c| c.id == channel)
+                .map_or(Vec::new(), |c| c.devices.iter().map(|d| d.name.clone()).collect::<Vec<_>>())
+        })
+    };
+    let to = harness.get_by_label("Track Bass").rect().center();
+    let from = harness.get_by_label(&row("Pitch")).rect().center();
+    drag(&mut harness, from, to);
+    assert!(until(&mut harness, |app| bass_devices(app) == ["Pitch"]), "{:?}", bass_devices(harness.state()));
+    harness.get_by_label(&row("Instruments")).click();
+    harness.run();
+    let from = harness.get_by_label(&row("FM Synth")).rect().center();
+    drag(&mut harness, from, to);
+    assert!(
+        until(&mut harness, |app| bass_devices(app) == ["Pitch", "FM Synth"]),
+        "the instrument goes after the MIDI effect: {:?}",
+        bass_devices(harness.state())
+    );
+    let _ = std::fs::remove_dir_all(&settings);
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
 #[test]
 fn escape_cancels_a_drag_and_a_project_opens_with_a_double_click() {
     let (settings, folder) = (temp("cancel-settings"), temp("cancel"));
@@ -804,57 +845,14 @@ fn render_the_browser() {
     let _ = std::fs::remove_dir_all(&folder);
 }
 
-/// An audio system that keeps the renderers it opens, so a test runs them as an audio thread
-/// would.
-#[derive(Default)]
-struct StandAudio {
-    renderers: std::sync::Mutex<Vec<suhina_engine::Renderer>>,
-}
-
-impl StandAudio {
-    fn opened(&self) -> usize {
-        self.renderers.lock().map_or(0, |r| r.len())
-    }
-
-    /// Runs the newest output for a block; returns its loudest sample.
-    fn run_latest(&self) -> f32 {
-        let mut renderers = self.renderers.lock().unwrap();
-        let Some(renderer) = renderers.last_mut() else { return 0.0 };
-        let mut block = vec![0.0f32; 512 * 2];
-        renderer.process(&mut block);
-        block.iter().fold(0.0f32, |m, s| m.max(s.abs()))
-    }
-}
-
-impl suhina_session::AudioSystem for StandAudio {
-    fn hosts(&self) -> Vec<suhina_session::audio::HostInfo> {
-        Vec::new()
-    }
-
-    fn open(
-        &self,
-        project: &suhina_engine::model::Project,
-        audio: &suhina_engine::AudioPool,
-        _choice: &suhina_session::OutputChoice,
-        _previous: Option<suhina_session::Player>,
-    ) -> Result<suhina_session::audio::Opened, String> {
-        let mut renderer = suhina_engine::Renderer::stopped(project, audio, 48_000).map_err(|e| e.to_string())?;
-        let player = suhina_session::Player::new(renderer.controller(), None);
-        self.renderers.lock().unwrap().push(renderer);
-        Ok(suhina_session::audio::Opened { player, notice: None, plugins_kept: true })
-    }
-}
-
 #[test]
-fn with_no_project_open_samples_are_browsed_and_previewed() {
+fn the_start_panel_hides_the_browser_until_a_project_is_open() {
     let (settings, folder) = (temp("nothing-open-settings"), temp("nothing-open"));
     pack(&folder);
-    let stand = std::sync::Arc::new(StandAudio::default());
     let mut app = App::new();
     let mut library = Library::new(Some(settings.to_path_buf()));
     library.add_folder(&folder).unwrap();
     app.set_file_library(library);
-    app.projects_mut().set_audio_system(stand.clone());
     let mut harness = Harness::builder()
         .with_size(SIZE)
         .with_step_dt(0.05)
@@ -863,19 +861,13 @@ fn with_no_project_open_samples_are_browsed_and_previewed() {
     theme::install(&harness.ctx);
     harness.run();
     assert!(harness.state().projects().is_empty());
+    // With nothing open the start panel stands alone (#632): no browser beside it.
     let name = folder.file_name().unwrap().to_string_lossy().to_string();
-    double_click(&mut harness, &row(&name));
-    harness.get_by_label(&row("Loop 120bpm.wav")).click();
-    let heard = until(&mut harness, |_| stand.run_latest() > 0.05);
-    assert!(heard, "the sample plays with nothing open: {:?}", harness.state().status());
-    assert_eq!(stand.opened(), 1, "one output, for the previews");
-    assert!(harness.state().projects().is_empty(), "previewing opens no project");
-    // The sample map opens too; it redraws while it lays out, so it is stepped.
-    harness.get_by_label("Show the samples laid out by how they sound").click();
-    for _ in 0..3 {
-        harness.step();
-    }
-    assert!(harness.query_by_label("Fit").is_some(), "the sample map shows with nothing open");
+    assert!(harness.query_by_label(&row(&name)).is_none(), "no browser on the start panel");
+    // A project brings it back.
+    harness.state_mut().set_session(Session::new(demo_project()), &[]);
+    harness.run();
+    assert!(harness.query_by_label(&row(&name)).is_some(), "the browser shows with a project open");
     let _ = std::fs::remove_dir_all(&settings);
     let _ = std::fs::remove_dir_all(&folder);
 }

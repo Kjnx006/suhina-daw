@@ -71,6 +71,8 @@ pub struct BrowserOut {
     pub status: Option<Status>,
     /// Browse… beside the new folder's field: the system's folder dialog.
     pub pick_folder: bool,
+    /// The preview strip's Auto switch was clicked: turn the automatic preview on or off.
+    pub toggle_autoplay: bool,
 }
 
 /// Draws the results area another way: the area, the browser's state and the projects.
@@ -91,7 +93,7 @@ pub struct Context<'a> {
 
 fn icon_color(kind: ItemKind) -> Color32 {
     match kind {
-        ItemKind::Midi => theme::track_color_2(),
+        ItemKind::Midi | ItemKind::MidiEffect => theme::track_color_2(),
         ItemKind::Sample => theme::track_color_3(),
         ItemKind::Instrument | ItemKind::Preset => theme::track_color_4(),
         ItemKind::Effect | ItemKind::AudioEffect => theme::track_color_1(),
@@ -121,7 +123,7 @@ fn icon(painter: &egui::Painter, rect: Rect, kind: ItemKind, color: Color32) {
             painter.line_segment([c + Vec2::new(0.5, 2.5), c + Vec2::new(0.5, -4.5)], stroke);
             painter.line_segment([c + Vec2::new(0.5, -4.5), c + Vec2::new(3.5, -3.0)], stroke);
         }
-        ItemKind::Instrument | ItemKind::Effect | ItemKind::AudioEffect => {
+        ItemKind::Instrument | ItemKind::Effect | ItemKind::AudioEffect | ItemKind::MidiEffect => {
             let body = Rect::from_center_size(c, Vec2::splat(9.0));
             painter.rect_stroke(body, 0.0, stroke, egui::StrokeKind::Inside);
             painter.circle_stroke(c, 2.0, stroke);
@@ -685,6 +687,7 @@ fn results_view(
             ItemKind::Instrument if row.item.plugin => Some("plug-in".into()),
             ItemKind::Effect if row.item.plugin => Some("plug-in".into()),
             ItemKind::AudioEffect => Some("AudioEffect".into()),
+            ItemKind::MidiEffect => Some("MIDI effect".into()),
             _ => None,
         }
         .unwrap_or_default();
@@ -1118,6 +1121,20 @@ fn preview_strip(
     let painter = ui.painter_at(area);
     painter.rect_filled(area, 0.0, theme::window_background());
     painter.hline(area.x_range(), area.top() + 0.5, theme::hairline(theme::border()));
+    // The Auto switch at the top right: a selected sample plays by itself while it is lit
+    // (Settings › Browser › the same setting).
+    let auto = Rect::from_min_size(Pos2::new(area.right() - PAD - 40.0, area.top() + 4.0), Vec2::new(40.0, 16.0));
+    let response = ui
+        .interact(auto, Id::new("browser-preview-auto"), Sense::click())
+        .on_hover_text("Auto preview: a sample plays when it is selected");
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Checkbox, true, "Auto preview"));
+    if response.clicked() {
+        out.toggle_autoplay = true;
+    }
+    let (fill, text) = widgets::toggle_colors(ui, &response, settings.preview_autoplay);
+    painter.rect_filled(auto, 3.0, fill);
+    widgets::text_in(&painter, auto, Align2::CENTER_CENTER, "Auto", theme::ui_font(theme::TEXT_SMALL), text);
+    let area = Rect::from_min_max(area.min, Pos2::new(auto.left() - PAD, area.bottom()));
     let item = match state.selected.as_slice() {
         [one] if matches!(one.kind, ItemKind::Sample | ItemKind::Midi) => one.clone(),
         _ => {
@@ -1630,20 +1647,37 @@ fn footer_view(
     edit_rect
 }
 
-/// The browser's resize handle at its inner edge; returns the new width while dragged.
-pub fn resize_handle(ui: &Ui, handle: Rect, width: f32, left: bool) -> Option<f32> {
-    let response =
-        ui.interact(handle, Id::new("browser-resize"), Sense::drag()).on_hover_cursor(CursorIcon::ResizeHorizontal);
+/// The browser's resize handle at its inner edge: dragged, the width it is dragged to;
+/// double-clicked, `default`. Gives that width, and whether the handle was let go (or reset)
+/// now: the width is saved then, not on every frame of a drag.
+pub fn resize_handle(ui: &Ui, handle: Rect, width: f32, left: bool, default: f32) -> (Option<f32>, bool) {
+    let response = ui
+        .interact(handle, Id::new("browser-resize"), Sense::click_and_drag())
+        .on_hover_cursor(CursorIcon::ResizeHorizontal);
+    if response.double_clicked() {
+        return (Some(default), true);
+    }
     ui.painter().rect_filled(
         handle,
         0.0,
         if response.hovered() || response.dragged() { theme::border_strong() } else { theme::border() },
     );
-    if response.dragged() {
-        let dx = response.drag_delta().x;
-        return Some(if left { width + dx } else { width - dx });
+    // The width follows the pointer from where the drag began, so it never falls behind it
+    // (adding each frame's movement to the width rounded to whole points would).
+    let start_id = Id::new("browser-resize-start");
+    if response.drag_started()
+        && let Some(pointer) = response.interact_pointer_pos()
+    {
+        ui.ctx().data_mut(|d| d.insert_temp(start_id, (width, pointer.x)));
     }
-    None
+    if response.dragged()
+        && let (Some((from, x0)), Some(pointer)) =
+            (ui.ctx().data(|d| d.get_temp::<(f32, f32)>(start_id)), response.interact_pointer_pos())
+    {
+        let dx = pointer.x - x0;
+        return (Some(if left { from + dx } else { from - dx }), false);
+    }
+    (None, response.drag_stopped())
 }
 
 /// The active project's session.
