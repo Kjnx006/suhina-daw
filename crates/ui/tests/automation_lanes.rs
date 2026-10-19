@@ -15,8 +15,10 @@ use suhina_session::Session;
 use suhina_ui::demo::demo_project;
 use suhina_ui::{App, kit::theme};
 
+/// The window the tests draw in, in points.
 const SIZE: (f32, f32) = (1280.0, 800.0);
 
+/// `project` open in the app, in the Arrangement view, with the browser closed.
 fn arrangement(project: Project) -> Harness<'static, App> {
     arrangement_sized(project, SIZE)
 }
@@ -74,6 +76,7 @@ fn click_at(harness: &mut Harness<'static, App>, pos: Pos2) {
     harness.run();
 }
 
+/// A drag with the left button from `from` by `by`, through its middle.
 fn drag(harness: &mut Harness<'static, App>, from: Pos2, by: egui::Vec2) {
     harness.hover_at(from);
     harness.run();
@@ -92,11 +95,13 @@ fn lane(harness: &Harness<'static, App>) -> egui::Rect {
     harness.get_by_label("Volume automation on Drums").rect()
 }
 
+/// A click on the volume lane `x` points from its left, half-way up.
 fn add_point(harness: &mut Harness<'static, App>, x: f32) {
     let rect = lane(harness);
     click_at(harness, Pos2::new(rect.left() + x, rect.center().y));
 }
 
+/// The envelope button in a track header shows its lanes under it and hides them again.
 #[test]
 fn the_envelope_button_shows_and_hides_a_tracks_lanes() {
     let mut harness = arrangement(demo_project());
@@ -110,6 +115,7 @@ fn the_envelope_button_shows_and_hides_a_tracks_lanes() {
     assert!(harness.query_by_label("Volume automation on Drums").is_none());
 }
 
+/// A click on a lane adds a point on the grid at the pointer's height, and undo removes it.
 #[test]
 fn a_click_on_a_lane_adds_a_point_on_the_grid_and_undo_removes_it() {
     let mut harness = with_lanes();
@@ -128,6 +134,7 @@ fn a_click_on_a_lane_adds_a_point_on_the_grid_and_undo_removes_it() {
     assert!(volume(&harness).0.is_empty());
 }
 
+/// A click with Alt (Option on macOS) adds a point where the pointer is, off the grid.
 #[test]
 fn alt_adds_a_point_off_the_grid() {
     let mut harness = with_lanes();
@@ -146,6 +153,7 @@ fn alt_adds_a_point_off_the_grid() {
     assert!((points[0].beat - 12.5).abs() < 0.2, "{}", points[0].beat);
 }
 
+/// Dragging a point moves it on the grid and up, in one undo step.
 #[test]
 fn dragging_a_point_moves_it_on_the_grid_in_one_undo_step() {
     let mut harness = with_lanes();
@@ -164,6 +172,7 @@ fn dragging_a_point_moves_it_on_the_grid_in_one_undo_step() {
     assert_eq!(volume(&harness).0, before);
 }
 
+/// A selected point goes with Delete, another with a double-click, and the lane stays shown.
 #[test]
 fn a_double_click_or_delete_removes_points() {
     let mut harness = with_lanes();
@@ -195,6 +204,7 @@ fn a_double_click_or_delete_removes_points() {
     assert!(harness.query_by_label("Volume automation on Drums").is_some());
 }
 
+/// Points selected with a box or Shift-click move together and are deleted in one step.
 #[test]
 fn selected_points_move_and_delete_together() {
     let mut harness = with_lanes();
@@ -229,6 +239,7 @@ fn selected_points_move_and_delete_together() {
     assert_eq!(volume(&harness).0.len(), 3);
 }
 
+/// A lane a manual change turned off turns on again from its header's toggle.
 #[test]
 fn a_lane_turned_off_by_a_manual_change_turns_on_again_from_its_header() {
     let mut project = demo_project();
@@ -251,6 +262,7 @@ fn a_lane_turned_off_by_a_manual_change_turns_on_again_from_its_header() {
     assert!(harness.query_by_label("Turn off Volume automation on Drums").is_some());
 }
 
+/// **+** adds a lane of the next parameter and **×** hides it again.
 #[test]
 fn a_lane_shows_another_parameter_and_more_lanes_are_added() {
     let mut harness = with_lanes();
@@ -264,6 +276,7 @@ fn a_lane_shows_another_parameter_and_more_lanes_are_added() {
     assert!(harness.query_by_label("Volume automation on Drums").is_some());
 }
 
+/// Dragging the line between two points up bends the first point's curve, in one undo step.
 #[test]
 fn dragging_a_segment_up_bends_its_curve() {
     let mut harness = with_lanes();
@@ -819,6 +832,8 @@ fn render_the_lanes() {
     image.save(out.join("automation-lanes.png")).unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// A click near the envelope adds a point on it, keeping a level segment level; a click away
+/// from it adds the point at the pointer's height.
 #[test]
 fn a_click_near_the_envelope_adds_a_point_on_it() {
     let mut harness = with_lanes();
@@ -840,6 +855,7 @@ fn a_click_near_the_envelope_adds_a_point_on_it() {
     assert!(points[3].value > points[0].value, "{points:?}");
 }
 
+/// A click near the faint line of a lane without points adds a point at the parameter's value.
 #[test]
 fn a_lane_without_points_adds_one_on_the_parameters_value() {
     let mut harness = with_lanes();
@@ -862,6 +878,7 @@ fn a_lane_without_points_adds_one_on_the_parameters_value() {
     assert_eq!(points[0].value, set);
 }
 
+/// A drag with Alt (Option on macOS) moves a point off the grid.
 #[test]
 fn alt_drags_a_point_off_the_grid() {
     let mut harness = with_lanes();

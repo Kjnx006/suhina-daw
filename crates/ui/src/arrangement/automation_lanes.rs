@@ -18,13 +18,15 @@ use suhina_engine::model::{AutomationLane, AutomationPoint, ClipId, DeviceKind, 
 use crate::kit::theme::{self, PAD};
 use crate::kit::widgets::{self, Action};
 
-/// Height of one automation lane, and of the line under it.
+/// Height of one automation lane.
 pub const LANE: f32 = 40.0;
+/// Height of the line under a lane.
 const LINE: f32 = 1.0;
 /// Space kept above and below the envelope inside a lane.
 const INSET: f32 = 4.0;
-/// A point: the dot drawn, and the square that takes the pointer.
+/// The radius of the dot drawn for a point.
 const POINT: f32 = 3.5;
+/// The square around a point that takes the pointer.
 const POINT_HIT: f32 = 11.0;
 /// How near the envelope a drag has to start to bend a segment, and a click has to be to add a
 /// point on it.
@@ -35,9 +37,11 @@ const CURVE_PER_POINT: f64 = 0.01;
 const LEVEL_ALPHA: f32 = 0.4;
 /// Most points one segment of an envelope is drawn with.
 const SEGMENT_POINTS: usize = 128;
-/// Header parts: a row's height, the on/off toggle and the small buttons.
+/// Height of one row of a lane's header.
 const HEADER_ROW: f32 = 15.0;
+/// Width of the header's on/off toggle.
 const TOGGLE: f32 = 30.0;
+/// Side of the header's small square buttons (**+**, **×**).
 const SMALL_BUTTON: f32 = 16.0;
 /// Width of the lane header's parameter menu: its rows and search field fill it, no wider.
 const MENU_WIDTH: f32 = 240.0;
@@ -54,6 +58,7 @@ pub struct LaneKey {
 }
 
 impl LaneKey {
+    /// The lane of the track's own mixer parameter `param` (volume, pan or mute).
     pub fn mixer(param: &str) -> Self {
         Self { device: None, param: param.into() }
     }
@@ -222,6 +227,8 @@ fn sd_log(parameter: &suhina_device_sdk::Parameter) -> bool {
     ) && parameter.min > 0.0
 }
 
+/// Where `value` sits on a lane of a data-only device's `parameter`, 0 … 1: linear, or
+/// logarithmic for a log control; the middle for a parameter with no range.
 fn sd_position(parameter: &suhina_device_sdk::Parameter, value: f64) -> f64 {
     let (min, max) = (parameter.min, parameter.max);
     let value = parameter.clamp(value);
@@ -234,6 +241,8 @@ fn sd_position(parameter: &suhina_device_sdk::Parameter, value: f64) -> f64 {
     }
 }
 
+/// The value of a data-only device's `parameter` at `position` (0 … 1) on its lane: the
+/// inverse of [`sd_position`], held in the parameter's range.
 fn sd_value(parameter: &suhina_device_sdk::Parameter, position: f64) -> f64 {
     let (min, max) = (parameter.min, parameter.max);
     let position = position.clamp(0.0, 1.0);
@@ -247,10 +256,12 @@ fn sd_value(parameter: &suhina_device_sdk::Parameter, position: f64) -> f64 {
     parameter.clamp(value)
 }
 
+/// `value` rounded to the nearest `1 / per`: `round(x, 1000.0)` keeps three decimals.
 fn round(value: f64, per: f64) -> f64 {
     (value * per).round() / per
 }
 
+/// A linear gain in decibels; minus infinity for silence (a gain of 0 or less).
 fn gain_to_db(gain: f64) -> f64 {
     if gain > 0.0 { 20.0 * gain.log10() } else { f64::NEG_INFINITY }
 }
@@ -307,6 +318,8 @@ pub struct Params {
 }
 
 impl Params {
+    /// Every track's parameters from `project`: its mixer's volume, pan and mute, then each
+    /// built-in and `.sd` device's parameters in device order, with their lanes' points.
     pub fn build(project: &Project) -> Self {
         let mut tracks = HashMap::new();
         for track in &project.tracks {
@@ -384,10 +397,13 @@ impl Params {
         Self { tracks }
     }
 
+    /// `track`'s parameters, in the order the chooser lists them; none for a track without a
+    /// channel.
     pub fn of(&self, track: TrackId) -> &[Param] {
         self.tracks.get(&track).map_or(&[], Vec::as_slice)
     }
 
+    /// `track`'s parameter that `key` names, if the track still has it.
     fn param(&self, track: TrackId, key: &LaneKey) -> Option<&Param> {
         self.of(track).iter().find(|p| &p.key == key)
     }
@@ -561,10 +577,13 @@ impl LanesState {
         self.clip = clip;
     }
 
+    /// Whether `point` of `track`'s lane `key` is selected.
     fn is_selected(&self, track: TrackId, key: &LaneKey, point: usize) -> bool {
         self.selection.as_ref().is_some_and(|s| s.track == track && &s.key == key && s.points.contains(&point))
     }
 
+    /// Selects `point` of `track`'s lane `key`: alone, or with `add` (Shift or Ctrl) added to the
+    /// selection on that lane or taken out of it.
     fn select(&mut self, track: TrackId, key: &LaneKey, point: usize, add: bool) {
         match self.selection.as_mut().filter(|s| add && s.track == track && &s.key == key) {
             Some(selection) => match selection.points.iter().position(|p| *p == point) {
@@ -593,10 +612,12 @@ pub struct Geometry {
 }
 
 impl Geometry {
+    /// Where `beat` is on screen, after the timeline's scroll.
     fn x_of(&self, beat: f64) -> f32 {
         self.time.min - self.scroll_x + beat as f32 * self.beat_width
     }
 
+    /// The beat at `x` on screen: the inverse of [`Geometry::x_of`].
     fn beat_of(&self, x: f32) -> f64 {
         f64::from((x - self.time.min + self.scroll_x) / self.beat_width)
     }
@@ -613,14 +634,18 @@ fn plot(lane: Rect) -> Rect {
     lane.shrink2(Vec2::new(0.0, INSET))
 }
 
+/// The height in `plot` of a lane `position` (0 at the bottom, 1 at the top).
 fn y_of(plot: Rect, position: f64) -> f32 {
     plot.bottom() - position as f32 * plot.height()
 }
 
+/// The lane position (0 … 1) at height `y` in `plot`: the inverse of [`y_of`], held in the
+/// lane.
 fn position_of(plot: Rect, y: f32) -> f64 {
     if plot.height() > 0.0 { f64::from((plot.bottom() - y) / plot.height()).clamp(0.0, 1.0) } else { 0.0 }
 }
 
+/// A track colour from the project as egui draws it.
 fn color(rgb: Rgb) -> Color32 {
     Color32::from_rgb(rgb.0, rgb.1, rgb.2)
 }
@@ -835,6 +860,8 @@ fn segment_at(points: &[AutomationPoint], scale: &Scale, plot: Rect, geometry: &
     ((y_of(plot, scale.position(value)) - pos.y).abs() <= SEGMENT_HIT).then_some(index)
 }
 
+/// Draws one lane of `param` in `time` (its envelope, points and drag in progress) and turns
+/// clicks and drags on it into `automation.*` actions.
 #[allow(clippy::too_many_arguments)]
 fn lane(
     ui: &mut Ui,
@@ -1536,6 +1563,8 @@ fn forget_menu(ui: &Ui, filter: Id, placed: Id) {
     });
 }
 
+/// Draws one of a lane header's small buttons: its background, lighter under the pointer, and
+/// `text` in its middle.
 fn small_button(ui: &Ui, painter: &egui::Painter, rect: Rect, response: &egui::Response, text: &str) {
     let fill =
         crate::kit::motion::mix(theme::control_background(), theme::control_hover(), widgets::hover(ui, response));
@@ -1547,6 +1576,7 @@ fn small_button(ui: &Ui, painter: &egui::Painter, rect: Rect, response: &egui::R
 mod tests {
     use super::*;
 
+    /// A volume placed on the lane and read back is the same, and sits where the mixer's field puts it.
     #[test]
     fn volume_positions_and_values_are_inverses() {
         let scale = Scale::Volume;
@@ -1576,6 +1606,7 @@ mod tests {
         lane.points
     }
 
+    /// A point spliced onto a level or straight segment leaves the envelope exactly as it was.
     #[test]
     fn a_spliced_point_keeps_a_straight_or_level_envelope_exactly() {
         use suhina_engine::model::automation::value_at;
@@ -1594,6 +1625,8 @@ mod tests {
         assert_eq!(splice(&ramp, 4.0, true), Some((0.0, 0.0)));
     }
 
+    /// A point spliced onto a curved segment keeps the part before it exactly and the part after it
+    /// within 5 % of the lane.
     #[test]
     fn a_spliced_point_follows_a_curved_segment_closely() {
         use suhina_engine::model::automation::value_at;
@@ -1615,6 +1648,7 @@ mod tests {
         }
     }
 
+    /// The distance to a line is to its nearest segment, end or corner.
     #[test]
     fn the_distance_to_a_line_is_to_its_nearest_part() {
         let line = [Pos2::new(0.0, 0.0), Pos2::new(10.0, 0.0), Pos2::new(10.0, 10.0)];
@@ -1624,6 +1658,7 @@ mod tests {
         assert_eq!(distance_to(&[], Pos2::ZERO), f32::INFINITY);
     }
 
+    /// The pan spreads from left at the bottom to right at the top; the mute is a step.
     #[test]
     fn pan_and_mute_map_across_the_lane() {
         assert_eq!(Scale::Pan.position(-1.0), 0.0);
@@ -1633,6 +1668,7 @@ mod tests {
         assert!(!Scale::Pan.stepped());
     }
 
+    /// Moving values together keeps them in range, and a silent volume stays silent.
     #[test]
     fn a_shift_keeps_values_in_range_and_silence_silent() {
         assert_eq!(Scale::Volume.shift(0.0, 6.0), 0.0);
@@ -1641,6 +1677,7 @@ mod tests {
         assert_eq!(Scale::Mute.shift(1.0, -0.4), 1.0);
     }
 
+    /// A track's lanes, opened the first time, are those with points, or the volume's when none has.
     #[test]
     fn the_first_open_shows_the_lanes_with_points_or_the_volume() {
         let mut project = crate::demo::demo_project();
@@ -1665,6 +1702,7 @@ mod tests {
         assert_eq!(state.height(track, &params), LANE + LINE);
     }
 
+    /// A built-in device's parameters are listed under its name, with their lanes' points.
     #[test]
     fn a_built_in_devices_parameters_can_be_shown_with_its_lanes() {
         let mut project = crate::demo::demo_project();
@@ -1691,6 +1729,7 @@ mod tests {
         assert_eq!(state.shown(track, &params), [LaneKey { device: Some(0), param: "gain".into() }]);
     }
 
+    /// A data-only device's parameters are listed and placed as their controls place them.
     #[test]
     fn sd_parameters_are_listed_and_use_their_control_scale() {
         let mut project = crate::demo::demo_project();
@@ -1742,6 +1781,7 @@ mod tests {
             scale: Scale::Pan,
             points: Vec::new(),
             enabled: true,
+            current: 0.0,
         }
     }
 
@@ -1849,6 +1889,7 @@ mod tests {
         assert!(params.of(track).iter().filter(|p| p.key.device.is_none()).all(|p| p.group.is_none()));
     }
 
+    /// A choice point loaded outside a data-only device's range shows its nearest option.
     #[test]
     fn an_sd_choice_point_outside_its_range_names_the_nearest_option() {
         let mut shape = suhina_device_sdk::Parameter::new("shape", "Shape", (1.0, 3.0), 1.0);
