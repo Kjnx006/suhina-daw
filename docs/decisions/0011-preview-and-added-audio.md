@@ -3,7 +3,7 @@ description: How a sample added while the project plays reaches the engine, and 
 read_when: preview, audition, preview voice, add a sample while playing, AudioPool, set_audio, clip.addFiles, preview.play, preview.noteOn, preview.noteOff, held preview note, key column, MIDI preview, browser sound
 type: decision
 status: current
-last_verified: 2026-10-15
+last_verified: 2026-10-19
 covers:
   - crates/engine/src/preview.rs
   - crates/engine/src/swap.rs

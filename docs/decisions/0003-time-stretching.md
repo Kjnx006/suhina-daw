@@ -3,7 +3,7 @@ description: Real-time time-stretching of warped audio, stretch modes and backen
 read_when: warp, time-stretch, stretch mode, Signalsmith, keylock, timestretch, Rubber Band, audio crackles, CPU load, stretch quality
 type: decision
 status: current
-last_verified: 2026-10-15
+last_verified: 2026-10-19
 covers:
   - crates/engine/src/stretch.rs
   - crates/stretch/src/lib.rs

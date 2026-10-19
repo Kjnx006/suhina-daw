@@ -54,7 +54,7 @@ after every merge; do not edit by hand. Find a document by what you are about to
 | [Components](design/components.md) | spec | draft | widget sizes, marker row, clip slot states, value field, slider, knob, toggle, meter, track header levels, device panel, piano roll layout, audition button, velocity lane top edge, ghost menu, ghost notes look, Scale menu, scale rows, key column mark, folded rows | Measurements, states and tokens of every UI component, from the minimal v3 mockups |
 | [Specs](spec/README.md) | spec | current | writing a spec, clean-room observation, where specs go | What the specs are and how they are written (clean-room, observed version, test files) |
 | [About Suhina](spec/about.md) | spec | draft | about, version, build number, which build, nightly version, bug report, help menu, about dialog | Help › About Suhina, the dialog that says which build this is (version, platform, licence) and copies one line naming it for a bug report |
-| [Live Set (`.als`) format](spec/als-format.md) | spec | current | reading .als, importer, XML element, warp markers, locators, arrangement markers, time signature, tempo envelope, tempo changes, devices, plug-in state, Utility, StereoGain, device parameters, muted note, deactivated note, IsEnabled | The Live Set (.als) format as observed: container, tracks, clips, notes, audio, warp markers, devices, locators |
+| [Live Set (`.als`) format](spec/als-format.md) | spec | current | reading .als, importer, XML element, MIDI effects, MidiChord, MidiArpeggiator, clip scale, ScaleInformation, warp markers, locators, arrangement markers, time signature, tempo envelope, tempo changes, devices, plug-in state, Utility, StereoGain, device parameters, muted note, deactivated note, IsEnabled | The Live Set (.als) format as observed: container, tracks, clips, notes, a clip's scale, audio, warp markers, devices and MIDI effects, locators |
 | [Arrangement editing](spec/arrangement-editing.md) | spec | draft | start marker, clip offset, loop start, moving clips, clip.move, overlapping clips, clip stacking, trimming, splitting, clip.split, split at playhead, cut a clip, consolidate, clip.consolidate, join clips, render a range, bounce, allow sample stacking, allow MIDI stacking, fades, fade-in, fade-out, clip.setFades, fade handles, fade shape, fade curve, curve handle, inShape, outShape, inCurve, outCurve, linear, equal_power, fast, slow, s_curve, FadeShape, FadeCurve, play position, play start marker, ruler click, transport.setPosition, stop returns, playhead, grid, grid lines, snapping, snap to grid, launcher.setQuantization, quantisation, Alt, off the grid, markers, locators, marker row, marker.add, marker.move, marker.rename, marker.delete, marker.jump, project.markers, fold, folded group, unfold, group triangle, group lane, volume, pan, mute, solo, mixer controls, knob, the wheel over a value, deselect, click on empty space, clip note preview, short lane | How arrangement clips behave when moved (along a lane, to another track, over other clips), how audio clips fade in and out, how a group's tracks fold away, where playback starts and stops (the play start marker), how clips are split and consolidated, and named markers on the timeline |
 | [Audio to MIDI](spec/audio-to-midi.md) | spec | planned | slice to MIDI, audio to MIDI, convert drums, bass, melody, chords, transcription, drop audio on MIDI track | How slicing audio to a MIDI track and converting drums, bass, melody and chords to MIDI behave |
 | [Automation](spec/automation.md) | spec | current | automation, envelope, automation lane, automation lanes view, show automation, automation.movePoints, automation.deletePoints, select points, breakpoint, automation point, curve, automation.addPoint, automation.movePoint, automation.deletePoint, automation.clear, automation.setEnabled, automation.list, device.setAutomation, automation off, re-enable automation, volume automation, pan automation, mute automation, device parameter automation, AutomationLane, AutomationPoint, MixLanes, DeviceLanes, Envelope | Automation envelopes - lanes of points over the arrangement for a track's volume, pan and mute and every built-in, .sd and plug-in parameter, curves and jumps, how the engine plays them, a manual change turning a lane off, and the automation.* commands |
@@ -62,19 +62,25 @@ after every merge; do not edit by hand. Find a document by what you are about to
 | [Browser](spec/browser.md) | spec | draft | browser, library, samples, drag from the browser, drop files, preview, audition, search, folders, pinned, recent, colour tags, track.add, clip.addFiles, library commands, preview.play, MIDI file import, .mid, presets, .syx, .sd, new track, empty area | How the browser behaves: places, categories, search, the tree, previewing, dragging samples, MIDI files, devices, presets and plug-ins into the project, pins, recent items and colour tags |
 | [Clip launching](spec/clip-launching.md) | spec | current | clip launching, scenes, launch quantisation, stop, session view, launcher commands, fades on launched clips, follow actions, launch modes, gate, toggle, repeat, legato, per-clip quantisation, launch keys, MIDI notes, mappings, launcher.addMapping | How launching clips and scenes behaves: quantisation, stop buttons, scene tempo, launched clip fades, follow actions, launch modes, legato, per-clip quantisation, launching from computer keys and MIDI notes, launcher over arrangement |
 | [Cue output](spec/cue-output.md) | spec | current | cue, cue output, headphones, pre-listen, solo in place, preview output, cue volume, cue pair, outputs 3/4, track.setCue, output.setCuePair, output.setCueVolume, C button, render --cue, multi-channel device | How the cue output works: a second output pair on the same audio device for headphones, where browser previews and tracks whose cue (C) is on are heard apart from the main mix; the cue volume, Same as main, offline renders of the cue, and the commands |
-| [Device groups](spec/device-groups.md) | spec | planned | device group, group effects, group devices, parallel processing, parallel chain, branch, macro, macro control, mix, dry/wet, group preset, nested devices, layering instruments | Planned device groups - several devices on a track as one unit, with parallel branches, per-branch volume, pan, mute and solo, a mix, macros, group presets, latency compensation, the model and the commands |
-| [Importing devices from Live Sets](spec/device-import.md) | spec | current | device import, importing devices, device mapping, placeholder device, Operator, Live device to Suhina device, which device imports into what, golden renders of imported sets | How a device stored in a Live Set is brought into Suhina: the three import levels, how each Suhina device is learnt and mapped, and which Live device maps to which Suhina device |
+| [Delay](spec/delay.md) | spec | current | delay, echo, delay device, feedback, ping pong, tempo-synced delay, sixteenths, repitch, fade, jump, freeze, band-pass in the feedback loop, importing Live's Delay, DelayLine elements | The built-in stereo delay - its parameters, signal flow, how a time change sounds (Repitch, Fade, Jump), the LFO, ping-pong and freeze, how Live's Delay imports into it, and how close it comes to Live's renders |
+| [Device groups](spec/device-groups.md) | spec | current | device group, group effects, group devices, parallel processing, parallel chain, branch, macro, macro control, mix, dry/wet, group preset, nested devices, layering instruments | Planned device groups - several devices on a track as one unit, with parallel branches, per-branch volume, pan, mute and solo, a mix, macros, group presets, latency compensation, the model and the commands |
+| [Importing devices from Live Sets](spec/device-import.md) | spec | current | device import, importing devices, importing MIDI effects, device mapping, placeholder device, Operator, Live device to Suhina device, which device imports into what, golden renders of imported sets | How a device stored in a Live Set is brought into Suhina: the three import levels, how each Suhina device is learnt and mapped, and which Live device maps to which Suhina device |
 | [DX7 voice data](spec/dx7-voice-format.md) | spec | current | DX7, sysex, syx, voice, bank, cartridge, FM synth patch, patch format, fm-synth | DX7 voice data as system-exclusive messages (one voice, a bank of 32), the voice layout and what the FM synth does with bad data |
+| [Export](spec/export.md) | spec | draft | export, export dialog, mixdown, bounce, render to a file, render the mix, WAV, AIFF, FLAC, Ogg Vorbis, MP3, bit depth, 32-bit float, 24-bit, 16-bit, dither, normalize, sample rate, tail, range, loop region, project.export, overwrite, PickField, export a project, check it renders | Rendering the mix to an audio file the user chose: the File › Export command in the app, the shared project.export command, the formats (WAV, FLAC, Ogg Vorbis) and their encoders, bit depths and dithering, ranges, and progress with a cancel |
 | [Extensions](spec/extensions.md) | spec | planned | extension, add-on, optional component, extension manifest, extension.json, model weights, licence shown to the user, extensions.add, extensions.list, missing extension, inference runtime | How Suhina uses an optional component it does not ship — the manifest and the licence it must carry, adding and listing one, what the user sees, and what happens when an extension is missing, crashes or hangs |
 | [FL Studio project (`.flp`) format](spec/flp-format.md) | spec | draft | reading .flp, FL Studio project, FLhd, FLdt, event stream, event id, varint, LEB128, UTF-16 strings, version event 199, flp reader errors | The FL Studio project (.flp) container and event stream as read by crates/flp, a draft spec where most statements are hypotheses |
 | [Level meters](spec/level-meters.md) | spec | current | level meter, meters, peak, RMS, clip indicator, clipping, peak hold, mixer.levels, mixer.resetClip, MeterMonitor, track header meter, mixer strip meter, dBFS | What the level meters measure (tracks, groups, returns, the main output), their ballistics, the clip indicator, where the window shows them and the commands that read and reset them |
 | [MIDI controllers and mapping](spec/midi-mapping.md) | spec | planned | MIDI learn, MIDI mapping, map a knob, mapping mode, controller profile, controllers folder, controller_mappings, takeover, pick up, relative encoder, 14-bit CC, mapping.add, mapping.learn, controllers.list, gesture, controller feedback | What a MIDI controller can do in Suhina - sources, targets, ranges, takeover, relative encoders, gestures and undo, the controller profile file, mappings saved in a project, the mapping mode and MIDI learn, the commands, and how malformed input is treated |
 | [Missing files](spec/missing-files.md) | spec | draft | missing files, missing samples, file not found, relink, locate, find files, moved samples, project.missingFiles, project.relinkFiles, library.findFiles | What happens when a project's audio files cannot be found: the bar that says so, the panel that lists them and finds them by name (browser index, project folder, a chosen folder), and relinking in one undo step |
+| [The NAM Amp Modeler and NAM Cab Loader](spec/nam-amp-and-cab.md) | spec | draft | NAM, Neural Amp Modeler, nam, amp modeler, cab loader, neural amp, .nam file, impulse response, IR, cab, model file, device.setNamFile, nam models folder, IR folder | The NAM Amp Modeler and NAM Cab Loader devices: what a .nam model file and a .wav impulse response are to Suhina, the devices' parameters and signal paths, gain staging, the model and IR files' folders, the commands and the device panels |
 | [NKS preset files](spec/nks-format.md) | spec | planned | NKS, nksf, nksfx, Native Instruments presets, preset previews, .previews folder, NISI, NICA, PLID, PCHK, MessagePack, Komplete Kontrol presets, plug-in state chunk | What is known of Native Instruments preset files (.nksf, .nksfx) and their audio previews, from public sources, and what must be observed on our own files before Suhina reads them |
+| [Pitch](spec/pitch.md) | spec | current | pitch, MIDI effect, transpose notes, scale degrees, follow scale, clip scale in devices, block fold limit, key window, lowest and range, importing Live's Pitch, MidiPitcher elements, built-in MIDI effects | The built-in pitch MIDI effect - its parameters, how a note is transposed, kept in a window of keys (Block, Fold, Limit) or moved along the clip's scale, how note-offs follow, how MIDI effects run before the instrument, how Live's Pitch imports into it and how close it comes to Live's recordings |
 | [Plug-ins in the browser](spec/plugin-browsing.md) | spec | current | plug-in views, browser plug-ins, instruments, effects, vendor, sorting, columns, name column, narrow browser, VST3 sub-categories, CLAP features, favourites, tags | How the browser shows installed plug-ins: the Plug-ins category lists the instruments or the effects by name and format, the other categories keep them under their vendors; and how each format's own categories map to Suhina's groups |
 | [The plug-in manager](spec/plugin-manager.md) | spec | current | plug-in manager, manage plug-ins, switch a plug-in off, disable plug-in, blocklist, plug-in folders, VST2 folder, folder format, scan again, failed plug-ins, incompatible architecture, Intel plug-in on Apple silicon, plugins.setEnabled, plugins.setFolderEnabled, plugins.scanFile | The plug-in manager and the plug-in folders: every plug-in and every file that gave none in one table, plug-ins switched on and off, failed files scanned again, folders per format and switched off, and the scan results that are settled |
 | [Recording](spec/recording.md) | spec | current | recording, record, take, record button, clip.record, transport.record, count-in, transport.setCountIn, record.state, MIDI recording, audio recording, Recorded folder, latency compensation of a take, overdub, loopback | How recording works: MIDI and audio takes into a clip slot or the arrangement, the count-in, where a played note or a recorded sound is placed (lined up with what was heard), the files audio takes are written to, and what happens when a disk fills or a device is lost |
+| [Reverb](spec/reverb.md) | spec | current | reverb, algorithmic reverb, room, decay, early reflections, predelay, feedback delay network, FDN, damping, freeze, diffusion, importing Live's Reverb, Reverb elements | The built-in algorithmic reverb - its parameters, signal flow (input band, early reflections, a damped feedback delay network, chorus, freeze, stereo), how Live's Reverb imports into it, and how close it comes to Live's renders |
 | [Sample map](spec/sample-map.md) | spec | draft | sample map, similarity, sound map, browse by sound, t-SNE, UMAP, point cloud, grid layout, similar samples, kick snare hat categories, audio features, MFCC, NKS, preset previews, soundmap commands | How the sample map behaves: samples laid out by how they sound, coloured by kind, as a cloud or a grid, previewed by pointing, dragged into the project; NKS preset previews in the same map |
+| [Sampler](spec/sampler.md) | spec | draft | sampler, granular instrument, sample recording, sample drop | Suhina's sample and granular instrument, sample loading and SDK panel |
 | [Suhina device graph (`.sd`)](spec/sd-device-format.md) | spec | current | .sd, Suhina device, device graph, device SDK, community effect, visual node, device UI | Version 4 of the data-only Suhina device graph format, SDK, track loading, and device revision migrations |
 | [Custom device panels](spec/sdk-custom-ui.md) | spec | current | custom SDK control, device background, icon, photo, texture, XY pad, drawing API, image asset | Self-contained device canvases, image assets, drawing expressions and programmable parameter controls |
 | [SDK node reference](spec/sdk-nodes.md) | spec | current | SDK node reference, node ports, DSP primitives, graph authoring, AI device development | Every executable SDK node, ports, defaults, formulas, state and real-time limits |
@@ -82,11 +88,13 @@ after every merge; do not edit by hand. Find a document by what you are about to
 | [Key inputs and plug-in buses](spec/sidechain.md) | spec | planned | sidechain, key input, key source, tap point, pre FX, post FX, post fader, routing, aux input, aux output, multi-out, multiple outputs, bus, audio port, region version, protocol version, VST2 bus, device input | Planned key inputs - a device whose detector reads another channel's signal (sidechain), the tap points it can read from, and the plug-in bus model (aux audio in and out) that carries the same idea across the sandbox boundary |
 | [Stem separation](spec/stem-separation.md) | spec | planned | stem separation, separate stems, vocals drums bass other, separation crate, separation model, model manifest, inference backend, tract, ort, ONNX, overlap-add, chunking, window weighting, band splitter, test backend | How stem separation behaves: an audio clip split offline into stems by a model the user supplies, the chunking, resampling and channels around the model, the test backend, limits, and what lands in the project |
 | [Stems files](spec/stems-format.md) | spec | draft | stems, stem file, .stem.mp4, .stem.m4a, Traktor stems, NI stems, master track, mastering_dsp, MP4 boxes, edit list, AAC priming, multitrack audio file, DJ, remix, folded group | Stems files (.stem.mp4, .stem.m4a): an MP4 with the master and its stems as audio tracks, stem names, colours and mastering settings in moov/udta/stem; what Suhina reads and how it maps the mastering to its compressor and limiter |
+| [Stock device bundle](spec/stock-device-bundle.md) | spec | current | stock device bundle, build devices, native_device node, bundled sd | Build-time .sd definitions of the native devices shipped with Suhina |
 | [The .suhina project file](spec/suhina-format.md) | spec | current | .suhina layout, markers in the file, project file fields, clip id, lane id, scene id, next_id, file without ids, writing a project file by hand or from an agent, format version, base64 state, muted note, note flags, clip scale, default_scale, scale root and mode | The layout of Suhina's own project file (.suhina), field by field, with what a reader accepts |
 | [Tempo map](spec/tempo-map.md) | spec | current | tempo map, tempo change, tempo ramp, time-signature change, meter, bars, beats to samples, beat to frame, tempo.addPoint, timeSignature.add, bar ruler | Tempo and time-signature changes over the song (the tempo map): steps and ramps, bars through signature changes, how the engine converts beats to time, the commands |
 | [UI: clip editor (MIDI piano roll)](spec/ui-clip-editor.md) | spec | draft | piano roll, clip editor, toolbar, toolbar size, toolbar icons, tool icons, draw tool, paint tool, erase tool, slice tool, mute tool, muted note, note.setMuted, MIDI tools column, transpose, humanise, humanize, fit to scale, invert, reverse, legato, stretch, randomise velocity, ramp velocity, B key, number keys choose a tool, right button and wheel, Shift and Draw, pulled to the top, maximise piano roll, piano roll grid value, grid menu, adaptive grid, fixed grid, snap to grid, snap off, triplet grid, narrow grid, widen grid, Ctrl+1, Ctrl+2, Ctrl+3, Ctrl+4, MIDI editor, note editing, draw notes, select notes, move notes, resize notes, velocity lane, velocity, grid, snapping, Alt off-grid, zoom, detail area height, scale highlighting, fold, ghost notes, quantise, quantize, inline quantise, clip column, selection info, slice, glue, chords, strum, playable keyboard, key column plays, preview.noteOn, preview.noteOff, note.add, note.delete, note.move, note.resize, note.setVelocity, note.split, note.list, note.quantize, Ctrl+U, note.copy, note.cut, note.paste, note.duplicate, copy paste notes, arrow keys, select all notes, keymap preset, Draw-first, Select-first, Mouse-first, mouse switches, duplicate key, workflow mode, workflow menu, Custom mode, double-click, double-click adds a note, double-click deletes a note, triple click, least height, short detail area, close the piano roll, hide editor, close button, collapse the detail area, notes in view, centred notes, ruler, loop row, loop region, loop handles, loop start, loop end, clip loop, start marker, end marker, clip length, clip offset, clip.setLoop, clip.setLength, clip.setStart, ruler drag zoom, ruler scroll, zoom to selection, zoom to clip, Z, Shift+Z, notes outside the loop, shaded notes, left edge, resize the start, startBy, Ctrl+drag copies, copy by dragging, Alt+drag velocity, velocity line, draw a line in the velocity lane, velocities, velocity lane height, lane top edge, audition, hear notes while editing, preview.noteOn keys, ghost menu, ghost notes of other clips, notes of other clips, playing together, write a bass line against the chords, faint notes behind, Scale menu, clip scale, clip.setScale, clip.scale, project.setDefaultScale, default scale, scale rows, key column mark, Fold, Fold to scale, folded rows | Functional spec of the MIDI clip editor (piano roll): layout, toolbar size and icons, the six tools and the Mute tool, the MIDI tools column, grid and snapping, zoom, drawing, selecting, moving, resizing, velocity, quantise, scales, ghost notes, slicing, a playable key column, chords, shortcuts and keymap presets, and the note.* and preview.* commands |
 | [UI: main window and Session view](spec/ui-session-view.md) | spec | draft | Session view, main window layout, clip slot behaviour, scene launch, launch keys, mapping mode, Map button, Ctrl+M, mixer section, browser structure | Functional spec of the main window and the Session view: regions, clip slots, scenes, launch keys and their mapping mode, I/O, mixer, browser |
 | [The Settings window](spec/ui-settings.md) | spec | current | Settings window, settings page, where a setting goes, adding a setting, settings scroll, settings search, settings table, settings_rows, page order, General page, Appearance page | The Settings window's pages and their headed sections, which setting is on which page, how a page scrolls, the search field, and the one table the window is drawn from |
+| [Updates](spec/updates.md) | spec | draft | update, updates, new version available, check for updates, download update, nightly update, auto update, test build, gh, github cli, developer mode | Checking for a newer build of Suhina and installing it from inside the app, the nightly channel and, in developer mode, test builds of pull requests through the GitHub CLI |
 | [Waveforms](spec/waveforms.md) | spec | current | waveform, peaks, RMS, waveform drawing, zoom, samples, stereo lanes, dB scale, clip waveform, preview waveform, sample map tooltip, frame budget | How waveforms are computed and drawn in clips, the browser's preview and the sample map's tooltips: peak levels with RMS, lanes per channel, the shape, samples close up, the dB scale, the frame budget |
 | [Window zoom](spec/window-zoom.md) | spec | current | zoom, UI zoom, window zoom, interface size, scale, Ctrl+Plus, Ctrl+Minus, Cmd+Plus, bigger text, high-DPI, zoom display | Zooming the whole window (every panel, text and control larger or smaller), its keys, limits and how it is remembered |
 | [The claim bot](claim-bot.md) | howto | current | claim, /claim, /claim @user, claim for someone else, on behalf, /unclaim, /hold, /ready, claim bot, project board, PROJECT_TOKEN, status automation, good first issue, lapsed claim, duplicate pull request, feature not agreed, project sync, board out of date, cards missing from the board, Touches, overlapping work, overlap, blocked by, blocked, dependency, Depends on, stacked pull requests, merge order, trusted contributor, TRUSTED_CONTRIBUTORS, maintainer, who may claim, claim limit, too many claims | How the claim bot moves an issue's card on the project board, holds work, refuses blocked work, lists overlapping work, and how the Depends on check orders pull requests |
@@ -122,10 +130,10 @@ Change this code, and check these documents.
 | `.github/workflows/test-build.yml` | [Releasing](releasing.md) |
 | `Cargo.toml` | [Architecture](architecture.md) |
 | `apps/suhina-cli/build.rs` | [Releasing](releasing.md) |
-| `apps/suhina-cli/src/main.rs` | [0028: MCP in the running app](decisions/0028-mcp-in-the-running-app.md), [MCP server](mcp.md) |
+| `apps/suhina-cli/src/main.rs` | [0028: MCP in the running app](decisions/0028-mcp-in-the-running-app.md), [MCP server](mcp.md), [Export](spec/export.md) |
 | `apps/suhina-cli/src/play.rs` | [Architecture](architecture.md), [Arrangement editing](spec/arrangement-editing.md) |
 | `apps/suhina/Cargo.toml` | [0009: egui for the UI; familiar workflow, Suhina's own look](decisions/0009-ui-toolkit-and-look.md) |
-| `apps/suhina/build.rs` | [Releasing](releasing.md) |
+| `apps/suhina/build.rs` | [Releasing](releasing.md), [Stock device bundle](spec/stock-device-bundle.md) |
 | `apps/suhina/src/main.rs` | [Architecture](architecture.md), [0028: MCP in the running app](decisions/0028-mcp-in-the-running-app.md), [Keyboard shortcuts](shortcuts.md) |
 | `apps/suhina/src/recent.rs` | [0010: Suhina's own project files (.suhina)](decisions/0010-project-files.md) |
 | `apps/suhina/src/theme_files.rs` | [Design brief](design/brief.md) |
@@ -133,18 +141,21 @@ Change this code, and check these documents.
 | `crates/*/Cargo.toml` | [Architecture](architecture.md) |
 | `crates/als/src/devices.rs` | [Live Set (`.als`) format](spec/als-format.md), [Importing devices from Live Sets](spec/device-import.md) |
 | `crates/als/src/lib.rs` | [0025: Object identity in the model](decisions/0025-object-identity.md), [Live Set (`.als`) format](spec/als-format.md) |
+| `crates/als/src/scale.rs` | [Live Set (`.als`) format](spec/als-format.md) |
 | `crates/als/src/vst2.rs` | [Live Set (`.als`) format](spec/als-format.md) |
 | `crates/als/tests/corpus.rs` | [Making the `.als` test corpus](spec/als-corpus.md), [Live Set (`.als`) format](spec/als-format.md) |
 | `crates/als/tests/synthetic.rs` | [Live Set (`.als`) format](spec/als-format.md) |
 | `crates/automation/src/attach.rs` | [0028: MCP in the running app](decisions/0028-mcp-in-the-running-app.md), [MCP server](mcp.md) |
 | `crates/automation/src/endpoint.rs` | [0028: MCP in the running app](decisions/0028-mcp-in-the-running-app.md), [MCP server](mcp.md) |
-| `crates/automation/src/render.rs` | [MCP server](mcp.md), [Cue output](spec/cue-output.md) |
+| `crates/automation/src/render.rs` | [MCP server](mcp.md), [Cue output](spec/cue-output.md), [Export](spec/export.md) |
 | `crates/automation/src/server.rs` | [Architecture](architecture.md), [0007: Several open projects](decisions/0007-several-open-projects.md), [0023: Collaboration and project versions: the shape](decisions/0023-collaboration-and-project-versions.md), [0028: MCP in the running app](decisions/0028-mcp-in-the-running-app.md), [MCP server](mcp.md) |
 | `crates/automation/src/workspace.rs` | [0028: MCP in the running app](decisions/0028-mcp-in-the-running-app.md), [MCP server](mcp.md) |
 | `crates/device-api/**` | [0004: Built-in effects and instruments](decisions/0004-built-in-devices.md) |
 | `crates/device-api/src/lib.rs` | [Key inputs and plug-in buses](spec/sidechain.md) |
+| `crates/device-bundle/**` | [Stock device bundle](spec/stock-device-bundle.md) |
 | `crates/device-registry/**` | [0004: Built-in effects and instruments](decisions/0004-built-in-devices.md) |
-| `crates/device-registry/src/lib.rs` | [0014: Presets for devices](decisions/0014-stock-presets.md) |
+| `crates/device-registry/src/lib.rs` | [0014: Presets for devices](decisions/0014-stock-presets.md), [The NAM Amp Modeler and NAM Cab Loader](spec/nam-amp-and-cab.md) |
+| `crates/device-registry/src/stock.rs` | [Stock device bundle](spec/stock-device-bundle.md) |
 | `crates/device-sdk/Cargo.toml` | [0021: Data-only device graphs](decisions/0021-device-graph-files.md), [Suhina device graph (`.sd`)](spec/sd-device-format.md) |
 | `crates/device-sdk/examples/auto_pan.rs` | [Author a data-only SDK device](device-sdk.md) |
 | `crates/device-sdk/examples/catalog.rs` | [Author a data-only SDK device](device-sdk.md), [SDK node reference](spec/sdk-nodes.md) |
@@ -162,24 +173,33 @@ Change this code, and check these documents.
 | `crates/device-sdk/examples/validate.rs` | [Author a data-only SDK device](device-sdk.md) |
 | `crates/device-sdk/examples/wire_layout.rs` | [Author a data-only SDK device](device-sdk.md), [Suhina device graph (`.sd`)](spec/sd-device-format.md) |
 | `crates/device-sdk/src/**` | [0021: Data-only device graphs](decisions/0021-device-graph-files.md) |
+| `crates/device-sdk/src/author.rs` | [Author a data-only SDK device](device-sdk.md) |
 | `crates/device-sdk/src/editor.rs` | [plugdata and the device SDK: scope comparison](research/parity-plugdata-device-sdk.md), [Suhina device graph (`.sd`)](spec/sd-device-format.md) |
 | `crates/device-sdk/src/graph.rs` | [0021: Data-only device graphs](decisions/0021-device-graph-files.md), [Suhina device graph (`.sd`)](spec/sd-device-format.md) |
 | `crates/device-sdk/src/lib.rs` | [0021: Data-only device graphs](decisions/0021-device-graph-files.md), [Suhina device graph (`.sd`)](spec/sd-device-format.md) |
 | `crates/device-sdk/src/midi.rs` | [plugdata and the device SDK: scope comparison](research/parity-plugdata-device-sdk.md), [Suhina device graph (`.sd`)](spec/sd-device-format.md), [SDK node reference](spec/sdk-nodes.md) |
+| `crates/device-sdk/src/native.rs` | [Stock device bundle](spec/stock-device-bundle.md) |
 | `crates/device-sdk/src/nodes.rs` | [0021: Data-only device graphs](decisions/0021-device-graph-files.md), [plugdata and the device SDK: scope comparison](research/parity-plugdata-device-sdk.md), [SDK node reference](spec/sdk-nodes.md) |
 | `crates/device-sdk/src/runtime.rs` | [0021: Data-only device graphs](decisions/0021-device-graph-files.md), [plugdata and the device SDK: scope comparison](research/parity-plugdata-device-sdk.md), [Suhina device graph (`.sd`)](spec/sd-device-format.md), [SDK node reference](spec/sdk-nodes.md) |
+| `crates/device-sdk/src/sampler.rs` | [Sampler](spec/sampler.md) |
+| `crates/device-sdk/src/sampler_warp.rs` | [Sampler](spec/sampler.md) |
 | `crates/device-sdk/src/ui.rs` | [plugdata and the device SDK: scope comparison](research/parity-plugdata-device-sdk.md), [Custom device panels](spec/sdk-custom-ui.md) |
+| `crates/device-sdk/src/ui/author.rs` | [Custom device panels](spec/sdk-custom-ui.md) |
 | `crates/device-sdk/src/ui/widgets.rs` | [Author a data-only SDK device](device-sdk.md), [Custom device panels](spec/sdk-custom-ui.md) |
 | `crates/device-sdk/tests/golden/feedback.f32` | [SDK node reference](spec/sdk-nodes.md) |
 | `crates/device-sdk/tests/graphs.rs` | [SDK node reference](spec/sdk-nodes.md) |
 | `crates/dsp/**` | [0004: Built-in effects and instruments](decisions/0004-built-in-devices.md) |
+| `crates/dsp/src/convolver.rs` | [The NAM Amp Modeler and NAM Cab Loader](spec/nam-amp-and-cab.md) |
+| `crates/dsp/src/delay.rs` | [Delay](spec/delay.md), [The NAM Amp Modeler and NAM Cab Loader](spec/nam-amp-and-cab.md) |
+| `crates/dsp/src/first_order.rs` | [Reverb](spec/reverb.md) |
+| `crates/dsp/src/resampler.rs` | [The NAM Amp Modeler and NAM Cab Loader](spec/nam-amp-and-cab.md) |
 | `crates/engine/src/ahead.rs` | [Architecture](architecture.md), [0003: Time-stretching and stretch modes](decisions/0003-time-stretching.md), [0005: Edits while playing](decisions/0005-edits-while-playing.md) |
 | `crates/engine/src/audio.rs` | [0003: Time-stretching and stretch modes](decisions/0003-time-stretching.md), [Arrangement editing](spec/arrangement-editing.md) |
 | `crates/engine/src/automation.rs` | [Automation](spec/automation.md) |
 | `crates/engine/src/automation_render_tests.rs` | [Automation](spec/automation.md) |
 | `crates/engine/src/automation_tests.rs` | [Automation](spec/automation.md) |
 | `crates/engine/src/buses.rs` | [0004: Built-in effects and instruments](decisions/0004-built-in-devices.md), [Automation](spec/automation.md), [Cue output](spec/cue-output.md), [Key inputs and plug-in buses](spec/sidechain.md) |
-| `crates/engine/src/chain.rs` | [0004: Built-in effects and instruments](decisions/0004-built-in-devices.md), [0005: Edits while playing](decisions/0005-edits-while-playing.md), [0006: Plug-in hosting](decisions/0006-plug-in-hosting.md), [Automation](spec/automation.md), [Device groups](spec/device-groups.md), [Suhina device graph (`.sd`)](spec/sd-device-format.md), [Key inputs and plug-in buses](spec/sidechain.md) |
+| `crates/engine/src/chain.rs` | [0004: Built-in effects and instruments](decisions/0004-built-in-devices.md), [0005: Edits while playing](decisions/0005-edits-while-playing.md), [0006: Plug-in hosting](decisions/0006-plug-in-hosting.md), [Automation](spec/automation.md), [Device groups](spec/device-groups.md), [The NAM Amp Modeler and NAM Cab Loader](spec/nam-amp-and-cab.md), [Suhina device graph (`.sd`)](spec/sd-device-format.md), [Key inputs and plug-in buses](spec/sidechain.md) |
 | `crates/engine/src/chain_tests.rs` | [Suhina device graph (`.sd`)](spec/sd-device-format.md) |
 | `crates/engine/src/count_in.rs` | [Recording](spec/recording.md) |
 | `crates/engine/src/cpu.rs` | [Architecture](architecture.md), [MCP server](mcp.md), [UI: main window and Session view](spec/ui-session-view.md) |
@@ -189,6 +209,7 @@ Change this code, and check these documents.
 | `crates/engine/src/fade_tests.rs` | [Clip launching](spec/clip-launching.md) |
 | `crates/engine/src/follow.rs` | [Clip launching](spec/clip-launching.md) |
 | `crates/engine/src/follow_tests.rs` | [Clip launching](spec/clip-launching.md) |
+| `crates/engine/src/group.rs` | [Device groups](spec/device-groups.md) |
 | `crates/engine/src/input.rs` | [0017: Inputs, arming and live latency](decisions/0017-inputs-and-latency.md) |
 | `crates/engine/src/input_tests.rs` | [0017: Inputs, arming and live latency](decisions/0017-inputs-and-latency.md) |
 | `crates/engine/src/launcher.rs` | [Architecture](architecture.md), [0005: Edits while playing](decisions/0005-edits-while-playing.md), [Arrangement editing](spec/arrangement-editing.md), [Clip launching](spec/clip-launching.md) |
@@ -216,14 +237,16 @@ Change this code, and check these documents.
 | `crates/flp/tests/corpus.rs` | [Making the `.flp` test corpus](spec/flp-corpus.md), [FL Studio project (`.flp`) format](spec/flp-format.md) |
 | `crates/flp/tests/fixtures.rs` | [FL Studio project (`.flp`) format](spec/flp-format.md) |
 | `crates/ipc/**` | [0006: Plug-in hosting](decisions/0006-plug-in-hosting.md) |
+| `crates/ipc/src/events.rs` | [0028: ARA hosting](decisions/0028-ara-hosting.md) |
 | `crates/ipc/src/region.rs` | [Key inputs and plug-in buses](spec/sidechain.md) |
+| `crates/ipc/src/source.rs` | [0028: ARA hosting](decisions/0028-ara-hosting.md) |
 | `crates/library/**` | [0012: The file library: an index on disk, watched](decisions/0012-file-library.md), [Browser](spec/browser.md) |
 | `crates/library/src/find.rs` | [Missing files](spec/missing-files.md) |
 | `crates/library/src/index.rs` | [0026: The project folder, the manifest and the package](decisions/0026-project-folder-and-package.md) |
 | `crates/library/src/store.rs` | [Plug-ins in the browser](spec/plugin-browsing.md) |
 | `crates/library/src/worker.rs` | [Architecture](architecture.md) |
 | `crates/media/src/info.rs` | [Browser](spec/browser.md), [Suhina device graph (`.sd`)](spec/sd-device-format.md) |
-| `crates/media/src/lib.rs` | [0003: Time-stretching and stretch modes](decisions/0003-time-stretching.md), [0011: Previewing, and audio added to a playing project](decisions/0011-preview-and-added-audio.md) |
+| `crates/media/src/lib.rs` | [0003: Time-stretching and stretch modes](decisions/0003-time-stretching.md), [0011: Previewing, and audio added to a playing project](decisions/0011-preview-and-added-audio.md), [Export](spec/export.md) |
 | `crates/media/src/midi.rs` | [Browser](spec/browser.md) |
 | `crates/media/src/stems.rs` | [Stems files](spec/stems-format.md) |
 | `crates/media/src/stems_tests.rs` | [Stems files](spec/stems-format.md) |
@@ -231,6 +254,7 @@ Change this code, and check these documents.
 | `crates/media/tests/data/**` | [Stems files](spec/stems-format.md) |
 | `crates/midi/src/lib.rs` | [0017: Inputs, arming and live latency](decisions/0017-inputs-and-latency.md) |
 | `crates/model/src/automation.rs` | [Automation](spec/automation.md) |
+| `crates/model/src/groups.rs` | [Device groups](spec/device-groups.md) |
 | `crates/model/src/ids.rs` | [0025: Object identity in the model](decisions/0025-object-identity.md), [The .suhina project file](spec/suhina-format.md) |
 | `crates/model/src/launch.rs` | [Clip launching](spec/clip-launching.md) |
 | `crates/model/src/lib.rs` | [0001: A DAW-neutral project model](decisions/0001-daw-neutral-model.md), [0023: Collaboration and project versions: the shape](decisions/0023-collaboration-and-project-versions.md), [0024: Musical time and tempo over the song](decisions/0024-musical-time-and-tempo.md), [0025: Object identity in the model](decisions/0025-object-identity.md), [Arrangement editing](spec/arrangement-editing.md), [Device groups](spec/device-groups.md), [Suhina device graph (`.sd`)](spec/sd-device-format.md), [Key inputs and plug-in buses](spec/sidechain.md) |
@@ -244,25 +268,31 @@ Change this code, and check these documents.
 | `crates/output/src/lib.rs` | [Architecture](architecture.md), [0006: Plug-in hosting](decisions/0006-plug-in-hosting.md), [0017: Inputs, arming and live latency](decisions/0017-inputs-and-latency.md), [0020: Latency: what the number is, and where it is shown](decisions/0020-latency-and-its-readout.md), [Cue output](spec/cue-output.md) |
 | `crates/plugin-host/**` | [0006: Plug-in hosting](decisions/0006-plug-in-hosting.md) |
 | `crates/plugin-host/build.rs` | [Releasing](releasing.md) |
+| `crates/plugin-host/src/ara.rs` | [0028: ARA hosting](decisions/0028-ara-hosting.md) |
+| `crates/plugin-host/src/ara_sys.rs` | [0028: ARA hosting](decisions/0028-ara-hosting.md) |
 | `crates/plugin-host/src/clap.rs` | [Key inputs and plug-in buses](spec/sidechain.md) |
 | `crates/plugin-host/src/vst3.rs` | [Key inputs and plug-in buses](spec/sidechain.md) |
 | `crates/plugins/**` | [0006: Plug-in hosting](decisions/0006-plug-in-hosting.md) |
 | `crates/plugins/src/arch.rs` | [The plug-in manager](spec/plugin-manager.md) |
 | `crates/plugins/src/library.rs` | [The plug-in manager](spec/plugin-manager.md) |
-| `crates/plugins/src/protocol.rs` | [0023: Collaboration and project versions: the shape](decisions/0023-collaboration-and-project-versions.md), [Key inputs and plug-in buses](spec/sidechain.md) |
-| `crates/plugins/src/scan.rs` | [The plug-in manager](spec/plugin-manager.md) |
+| `crates/plugins/src/protocol.rs` | [0023: Collaboration and project versions: the shape](decisions/0023-collaboration-and-project-versions.md), [0028: ARA hosting](decisions/0028-ara-hosting.md), [Key inputs and plug-in buses](spec/sidechain.md) |
+| `crates/plugins/src/scan.rs` | [0028: ARA hosting](decisions/0028-ara-hosting.md), [The plug-in manager](spec/plugin-manager.md) |
+| `crates/plugins/src/scan_pool.rs` | [0028: ARA hosting](decisions/0028-ara-hosting.md) |
 | `crates/project-file` | [0010: Suhina's own project files (.suhina)](decisions/0010-project-files.md) |
-| `crates/project-file/src/lib.rs` | [0023: Collaboration and project versions: the shape](decisions/0023-collaboration-and-project-versions.md), [0024: Musical time and tempo over the song](decisions/0024-musical-time-and-tempo.md), [0025: Object identity in the model](decisions/0025-object-identity.md), [0026: The project folder, the manifest and the package](decisions/0026-project-folder-and-package.md), [0027: Merge and versions](decisions/0027-merge-and-versions.md), [Arrangement editing](spec/arrangement-editing.md), [Automation](spec/automation.md), [Suhina device graph (`.sd`)](spec/sd-device-format.md), [The .suhina project file](spec/suhina-format.md) |
+| `crates/project-file/src/lib.rs` | [0023: Collaboration and project versions: the shape](decisions/0023-collaboration-and-project-versions.md), [0024: Musical time and tempo over the song](decisions/0024-musical-time-and-tempo.md), [0025: Object identity in the model](decisions/0025-object-identity.md), [0026: The project folder, the manifest and the package](decisions/0026-project-folder-and-package.md), [0027: Merge and versions](decisions/0027-merge-and-versions.md), [Arrangement editing](spec/arrangement-editing.md), [Automation](spec/automation.md), [Device groups](spec/device-groups.md), [Suhina device graph (`.sd`)](spec/sd-device-format.md), [The .suhina project file](spec/suhina-format.md) |
+| `crates/project-file/src/tests.rs` | [The NAM Amp Modeler and NAM Cab Loader](spec/nam-amp-and-cab.md) |
 | `crates/realtime/**` | [0006: Plug-in hosting](decisions/0006-plug-in-hosting.md) |
 | `crates/separation/**` | [Stem separation](spec/stem-separation.md) |
+| `crates/session/src/ara.rs` | [0028: ARA hosting](decisions/0028-ara-hosting.md) |
 | `crates/session/src/audio.rs` | [Architecture](architecture.md), [0002: Every action is a command](decisions/0002-commands.md), [0020: Latency: what the number is, and where it is shown](decisions/0020-latency-and-its-readout.md), [MCP server](mcp.md), [Cue output](spec/cue-output.md) |
 | `crates/session/src/automation.rs` | [Automation](spec/automation.md) |
 | `crates/session/src/backup.rs` | [0010: Suhina's own project files (.suhina)](decisions/0010-project-files.md), [Backups](spec/backups.md) |
 | `crates/session/src/blank.rs` | [0010: Suhina's own project files (.suhina)](decisions/0010-project-files.md) |
 | `crates/session/src/clip_shape.rs` | [UI: clip editor (MIDI piano roll)](spec/ui-clip-editor.md) |
-| `crates/session/src/commands.rs` | [0002: Every action is a command](decisions/0002-commands.md), [0024: Musical time and tempo over the song](decisions/0024-musical-time-and-tempo.md), [0025: Object identity in the model](decisions/0025-object-identity.md), [0027: Merge and versions](decisions/0027-merge-and-versions.md), [0028: ARA hosting](decisions/0028-ara-hosting.md), [Author a data-only SDK device](device-sdk.md), [Arrangement editing](spec/arrangement-editing.md) |
-| `crates/session/src/devices.rs` | [0002: Every action is a command](decisions/0002-commands.md), [0004: Built-in effects and instruments](decisions/0004-built-in-devices.md), [0006: Plug-in hosting](decisions/0006-plug-in-hosting.md), [Author a data-only SDK device](device-sdk.md), [Device groups](spec/device-groups.md), [Suhina device graph (`.sd`)](spec/sd-device-format.md), [Suhina device graph (`.sd`)](spec/sd-device-format.md), [Key inputs and plug-in buses](spec/sidechain.md) |
-| `crates/session/src/editing.rs` | [Arrangement editing](spec/arrangement-editing.md) |
+| `crates/session/src/commands.rs` | [0002: Every action is a command](decisions/0002-commands.md), [0024: Musical time and tempo over the song](decisions/0024-musical-time-and-tempo.md), [0025: Object identity in the model](decisions/0025-object-identity.md), [0027: Merge and versions](decisions/0027-merge-and-versions.md), [0028: ARA hosting](decisions/0028-ara-hosting.md), [Author a data-only SDK device](device-sdk.md), [Arrangement editing](spec/arrangement-editing.md), [Export](spec/export.md), [The NAM Amp Modeler and NAM Cab Loader](spec/nam-amp-and-cab.md) |
+| `crates/session/src/device_groups.rs` | [Device groups](spec/device-groups.md) |
+| `crates/session/src/devices.rs` | [0002: Every action is a command](decisions/0002-commands.md), [0004: Built-in effects and instruments](decisions/0004-built-in-devices.md), [0006: Plug-in hosting](decisions/0006-plug-in-hosting.md), [0028: ARA hosting](decisions/0028-ara-hosting.md), [Author a data-only SDK device](device-sdk.md), [Device groups](spec/device-groups.md), [The NAM Amp Modeler and NAM Cab Loader](spec/nam-amp-and-cab.md), [Suhina device graph (`.sd`)](spec/sd-device-format.md), [Suhina device graph (`.sd`)](spec/sd-device-format.md), [Key inputs and plug-in buses](spec/sidechain.md) |
+| `crates/session/src/editing.rs` | [Arrangement editing](spec/arrangement-editing.md), [Export](spec/export.md) |
 | `crates/session/src/files.rs` | [0003: Time-stretching and stretch modes](decisions/0003-time-stretching.md), [0011: Previewing, and audio added to a playing project](decisions/0011-preview-and-added-audio.md), [Arrangement editing](spec/arrangement-editing.md), [Browser](spec/browser.md), [Stems files](spec/stems-format.md) |
 | `crates/session/src/follow.rs` | [Clip launching](spec/clip-launching.md) |
 | `crates/session/src/launch.rs` | [Clip launching](spec/clip-launching.md) |
@@ -276,7 +306,7 @@ Change this code, and check these documents.
 | `crates/session/src/plugins.rs` | [0002: Every action is a command](decisions/0002-commands.md), [The plug-in manager](spec/plugin-manager.md) |
 | `crates/session/src/preview.rs` | [0011: Previewing, and audio added to a playing project](decisions/0011-preview-and-added-audio.md), [Browser](spec/browser.md), [UI: clip editor (MIDI piano roll)](spec/ui-clip-editor.md) |
 | `crates/session/src/projects.rs` | [Architecture](architecture.md), [0002: Every action is a command](decisions/0002-commands.md), [0007: Several open projects](decisions/0007-several-open-projects.md), [0011: Previewing, and audio added to a playing project](decisions/0011-preview-and-added-audio.md) |
-| `crates/session/src/rack.rs` | [Architecture](architecture.md), [0006: Plug-in hosting](decisions/0006-plug-in-hosting.md), [Plug-ins in the browser](spec/plugin-browsing.md) |
+| `crates/session/src/rack.rs` | [Architecture](architecture.md), [0006: Plug-in hosting](decisions/0006-plug-in-hosting.md), [0028: ARA hosting](decisions/0028-ara-hosting.md), [Plug-ins in the browser](spec/plugin-browsing.md) |
 | `crates/session/src/record_writer.rs` | [Architecture](architecture.md), [Recording](spec/recording.md) |
 | `crates/session/src/recording.rs` | [Recording](spec/recording.md) |
 | `crates/session/src/relink.rs` | [Missing files](spec/missing-files.md) |
@@ -300,12 +330,13 @@ Change this code, and check these documents.
 | `crates/soundmap/**` | [0013: The sample map: features, layout and cache](decisions/0013-sample-map-analysis.md), [Sample map](spec/sample-map.md) |
 | `crates/stretch/src/lib.rs` | [0003: Time-stretching and stretch modes](decisions/0003-time-stretching.md) |
 | `crates/ui/Cargo.toml` | [0009: egui for the UI; familiar workflow, Suhina's own look](decisions/0009-ui-toolkit-and-look.md) |
-| `crates/ui/src/app.rs` | [0020: Latency: what the number is, and where it is shown](decisions/0020-latency-and-its-readout.md), [Arrangement editing](spec/arrangement-editing.md), [UI: main window and Session view](spec/ui-session-view.md) |
+| `crates/ui/src/app.rs` | [0020: Latency: what the number is, and where it is shown](decisions/0020-latency-and-its-readout.md), [Arrangement editing](spec/arrangement-editing.md), [Export](spec/export.md), [UI: main window and Session view](spec/ui-session-view.md) |
 | `crates/ui/src/app/loading_dialog.rs` | [Components](design/components.md) |
 | `crates/ui/src/app/missing_files.rs` | [Architecture](architecture.md), [Components](design/components.md), [Missing files](spec/missing-files.md) |
 | `crates/ui/src/app/project_dialog.rs` | [0028: MCP in the running app](decisions/0028-mcp-in-the-running-app.md), [Components](design/components.md), [About Suhina](spec/about.md), [Backups](spec/backups.md) |
 | `crates/ui/src/app/splash.rs` | [Components](design/components.md) |
 | `crates/ui/src/app/start_panel.rs` | [Components](design/components.md) |
+| `crates/ui/src/app/updates.rs` | [Updates](spec/updates.md) |
 | `crates/ui/src/arrangement.rs` | [Architecture](architecture.md) |
 | `crates/ui/src/arrangement/arrangement_view.rs` | [Components](design/components.md), [Arrangement editing](spec/arrangement-editing.md) |
 | `crates/ui/src/arrangement/automation_lanes.rs` | [Components](design/components.md), [Automation](spec/automation.md) |
@@ -316,8 +347,9 @@ Change this code, and check these documents.
 | `crates/ui/src/browser/sample_map_crowd.rs` | [Sample map](spec/sample-map.md) |
 | `crates/ui/src/browser/sample_map_panel.rs` | [Sample map](spec/sample-map.md) |
 | `crates/ui/src/detail.rs` | [Architecture](architecture.md) |
-| `crates/ui/src/detail/detail_view.rs` | [Components](design/components.md), [Suhina device graph (`.sd`)](spec/sd-device-format.md), [Custom device panels](spec/sdk-custom-ui.md), [UI: clip editor (MIDI piano roll)](spec/ui-clip-editor.md), [UI: main window and Session view](spec/ui-session-view.md) |
-| `crates/ui/src/detail/device_canvas.rs` | [Custom device panels](spec/sdk-custom-ui.md) |
+| `crates/ui/src/detail/**` | [The NAM Amp Modeler and NAM Cab Loader](spec/nam-amp-and-cab.md) |
+| `crates/ui/src/detail/detail_view.rs` | [0028: ARA hosting](decisions/0028-ara-hosting.md), [Components](design/components.md), [Device groups](spec/device-groups.md), [Sampler](spec/sampler.md), [Suhina device graph (`.sd`)](spec/sd-device-format.md), [Custom device panels](spec/sdk-custom-ui.md), [UI: clip editor (MIDI piano roll)](spec/ui-clip-editor.md), [UI: main window and Session view](spec/ui-session-view.md) |
+| `crates/ui/src/detail/device_canvas.rs` | [Sampler](spec/sampler.md), [Custom device panels](spec/sdk-custom-ui.md) |
 | `crates/ui/src/detail/follow_view.rs` | [Components](design/components.md), [UI: main window and Session view](spec/ui-session-view.md) |
 | `crates/ui/src/detail/midi_tools.rs` | [UI: clip editor (MIDI piano roll)](spec/ui-clip-editor.md) |
 | `crates/ui/src/detail/piano_roll.rs` | [UI: clip editor (MIDI piano roll)](spec/ui-clip-editor.md) |
@@ -331,7 +363,7 @@ Change this code, and check these documents.
 | `crates/ui/src/interaction/drop.rs` | [Arrangement editing](spec/arrangement-editing.md), [Browser](spec/browser.md) |
 | `crates/ui/src/interaction/grid.rs` | [Design brief](design/brief.md), [UI: main window and Session view](spec/ui-session-view.md) |
 | `crates/ui/src/interaction/menus.rs` | [Arrangement editing](spec/arrangement-editing.md), [Clip launching](spec/clip-launching.md) |
-| `crates/ui/src/interaction/pick.rs` | [Components](design/components.md) |
+| `crates/ui/src/interaction/pick.rs` | [Components](design/components.md), [Export](spec/export.md) |
 | `crates/ui/src/kit.rs` | [Architecture](architecture.md) |
 | `crates/ui/src/kit/logo.rs` | [Components](design/components.md) |
 | `crates/ui/src/kit/meter.rs` | [Components](design/components.md), [Level meters](spec/level-meters.md) |
@@ -350,9 +382,10 @@ Change this code, and check these documents.
 | `crates/ui/src/settings.rs` | [Arrangement editing](spec/arrangement-editing.md), [The Settings window](spec/ui-settings.md), [Window zoom](spec/window-zoom.md) |
 | `crates/ui/src/settings/keymap.rs` | [Keyboard shortcuts](guide/keyboard-shortcuts.md), [Keyboard shortcuts](shortcuts.md), [Arrangement editing](spec/arrangement-editing.md), [UI: main window and Session view](spec/ui-session-view.md), [Window zoom](spec/window-zoom.md) |
 | `crates/ui/src/settings/plugin_manager.rs` | [The plug-in manager](spec/plugin-manager.md) |
-| `crates/ui/src/settings/settings_rows.rs` | [The Settings window](spec/ui-settings.md) |
+| `crates/ui/src/settings/settings_rows.rs` | [The NAM Amp Modeler and NAM Cab Loader](spec/nam-amp-and-cab.md), [The Settings window](spec/ui-settings.md) |
 | `crates/ui/src/settings/settings_view.rs` | [0020: Latency: what the number is, and where it is shown](decisions/0020-latency-and-its-readout.md), [Design brief](design/brief.md), [Components](design/components.md), [Keyboard shortcuts](guide/keyboard-shortcuts.md), [Keyboard shortcuts](shortcuts.md), [The plug-in manager](spec/plugin-manager.md), [The Settings window](spec/ui-settings.md), [Window zoom](spec/window-zoom.md) |
 | `crates/ui/src/settings/themes.rs` | [Design brief](design/brief.md), [Components](design/components.md) |
+| `crates/ui/src/settings/update_settings.rs` | [Updates](spec/updates.md) |
 | `crates/ui/src/settings/view_settings.rs` | [Components](design/components.md), [UI: main window and Session view](spec/ui-session-view.md) |
 | `crates/ui/tests/automation_lanes.rs` | [Automation](spec/automation.md) |
 | `crates/ui/tests/launch_keys.rs` | [UI: main window and Session view](spec/ui-session-view.md) |
@@ -364,13 +397,25 @@ Change this code, and check these documents.
 | `crates/ui/tests/track_colour.rs` | [Components](design/components.md), [UI: main window and Session view](spec/ui-session-view.md) |
 | `crates/ui/tests/waveforms.rs` | [Waveforms](spec/waveforms.md) |
 | `crates/ui/themes/**` | [Design brief](design/brief.md) |
+| `crates/update/src/github.rs` | [Updates](spec/updates.md) |
+| `crates/update/src/install.rs` | [Updates](spec/updates.md) |
+| `crates/update/src/lib.rs` | [Updates](spec/updates.md) |
+| `crates/update/src/net.rs` | [Updates](spec/updates.md) |
+| `crates/update/src/version.rs` | [Updates](spec/updates.md) |
 | `devices/**` | [0004: Built-in effects and instruments](decisions/0004-built-in-devices.md) |
 | `devices/*/Cargo.toml` | [Architecture](architecture.md) |
 | `devices/compressor/src/lib.rs` | [Key inputs and plug-in buses](spec/sidechain.md) |
+| `devices/delay/**` | [Delay](spec/delay.md) |
 | `devices/fm-synth/src/patch.rs` | [DX7 voice data](spec/dx7-voice-format.md) |
+| `devices/nam-amp-modeler/**` | [The NAM Amp Modeler and NAM Cab Loader](spec/nam-amp-and-cab.md) |
+| `devices/nam-cab-loader/**` | [The NAM Amp Modeler and NAM Cab Loader](spec/nam-amp-and-cab.md) |
+| `devices/pitch/**` | [Pitch](spec/pitch.md) |
+| `devices/reverb/**` | [Reverb](spec/reverb.md) |
+| `devices/sampler/**` | [Sampler](spec/sampler.md) |
 | `docs/decisions/0008-patch-devices.md` | [plugdata and the device SDK: scope comparison](research/parity-plugdata-device-sdk.md) |
 | `docs/spec/sdk-nodes.md` | [plugdata and the device SDK: scope comparison](research/parity-plugdata-device-sdk.md) |
 | `presets/**` | [0014: Presets for devices](decisions/0014-stock-presets.md) |
+| `scripts/ara_bindings.sh` | [0028: ARA hosting](decisions/0028-ara-hosting.md) |
 | `scripts/branch_update.py` | [Releasing](releasing.md) |
 | `scripts/claim_bot_test.py` | [The claim bot](claim-bot.md) |
 | `scripts/depends_on_test.py` | [The claim bot](claim-bot.md) |
@@ -385,3 +430,4 @@ Change this code, and check these documents.
 | `scripts/stems-fixture.py` | [Stems files](spec/stems-format.md) |
 | `scripts/test-signal.py` | [Making the `.als` test corpus](spec/als-corpus.md) |
 | `scripts/test_project_sync.py` | [The claim bot](claim-bot.md) |
+| `third_party/ara-api` | [0028: ARA hosting](decisions/0028-ara-hosting.md) |

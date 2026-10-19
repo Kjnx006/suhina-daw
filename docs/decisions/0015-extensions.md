@@ -3,7 +3,7 @@ description: How Suhina uses optional components it does not ship — separate p
 read_when: extension, add-on, optional component, model weights, model licence, inference runtime, non-free, plug-in host boundary, extension manifest, third-party model, ONNX, separation
 type: decision
 status: draft
-last_verified: 2026-10-13
+last_verified: 2026-10-19
 ---
 
 # 0015: Extensions: optional components outside the tree

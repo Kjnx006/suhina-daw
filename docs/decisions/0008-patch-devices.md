@@ -3,7 +3,7 @@ description: Proposed way for the community to build devices as Pure Data patche
 read_when: Pure Data, Pd, plugdata, libpd, patch, patch device, community devices, Max for Live, Max device, amxd, scripting devices, collect and save
 type: decision
 status: draft
-last_verified: 2026-10-13
+last_verified: 2026-10-19
 ---
 
 # 0008: Patch devices

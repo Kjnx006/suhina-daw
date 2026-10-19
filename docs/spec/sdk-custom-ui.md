@@ -3,7 +3,7 @@ description: Self-contained device canvases, image assets, drawing expressions a
 read_when: custom SDK control, device background, icon, photo, texture, XY pad, drawing API, image asset
 type: spec
 status: current
-last_verified: 2026-10-15
+last_verified: 2026-10-19
 covers:
   - crates/device-sdk/src/ui/author.rs
   - crates/device-sdk/src/ui/widgets.rs
