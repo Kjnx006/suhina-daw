@@ -774,7 +774,7 @@
     ]
   },
   "Arrangement/Clips/stretch_alt_drag": {
-    "sourceFingerprint": "0cacb976e3b4b5dc36e03601fef1debee4f33232757ad7c8069b36500fc05fb3",
+    "sourceFingerprint": "464f35094f035650894ea877d91bd8e6fec95a803c6db97b3eb57d7ddb953e2e",
     "summary": "Enable pitch-preserving audio stretching with Ctrl+Alt at a clip edge.",
     "description": "Time-stretching changes an audio clip’s duration while aiming to retain its pitch. With this enabled, hold Ctrl+Alt while dragging an Arrangement audio clip’s left or right edge to stretch its content to the new span. Suhina adjusts the timing markers and gives shared content a separate copy where necessary. With it disabled, the edge uses normal trimming behavior. Alt alone allows free edge positioning; it is not the stretch gesture. On macOS use Cmd+Option. MIDI clip edges are not affected.",
     "options": [
