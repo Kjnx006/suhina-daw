@@ -543,8 +543,8 @@ between beats it waits for the next one. The launcher's beat is the playhead's, 
 launches land on the arrangement's bars.
 
 **A jump while playing** ends the notes that sound (with their release) and the audio clips that
-play, and plays on from the new beat as a start would. Launches and a scene tempo that were
-waiting are queued again for the next boundary from the new beat. Time-stretched clips are
+play, and plays on from the new beat as a start would, the notes that began before it and still
+sound there included. Launches and a scene tempo that were waiting are queued again for the next boundary from the new beat. Time-stretched clips are
 silent until the stretch worker has caught up with the new place (about one block in practice).
 
 **In the Arrangement view** a click on the ruler runs `transport.setPosition`: the beat under the

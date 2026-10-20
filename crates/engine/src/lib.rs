@@ -2567,6 +2567,26 @@ mod tests {
         assert_eq!(monitor.start_beat(), 2.0);
     }
 
+    /// A ruler click while playing is a jump like a start: the note it lands inside sounds.
+    #[test]
+    fn a_jump_while_playing_chases_the_note_it_lands_inside() {
+        let beat = SR as usize / 2;
+        let project = project_with(untargeted(vec![note(0.0, 4.0, 60)]), vec![clip(0.0, 4.0)], 1);
+        let mut started = Renderer::stopped(&project, &AudioPool::new(), SR).unwrap();
+        started.handle(LaunchCommand::SetPosition { beat: 2.0 });
+        started.handle(LaunchCommand::Play);
+        let from_start = frames(&mut started, beat);
+        let mut jumped = Renderer::new(&project, SR).unwrap();
+        frames(&mut jumped, beat / 2);
+        jumped.handle(LaunchCommand::SetPosition { beat: 2.0 });
+        let after_jump = frames(&mut jumped, beat);
+        assert!(from_start.iter().any(|s| s.abs() > 0.1));
+        // The cut note's release has faded after a moment; from there on both are the same.
+        let release = ((RELEASE_SECONDS * f64::from(SR)) as usize + 1) * 2;
+        assert!(after_jump[release..].iter().any(|s| s.abs() > 0.1), "silent after the jump");
+        assert!(max_diff(&after_jump[release..], &from_start[release..]) < 1e-6);
+    }
+
     #[test]
     fn stop_returns_to_the_marker_and_a_second_stop_to_the_start() {
         let project = notes_around_beat_two();

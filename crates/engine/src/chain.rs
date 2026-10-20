@@ -398,7 +398,7 @@ impl Chain {
 
     /// A chain without devices for a track that plays into a bus, so its sound reaches the bus
     /// at its gains and with its share of latency compensation. Allocates.
-    pub(crate) fn passthrough(track: TrackId, column: u32) -> Self {
+    pub(crate) fn passthrough(track: TrackId, column: u32, sample_rate: u32) -> Self {
         Self {
             track,
             column,
@@ -424,8 +424,8 @@ impl Chain {
             midi_scratch: Vec::new(),
             deadline: None,
             context: ProcessContext::default(),
-            // It runs no devices, so nothing reads it.
-            sample_rate: 48_000.0,
+            // It runs no devices; the live fader is smoothed at this rate.
+            sample_rate: f64::from(sample_rate),
             done: 0,
             stage: 0,
             waiting: None,
@@ -1511,7 +1511,7 @@ mod live_volume_tests {
     /// The left output of a passthrough chain fed ones, after a fader move to `volume` has
     /// settled, with a pan lane at the centre when `pan_lane`.
     fn settled(volume: f64, pan_lane: bool) -> f32 {
-        let mut chain = Chain::passthrough(TrackId(1), 0);
+        let mut chain = Chain::passthrough(TrackId(1), 0, 48_000);
         if pan_lane {
             let mut channel = Channel::new(ChannelId(1), "C1");
             channel.automation.push(AutomationLane {
@@ -1538,6 +1538,25 @@ mod live_volume_tests {
     fn a_fader_move_is_heard_with_and_without_a_pan_lane() {
         assert!((settled(0.5, false) - 0.5).abs() < 1e-3);
         assert!((settled(0.5, true) - 0.5).abs() < 1e-3, "{}", settled(0.5, true));
+    }
+
+    /// The fader glides over the same time at any sample rate: a passthrough chain smooths it
+    /// at the renderer's rate, not a fixed one.
+    #[test]
+    fn a_fader_glide_takes_the_same_time_at_any_sample_rate() {
+        let after_one_block = |rate: u32| {
+            let mut chain = Chain::passthrough(TrackId(1), 0, rate);
+            chain.built_volume = Some(1.0);
+            chain.set_live_volume(0.0);
+            chain.buffer.fill(1.0);
+            chain.complete(256, &ProcessContext::default());
+            let mut out = vec![0.0; 256 * 2];
+            chain.mix(&mut out, &mut [], 256);
+            out.get(255 * 2).copied().unwrap_or_default()
+        };
+        // Twice the rate covers half the time in the same frames: less of the way is gone.
+        let (slow, fast) = (after_one_block(96_000), after_one_block(48_000));
+        assert!(slow > fast + 0.01, "{slow} {fast}");
     }
 }
 
