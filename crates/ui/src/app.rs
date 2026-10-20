@@ -6,6 +6,7 @@
 //! Every change goes through `Session::execute` (AGENTS.md rule 6); the window only reads the
 //! project and the engine's monitor to draw them.
 
+pub mod closing_dialog;
 pub mod loading_dialog;
 pub mod missing_files;
 pub mod project_dialog;
@@ -60,6 +61,12 @@ const DEFAULT_QUANTIZATION: &str = "1 bar";
 const TABS: f32 = 22.0;
 /// How many recent projects File › Open recent lists.
 const RECENT_IN_MENU: usize = 10;
+/// The projects a closing window is letting go of: their names and threads.
+type LettingGo = Vec<(String, std::thread::JoinHandle<()>)>;
+
+/// How long a closing window waits for its projects' plug-ins to be let go of before it closes
+/// anyway ([`closing_dialog`]).
+const QUIT_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
 /// The detail area's height in a row, by default, and the splitter between it and the view.
 const DETAIL_HEIGHT: f32 = 200.0;
 /// How long the browser takes to slide in or out, with animations on (#708).
@@ -283,6 +290,9 @@ pub struct App {
     quit_confirmed: bool,
     /// Close the window on the next frame.
     quit_now: bool,
+    /// The window is closing: the projects being let go of and since when; it closes once they
+    /// are, or after [`QUIT_WAIT`].
+    quitting: Option<(std::time::Instant, LettingGo)>,
     /// The active project's missing audio files, their bar and panel.
     missing: crate::app::missing_files::MissingFiles,
     remember_choice: bool,
@@ -489,6 +499,7 @@ impl App {
             save_then: None,
             quit_confirmed: false,
             quit_now: false,
+            quitting: None,
             missing: crate::app::missing_files::MissingFiles::default(),
             remember_choice: false,
             player_request: None,
@@ -843,10 +854,28 @@ impl App {
     /// Before the window closes: when projects have unsaved changes, keeps it open and asks about
     /// each, then closes it once every one was answered.
     fn guard_quit(&mut self, ctx: &egui::Context) {
+        if let Some((started, going)) = &self.quitting {
+            // The dialog stays until the window is gone: the frames before that would show the
+            // window without its projects (the start panel).
+            if going.iter().all(|(_, g)| g.is_finished()) || started.elapsed() >= QUIT_WAIT {
+                if !self.quit_confirmed {
+                    let gone = going.iter().all(|(_, g)| g.is_finished());
+                    suhina_plugins::trace!(
+                        "quit: projects {} {:?}",
+                        if gone { "let go in" } else { "not let go, closing anyway after" },
+                        started.elapsed()
+                    );
+                }
+                self.quit_confirmed = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            } else {
+                ctx.request_repaint_after(std::time::Duration::from_millis(50));
+            }
+            return;
+        }
         if self.quit_now {
             self.quit_now = false;
-            self.quit_confirmed = true;
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            self.start_quitting(ctx);
             return;
         }
         if !ctx.input(|i| i.viewport().close_requested()) || self.quit_confirmed {
@@ -857,11 +886,29 @@ impl App {
                 self.check_plugin_edits(id);
             }
         }
-        let Some(first) = self.unsaved_projects().first().copied() else { return };
         ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+        let Some(first) = self.unsaved_projects().first().copied() else {
+            self.start_quitting(ctx);
+            return;
+        };
         if !self.unsaved_prompt_open() {
             self.unsaved_prompt = Some(Leaving { project: first, then: AfterLeaving::Quit(Vec::new()) });
         }
+    }
+
+    /// Every project was answered for: their backups are written, and they are let go of while
+    /// the window says so ([`closing_dialog`]); it closes once they are, or after [`QUIT_WAIT`].
+    fn start_quitting(&mut self, ctx: &egui::Context) {
+        let _finished_in_time = self.finish_backups();
+        // Embedded plug-in editors are windows of their own and would cover the dialog.
+        self.place_editors(&[]);
+        self.quitting = Some((std::time::Instant::now(), self.projects.let_go_all()));
+        ctx.request_repaint();
+    }
+
+    /// Whether the window is closing ([`App::start_quitting`]).
+    pub fn quitting(&self) -> bool {
+        self.quitting.is_some()
     }
 
     /// Saves the project being left, then leaves it; asks for a name first when it has no file
@@ -988,10 +1035,10 @@ impl App {
         self.projects.finish_backups(std::time::Duration::from_secs(5))
     }
 
-    /// Quitting, after [`App::finish_backups`]: lets every project go at once, off the window's
-    /// thread, and waits for them up to 2 s ([`Projects::close_all`]).
+    /// Quitting, after [`App::finish_backups`]: lets go of the projects still open (the window
+    /// let go of them already when it was closed from itself), and waits up to [`QUIT_WAIT`].
     pub fn let_go_of_projects(&mut self) -> bool {
-        self.projects.close_all(std::time::Duration::from_secs(2))
+        self.projects.close_all(QUIT_WAIT)
     }
 
     /// Takes in finished backups and writes the timed ones that are due; a failed one is shown in
@@ -2180,6 +2227,15 @@ impl App {
     pub fn ui(&mut self, ui: &mut Ui) {
         self.frame_trace.start();
         self.frame_trace.causes(ui.ctx());
+        // Closing: the dialog alone, so nothing of the window without its projects shows behind.
+        if let Some((_, going)) = &self.quitting {
+            let waiting: Vec<String> =
+                going.iter().filter(|(_, g)| !g.is_finished()).map(|(name, _)| name.clone()).collect();
+            closing_dialog::show(ui, ui.max_rect(), &waiting);
+            self.guard_quit(ui.ctx());
+            self.frame_trace.finish();
+            return;
+        }
         if self.projects.active().is_some() {
             // The start panel reads its lists again when it next appears.
             self.start_lists = false;

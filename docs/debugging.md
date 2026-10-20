@@ -101,9 +101,10 @@ out is where to look.
 
 A closed project's plug-ins are unloaded on a thread of their own, so the window goes on drawing
 meanwhile: `closed project let go in …` says how long it took. Quitting lets every project go at
-once and waits up to 2 s: `quit: projects let go in …`, or `quit: projects not let go after 2s`
-when a plug-in was still busy (an ARA plug-in finishing an analysis can hold its host for many
-seconds); its host process then ends on its own once the plug-in is done.
+once and shows "Closing Suhina" for up to 2 s: `quit: projects let go in …`, or
+`quit: projects not let go, closing anyway after 2s` when a plug-in was still busy (an ARA plug-in
+finishing an analysis can hold its host for many seconds); its host process then ends on its own
+once the plug-in is done.
 
 Once a second a `frames:` line sums up: how many frames, their drawing time on average and the
 longest, and the longest wait between two frames. A long wait with short drawing means the time

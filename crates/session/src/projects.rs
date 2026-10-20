@@ -393,14 +393,23 @@ impl Projects {
     }
 
     /// Closes every open project, as quitting does, and lets their sessions go at once, each on
-    /// a thread of its own ([`let_go`]); waits up to `timeout` for them. Returns whether every
-    /// one was let go in time: a plug-in still busy then is left to its host, which ends when
-    /// this process does.
-    pub fn close_all(&mut self, timeout: std::time::Duration) -> bool {
+    /// a thread of its own ([`let_go`]): their names and threads, to wait for. A window shows
+    /// the projects still going meanwhile.
+    pub fn let_go_all(&mut self) -> Vec<(String, std::thread::JoinHandle<()>)> {
         self.active = None;
+        self.open.drain(..).filter_map(|o| Some((o.name, let_go(o.session)?))).collect()
+    }
+
+    /// [`Projects::let_go_all`], then waits up to `timeout` for them. Returns whether every one
+    /// was let go in time: a plug-in still busy then is left to its host, which ends when this
+    /// process does.
+    pub fn close_all(&mut self, timeout: std::time::Duration) -> bool {
         let started = std::time::Instant::now();
-        let going: Vec<_> = self.open.drain(..).filter_map(|o| let_go(o.session)).collect();
-        while going.iter().any(|g| !g.is_finished()) {
+        let going = self.let_go_all();
+        if going.is_empty() {
+            return true;
+        }
+        while going.iter().any(|(_, g)| !g.is_finished()) {
             if started.elapsed() >= timeout {
                 suhina_plugins::trace!("quit: projects not let go after {timeout:?}; their plug-ins end with the app");
                 return false;
