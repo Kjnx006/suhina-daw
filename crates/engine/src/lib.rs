@@ -1172,6 +1172,14 @@ impl Graph {
         };
         // Device chains, group buses and latency compensation: every track is heard as late as
         // the path whose devices delay it most.
+        // The tempo map as a number, for the stretch voices' keys: a voice on another map plays
+        // other frames.
+        let tempo_key = {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            format!("{:?}", *tempo).hash(&mut hasher);
+            hasher.finish()
+        };
         let chains_began = std::time::Instant::now();
         let (chains, latency) = buses::build(project, audio, sample_rate, plugins, column_of, assets);
         let chains_took = chains_began.elapsed();
@@ -1212,7 +1220,9 @@ impl Graph {
                                 let gain = if region.gain.is_finite() { region.gain.max(0.0) as f32 } else { 0.0 };
                                 let to_frame = |beats: f64| tempo::frame_of(&tempo, beats);
                                 let (start, end) = (to_frame(clip.start), to_frame(clip.start + clip.length));
-                                stretch_voices.push((voice, start, end.saturating_sub(start)));
+                                let length = end.saturating_sub(start);
+                                let key = ahead::voice_key(clip, region, data, (start, length), tempo_key);
+                                stretch_voices.push((voice, start, length, key));
                                 stretch_heard.push(track_gains(project, track).is_some());
                                 stretch_events.push(StretchEvent {
                                     start,
@@ -2260,6 +2270,54 @@ mod tests {
         assert_eq!(renderer.stretch_underruns(), 0);
         let at = swap_frame(50);
         assert!(rms(&out, at, at + 4_800) > 0.9 * rms(&out, at - 4_800, at));
+    }
+
+    #[test]
+    fn a_stretched_clip_keeps_its_voice_through_an_edit_that_leaves_it_alone() {
+        // An edit elsewhere (a solo, a fader) sends a new graph: the clip's voice carries over to
+        // it, stretcher and ring, so what plays is the same to the sample (#743).
+        let (project, pool) = stretched_project(440.0, 4.0, 8.0, 110.0, StretchMode::Smooth);
+        let mut offline = Renderer::with_audio(&project, &pool, SR).unwrap();
+        let reference = blocks(&mut offline, 150, 480, |_| {});
+        let mut renderer = Renderer::with_audio(&project, &pool, SR).unwrap();
+        let mut controller = renderer.controller();
+        controller.run_stretch_worker(&mut renderer).unwrap();
+        let pace = |_| std::thread::sleep(std::time::Duration::from_millis(10));
+        let mut out = blocks(&mut renderer, 50, 480, pace);
+        controller.update(&project).unwrap();
+        out.extend(blocks(&mut renderer, 100, 480, pace));
+        assert_eq!(renderer.stretch_underruns(), 0);
+        assert_eq!(controller.stretch_moves(), 0);
+        assert_eq!(max_diff(&reference, &out), 0.0, "the voice went on as it was");
+    }
+
+    #[test]
+    fn an_edit_refused_by_a_full_queue_leaves_the_playing_voices_alone() {
+        // Edits faster than the audio thread takes them (a fader drag) fill the swap queue; the
+        // one refused must not hand the playing clip's voice to a graph that is then dropped.
+        let (project, pool) = stretched_project(440.0, 4.0, 8.0, 110.0, StretchMode::Smooth);
+        let mut offline = Renderer::with_audio(&project, &pool, SR).unwrap();
+        let reference = blocks(&mut offline, 150, 480, |_| {});
+        let mut renderer = Renderer::with_audio(&project, &pool, SR).unwrap();
+        let mut controller = renderer.controller();
+        controller.run_stretch_worker(&mut renderer).unwrap();
+        let pace = |_| std::thread::sleep(std::time::Duration::from_millis(10));
+        let mut out = blocks(&mut renderer, 50, 480, pace);
+        let mut refused = false;
+        for _ in 0..64 {
+            // A frame apart, as a drag sends them: the stretch thread takes each worker in.
+            std::thread::sleep(std::time::Duration::from_millis(16));
+            if controller.update(&project).is_err() {
+                refused = true;
+                // Time for the stretch thread to act on anything it was handed.
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                break;
+            }
+        }
+        assert!(refused, "the queue filled up");
+        out.extend(blocks(&mut renderer, 100, 480, pace));
+        assert_eq!(renderer.stretch_underruns(), 0);
+        assert_eq!(max_diff(&reference, &out), 0.0, "the voice went on as it was");
     }
 
     #[test]

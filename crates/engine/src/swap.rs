@@ -329,7 +329,9 @@ impl Renderer {
                 }
             }
         }
-        // The new stretch voices were moved to where the playhead was expected.
+        // The unchanged clips' rings go on in the new graph (#743); the others start afresh,
+        // moved to where the playhead was expected.
+        self.graph.ahead.adopt_from(&mut old.ahead);
         self.underruns_before += old.ahead.underruns();
         if self.running {
             // A swap a few frames off where it was expected keeps the voices rendered for it: the
@@ -497,9 +499,16 @@ impl Controller {
         if let Some(arrangement) = arrangement {
             graph.ahead.move_to(arrangement);
         }
+        // The worker may take voices over from the playing graph: it goes to the stretch thread
+        // only when the swap is sure to be queued (this is the queue's one producer), or those
+        // voices would go with this graph.
+        if updater.swaps.is_full() {
+            return Err("the audio engine has not taken the previous edits yet".to_string());
+        }
         if let Some(thread) = updater.stretch.as_mut() {
             let began = std::time::Instant::now();
-            if let Some(worker) = graph.ahead.take_worker() {
+            // The thread takes the unchanged clips' voices over and renders the rest (#743).
+            if let Some(worker) = graph.ahead.take_worker_unfilled() {
                 thread.add(worker)?;
             }
             crate::build_report::add(&format!("rings filled {:.1} ms", began.elapsed().as_secs_f64() * 1000.0));
