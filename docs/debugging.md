@@ -155,8 +155,10 @@ screen (OBS, ShareX or the like) while you reproduce the bug, then:
 python scripts/video_frames.py extract bug.mp4 frames --fps 6
 python scripts/video_frames.py extract bug.mp4 full --fps 24 --from 21 --to 30
 
-# A contact sheet: a run of frames in one image, each with its number and second.
+# A contact sheet: a run of frames in one image, each with its number and second. Frames
+# extracted with --from (and --fps) are given the same, so the seconds are the video's.
 python scripts/video_frames.py sheet frames overview.jpg --every 3 --cols 10 --size 320x180
+python scripts/video_frames.py sheet full detail.jpg --first 1 --last 12 --fps 24 --from 21
 
 # The same part of each frame at full size: the clip, the plug-in's timeline.
 python scripts/video_frames.py sheet frames clip.jpg --first 130 --last 150 --cols 3 --size 640x210 --crop 760,520,1920,900
@@ -164,7 +166,7 @@ python scripts/video_frames.py sheet frames clip.jpg --first 130 --last 150 --co
 # Where thin vertical lines are in a strip of each frame, printed when they change: a playhead,
 # an insert marker. --scale turns pixels into bars (pixels a bar, a pixel x and the bar there),
 # --pointer follows the mouse in a band (the ruler).
-python scripts/video_frames.py track full --strip 800,1700,740,746 --fps 24 --scale 99.5,806,4 --pointer 528,550
+python scripts/video_frames.py track full --strip 800,1700,740,746 --fps 24 --from 21 --scale 99.5,806,4 --pointer 528,550
 ```
 
 `track` printed this for the Melodyne playhead bug: after each click the line went to the new
