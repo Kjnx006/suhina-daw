@@ -162,6 +162,33 @@ pub(crate) struct Chain {
     scale: Option<Option<MusicalScale>>,
 }
 
+/// The identity of built-in device `id` for graph swaps: a device that holds a file changes with
+/// the file, so its identity carries the state's hash, the `.sd` devices' trick, and a model swap
+/// rebuilds one device alone; a Sampler's carries its sample (#600). A chain and the groups in it
+/// give the same device the same identity.
+pub(crate) fn device_identity(id: &str, stored: &suhina_model::Device, audio: &crate::AudioPool) -> String {
+    if suhina_device_registry::is_file_device(id) {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        use std::hash::{Hash, Hasher};
+        let hashed = match std::str::from_utf8(stored.state.as_deref().unwrap_or(&[])) {
+            Ok(text) => {
+                text.hash(&mut hasher);
+                hasher.finish()
+            }
+            Err(_) => hasher.finish(),
+        };
+        format!("{id}:{hashed:016x}")
+    } else {
+        stored.sample_file().map_or_else(
+            || id.to_owned(),
+            |file| {
+                let source = audio.files.get(file).map(std::sync::Arc::as_ptr);
+                format!("{id}:{file}:{source:?}")
+            },
+        )
+    }
+}
+
 impl Chain {
     pub(crate) fn sample_positions(&self) -> Option<(usize, [Option<f32>; 32])> {
         self.slots.iter().zip(&self.positions).find_map(|(slot, &position)| match slot {
@@ -278,6 +305,7 @@ impl Chain {
                     }
                     let mut builder = crate::group::Builder {
                         sample_rate,
+                        audio,
                         assets,
                         plugins: &mut *plugins,
                         keys: &keys,
@@ -319,29 +347,7 @@ impl Chain {
             latency = latency.saturating_add(device.latency());
             slots.push(if info.role == Role::MidiEffect { Slot::MidiDevice(device) } else { Slot::Device(device) });
             positions.push(position);
-            // A device that holds a file changes with the file: its identity carries the state's
-            // hash, the `.sd` devices' trick, so a model swap rebuilds one device alone; a
-            // Sampler's carries its sample (#600).
-            if suhina_device_registry::is_file_device(id) {
-                let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                use std::hash::{Hash, Hasher};
-                let hashed = match std::str::from_utf8(stored.state.as_deref().unwrap_or(&[])) {
-                    Ok(text) => {
-                        text.hash(&mut hasher);
-                        hasher.finish()
-                    }
-                    Err(_) => hasher.finish(),
-                };
-                ids.push(format!("{id}:{hashed:016x}"));
-            } else {
-                ids.push(stored.sample_file().map_or_else(
-                    || id.clone(),
-                    |file| {
-                        let source = audio.files.get(file).map(std::sync::Arc::as_ptr);
-                        format!("{id}:{file}:{source:?}")
-                    },
-                ));
-            }
+            ids.push(device_identity(id, stored, audio));
             params.push(values);
         }
         let mut instrument = slots.iter().any(crate::group::is_instrument);
@@ -543,6 +549,11 @@ impl Chain {
             slot.params.plan(time, frames);
         }
         self.device_lanes.plan(time, frames);
+        for slot in &mut self.slots {
+            if let Slot::Group(group) = slot {
+                group.plan(time, frames);
+            }
+        }
     }
 
     /// Fills the track's mixer gains for a block of `frames` frames whose first frame is at
