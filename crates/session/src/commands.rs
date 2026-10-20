@@ -1817,7 +1817,7 @@ static COMMANDS: &[CommandSpec] = &[
     },
     CommandSpec {
         id: "device.duplicateMany",
-        label: "Copy several devices of a track (groups with everything in them) right after the last of them, in their order, as one undo step; the device clipboard stays as it was",
+        label: "Copy several devices of a track (groups with everything in them), all from one chain or branch, right after the last of them, in their order, as one undo step; the device clipboard stays as it was",
         params: &[TRACK, DEVICES],
         kind: CommandKind::Edit,
         run: devices::duplicate_many,
@@ -3635,7 +3635,8 @@ fn rename_clip(session: &mut Session, params: &Value) -> Result<Value, CommandEr
     Ok(json!({ "name": name }))
 }
 
-/// `clip.shiftFades {clips, edge, beats}` (#715).
+/// `clip.shiftFades {clips, edge, beats}` (#715). Only an audio clip has fades, as in
+/// `clip.setFades`: a clip with no audio lane is left as it is and not counted in `clips`.
 fn shift_fades(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let fade_in = match params.get("edge").and_then(Value::as_str) {
         Some("in") => true,
