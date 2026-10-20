@@ -32,6 +32,9 @@ pub(crate) struct Planned {
     pub(crate) gains: (f32, f32),
     /// The send's level the gains were worked out for: a live turn scales them by its ratio.
     pub(crate) level: f64,
+    /// The source's pan, for a post-fader send: its gains are centred, and the pan applies
+    /// as the chain builds it ([`crate::chain::pan_factors`]).
+    pub(crate) pan: f64,
     /// After the fader: the channel's live volume ([`Chain::set_live_volume`]) scales it too.
     pub(crate) post_fader: bool,
 }
@@ -100,6 +103,12 @@ pub(crate) fn plan(project: &Project) -> Vec<Planned> {
                 target,
                 gains: gains(channel, send.level, send.pre_fader),
                 level: send.level,
+                // A group's pan does not apply to its own output yet (see `buses`), so not to its sends.
+                pan: if channel.pan.is_finite() && channel.role != ChannelRole::Submix {
+                    channel.pan.clamp(-1.0, 1.0)
+                } else {
+                    0.0
+                },
                 post_fader: !send.pre_fader,
             });
         }
@@ -109,18 +118,15 @@ pub(crate) fn plan(project: &Project) -> Vec<Planned> {
 
 /// The gains a send adds a chain's buffer to its return at. The buffer holds the track's sound
 /// as a centred track at unity volume would play it (`CHAIN_INPUT_GAIN`, see `chain`); a post-fader send
-/// applies the channel's volume and equal-power pan, as the chain's own output does.
+/// applies the channel's volume, centred: its equal-power pan comes from the chain
+/// ([`Planned::pan`]), as the chain's own output's does.
 fn gains(channel: &suhina_model::Channel, level: f64, pre_fader: bool) -> (f32, f32) {
     if pre_fader {
         return (level as f32, level as f32);
     }
     let volume = if channel.volume.is_finite() { channel.volume.max(0.0) } else { 0.0 };
-    // A group's pan does not apply to its own output yet (see `buses`), so not to its sends.
-    let pan =
-        if channel.pan.is_finite() && channel.role != ChannelRole::Submix { channel.pan.clamp(-1.0, 1.0) } else { 0.0 };
-    let angle = (pan + 1.0) * std::f64::consts::FRAC_PI_4;
-    let scale = level * volume * std::f64::consts::SQRT_2;
-    ((angle.cos() * scale) as f32, (angle.sin() * scale) as f32)
+    let centred = (level * volume) as f32;
+    (centred, centred)
 }
 
 /// Whether `to` can be reached from `from` along `edges`.

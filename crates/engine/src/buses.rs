@@ -20,7 +20,7 @@ use crate::{MAX_LATENCY_SECONDS, track_gains};
 
 /// A send of a chain: the return chain's index, the return track, the send's gains with the
 /// level they are for, and whether it is after the fader.
-type SendTarget = (usize, TrackId, ((f32, f32), f64), bool);
+type SendTarget = (usize, TrackId, (((f32, f32), f64), f64), bool);
 
 /// The most channels a route is followed through, so a routing cycle cannot loop forever.
 const MAX_HOPS: usize = 64;
@@ -151,32 +151,41 @@ pub(crate) fn build(
                 .iter()
                 .filter(|p| p.source == c.track)
                 .filter_map(|p| {
-                    Some((chains.iter().position(|o| o.track == p.target)?, p.target, (p.gains, p.level), p.post_fader))
+                    Some((
+                        chains.iter().position(|o| o.track == p.target)?,
+                        p.target,
+                        ((p.gains, p.level), p.pan),
+                        p.post_fader,
+                    ))
                 })
                 .collect()
         })
         .collect();
     for (chain, target) in chains.iter_mut().zip(&targets) {
         let is_bus = buses.iter().any(|(t, _)| *t == chain.track);
-        // A group's pan does not apply (as for a group without devices); a track's does.
-        let post = gains_until(project, chain.track, target.map(|(_, ch)| ch), !is_bus).unwrap_or((0.0, 0.0));
-        chain.set_post(post);
-        chain.target = target.map(|(index, _)| index);
-        chain.set_cue(if cued(project, chain.track) { cue_gains(project, chain.track, !is_bus) } else { None });
         let frames_per_beat = 60.0 / project.transport.tempo_bpm * f64::from(sample_rate);
         chain.mix = automation::channel_of(project, chain.track)
             .and_then(|channel| MixLanes::new(channel, frames_per_beat, !is_bus));
+        // A track's pan applies live (its gains centred, the pan as factors a knob's turn moves),
+        // unless mix lanes carry it; a group's pan does not apply (as for a group without devices).
+        let live_pan = automation::channel_of(project, chain.track)
+            .filter(|_| !is_bus && chain.mix.is_none())
+            .map(|c| if c.pan.is_finite() { c.pan.clamp(-1.0, 1.0) } else { 0.0 });
+        let post = gains_until(project, chain.track, target.map(|(_, ch)| ch), !is_bus && live_pan.is_none())
+            .unwrap_or((0.0, 0.0));
+        chain.set_post(post);
+        chain.target = target.map(|(index, _)| index);
+        chain.set_cue(if cued(project, chain.track) { cue_gains(project, chain.track, !is_bus) } else { None });
         // The volume the gains were built at, which a live volume is taken relative to; none for
         // a bus (its volume scales what plays into it too) or a volume on a lane.
         chain.built_volume = automation::channel_of(project, chain.track)
             .filter(|c| !is_bus && !c.automated(suhina_model::automation::VOLUME))
             .map(|c| c.volume)
             .filter(|v| v.is_finite() && *v > 0.0);
-        // The pan, likewise, for a track without mix lanes, not at either end.
-        chain.built_pan = automation::channel_of(project, chain.track)
-            .filter(|_| !is_bus && chain.mix.is_none())
-            .map(|c| c.pan)
-            .filter(|p| p.is_finite() && p.abs() < 0.999);
+        match live_pan {
+            Some(pan) => chain.set_built_pan(pan),
+            None => chain.built_pan = None,
+        }
     }
     for index in 0..chains.len() {
         let fed = targets.iter().any(|t| t.is_some_and(|(target, _)| target == index))
@@ -225,9 +234,17 @@ pub(crate) fn build(
             .get(i)
             .into_iter()
             .flatten()
-            .map(|&(target, track, gains, post_fader)| {
+            .map(|&(target, track, ((gains, level), pan), post_fader)| {
                 let delay = input.get(target).copied().unwrap_or(0).saturating_sub(arrived);
-                SendOut::new(target, track, gains, post_fader, delay as usize)
+                // A post-fader send's gains are centred: the chain's live pan applies to them as
+                // it plays; without one, the pan goes into them now.
+                let gains = if post_fader && chain.built_pan.is_none() {
+                    let (left, right) = crate::chain::pan_factors(pan);
+                    (gains.0 * left, gains.1 * right)
+                } else {
+                    gains
+                };
+                SendOut::new(target, track, (gains, level), post_fader, delay as usize)
             })
             .collect();
         chain.set_sends(sends);

@@ -100,10 +100,12 @@ pub(crate) struct Chain {
     /// The channel's volume `post` was built with, when a live volume may scale it: `None` for
     /// a bus or an automated volume (those take a new graph).
     pub(crate) built_volume: Option<f64>,
-    /// The pan its gains were built at, which a live pan is taken relative to ([`Chain::set_live_pan`]);
-    /// none for a bus, a pan on a lane or one at either end (a side at silence has nothing to scale).
+    /// The pan it was built at, when its pan is applied live ([`Chain::set_live_pan`]): its gains
+    /// and its post-fader sends' are then built centred and [`Chain::pan`] carries the pan. None
+    /// for a bus (a group's pan does not apply) or a track with mix lanes, whose gains hold it.
     pub(crate) built_pan: Option<f64>,
-    /// A live pan's factors on the left and right gains, smoothed like a fader.
+    /// The pan's equal-power factors on the left and right gains (1 and 1 centred), smoothed like
+    /// a fader as a live pan turns them; 1 and 1 without a live pan.
     pub(crate) pan: (LiveVolume, LiveVolume),
     /// A fader move since the graph was built, as a factor on `post`, its cue and its post-fader
     /// sends, smoothed like a fader in OSS hosts (a one-pole low pass at about 25 Hz).
@@ -465,17 +467,19 @@ impl Chain {
     /// gains of the new pan against those it was built at; ignored without a
     /// [`Chain::built_pan`]. Never allocates.
     pub(crate) fn set_live_pan(&mut self, pan: f64) {
-        let Some(built) = self.built_pan else { return };
-        if !pan.is_finite() {
+        if self.built_pan.is_none() || !pan.is_finite() {
             return;
         }
-        let side = |pan: f64| {
-            let angle = (pan.clamp(-1.0, 1.0) + 1.0) * std::f64::consts::FRAC_PI_4;
-            (angle.cos(), angle.sin())
-        };
-        let (now, was) = (side(pan), side(built));
-        self.pan.0.target = (now.0 / was.0) as f32;
-        self.pan.1.target = (now.1 / was.1) as f32;
+        let (left, right) = pan_factors(pan);
+        self.pan.0.target = left;
+        self.pan.1.target = right;
+    }
+
+    /// Builds the chain with its pan applied live from `pan`: its gains are centred.
+    pub(crate) fn set_built_pan(&mut self, pan: f64) {
+        let (left, right) = pan_factors(pan);
+        self.built_pan = Some(pan);
+        self.pan = (LiveVolume::fixed(left), LiveVolume::fixed(right));
     }
 
     /// Sets the gains applied after the devices: the track's gains up to where its sound goes.
@@ -1507,7 +1511,20 @@ impl Default for LiveVolume {
     }
 }
 
+/// The equal-power factors of pan `pan` (-1 to 1) on centred gains: 1 and 1 centred, √2 and 0 at
+/// the left end.
+pub(crate) fn pan_factors(pan: f64) -> (f32, f32) {
+    let pan = if pan.is_finite() { pan.clamp(-1.0, 1.0) } else { 0.0 };
+    let angle = (pan + 1.0) * std::f64::consts::FRAC_PI_4;
+    ((angle.cos() * std::f64::consts::SQRT_2) as f32, (angle.sin() * std::f64::consts::SQRT_2) as f32)
+}
+
 impl LiveVolume {
+    /// A factor at `value`, not moving.
+    pub(crate) fn fixed(value: f32) -> Self {
+        Self { target: value, now: value, from: value, to: value, frames: 1 }
+    }
+
     /// Plans the next block of `frames` frames at `sample_rate`.
     pub(crate) fn plan(&mut self, frames: usize, sample_rate: f64) {
         self.from = self.now;

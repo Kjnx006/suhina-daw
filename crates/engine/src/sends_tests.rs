@@ -320,7 +320,15 @@ fn a_pan_turned_while_playing_moves_the_track_and_its_post_fader_send() {
     let (live, built) = turned(&sending(1.0, false, vec![]), crate::MIXER_PAN, 0, -0.5, &panned);
     assert!(peak(&built) > 0.1);
     assert!(max_diff(&live, &built) < 1e-3, "{}", max_diff(&live, &built));
-    // A pan to either end silences a side, which a factor cannot bring back: a new graph.
-    let mut renderer = Renderer::new(&sending(1.0, false, vec![]), SR).unwrap();
-    assert!(renderer.controller().set_device_param(TrackId(1), crate::MIXER_PAN, 0, -1.0).is_err());
+    // To either end and back, without a new graph.
+    let mut hard = sending(1.0, false, vec![]);
+    hard.channels[0].pan = -1.0;
+    let (live, built) = turned(&sending(1.0, false, vec![]), crate::MIXER_PAN, 0, -1.0, &hard);
+    assert!(max_diff(&live, &built) < 1e-3, "{}", max_diff(&live, &built));
+    let (live, built) = turned(&hard, crate::MIXER_PAN, 0, 0.3, &{
+        let mut back = sending(1.0, false, vec![]);
+        back.channels[0].pan = 0.3;
+        back
+    });
+    assert!(max_diff(&live, &built) < 1e-3, "{}", max_diff(&live, &built));
 }

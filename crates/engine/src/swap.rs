@@ -552,10 +552,8 @@ impl Controller {
         if device == crate::MIXER_SEND && !updater.live_sends.contains(&(track, target)) {
             return Err("the send takes a new graph".to_string());
         }
-        // A pan at either end takes a new graph, as does one on a lane.
-        if device == crate::MIXER_PAN
-            && (!updater.live_pans.contains(&track) || !value.is_finite() || value.abs() >= 0.999)
-        {
+        // A pan on a lane, or a group's, takes a new graph.
+        if device == crate::MIXER_PAN && (!updater.live_pans.contains(&track) || !value.is_finite()) {
             return Err("the track's pan takes a new graph".to_string());
         }
         let seq = updater.param_seq + 1;
