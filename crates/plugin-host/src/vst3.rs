@@ -869,6 +869,22 @@ impl Vst3Plugin {
     }
 
     /// How long ago it was loaded.
+    /// Leaves its ARA document now, with its processing stopped: an instance released later
+    /// (`Loaded::unload`) must not keep its track's regions in the document the other tracks
+    /// share, where the instance loaded in its place puts them again.
+    pub(crate) fn leave_document(&mut self) {
+        if self.ara.is_none() {
+            return;
+        }
+        self.stop.store(true, Ordering::Release);
+        if let Some(audio) = self.audio.take() {
+            let _ = audio.join();
+        }
+        // SAFETY: a live component; processing has stopped.
+        let _ = unsafe { self.component.setActive(0) };
+        self.ara = None;
+    }
+
     pub(crate) fn age(&self) -> std::time::Duration {
         self.loaded_at.elapsed()
     }
@@ -1343,14 +1359,16 @@ impl Vst3Block {
     }
 }
 
-/// Puts the song's place the engine sent with the block (ADR 0028) into the plug-in's process
-/// context: playing or stopped, the arrangement position in samples and as beats, the tempo.
-/// A block without it leaves the context as it was, counting on from the last block.
+/// Puts the song's place the engine sent with the block into the plug-in's process context:
+/// playing or stopped, the arrangement position in samples and in beats, the tempo, the bar and
+/// the time signature. A block without it leaves the context as it was, counting on from the
+/// last block.
 fn follow_song(context: &mut ProcessContext, events: &[suhina_ipc::Event]) {
     use suhina_ipc::EventKind;
     use vst3::Steinberg::Vst::ProcessContext_::{StatesAndFlags, StatesAndFlags_ as Flags};
     #[allow(clippy::unnecessary_cast, reason = "the flags are signed on Windows")]
     let bits = |flag: StatesAndFlags| flag as u32;
+    let mut told_beat = false;
     for event in events {
         match event.kind {
             EventKind::Transport { playing, position } => {
@@ -1363,10 +1381,22 @@ fn follow_song(context: &mut ProcessContext, events: &[suhina_ipc::Event]) {
                 context.tempo = f64::from(bpm);
                 context.state |= bits(Flags::kTempoValid);
             }
+            EventKind::Beat { beat } => {
+                context.projectTimeMusic = beat;
+                context.state |= bits(Flags::kProjectTimeMusicValid);
+                told_beat = true;
+            }
+            EventKind::Bar { start, numerator, denominator, .. } => {
+                context.barPositionMusic = start;
+                context.timeSigNumerator = i32::from(numerator);
+                context.timeSigDenominator = i32::from(denominator);
+                context.state |= bits(Flags::kBarPositionValid) | bits(Flags::kTimeSigValid);
+            }
             _ => {}
         }
     }
-    if context.sampleRate > 0.0 && context.tempo > 0.0 {
+    // An older engine sends no beat: worked out from the samples at an even tempo.
+    if !told_beat && context.sampleRate > 0.0 && context.tempo > 0.0 {
         context.projectTimeMusic = context.projectTimeSamples as f64 / context.sampleRate * context.tempo / 60.0;
         context.state |= bits(Flags::kProjectTimeMusicValid);
     }

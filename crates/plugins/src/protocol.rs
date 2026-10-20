@@ -167,8 +167,14 @@ impl AraNote {
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct AraDocument {
     pub name: String,
+    /// The document this track belongs to: the instances of one plug-in in one host process
+    /// with the same key share one document, each track a region sequence of it, so the
+    /// plug-in sees every track (ADR 0028 decision 2). Empty: a document of its own.
+    pub document: String,
     /// The region sequence's name: the track's.
     pub sequence: String,
+    /// The track's place among the project's tracks (the sequence's order).
+    pub order: u32,
     pub tempo_bpm: f64,
     /// The song's tempo map as ARA's tempo entries: (seconds, quarter notes), in order, at least
     /// two; between two entries the tempo is even. Empty: an even `tempo_bpm` from the start.
@@ -226,7 +232,8 @@ pub struct AraRegion {
 impl AraDocument {
     fn to_json(&self) -> Value {
         json!({
-            "name": self.name, "sequence": self.sequence, "tempo_bpm": self.tempo_bpm,
+            "name": self.name, "document": self.document, "sequence": self.sequence, "order": self.order,
+            "tempo_bpm": self.tempo_bpm,
             "tempo": self.tempo.iter().map(|(s, q)| json!([s, q])).collect::<Vec<_>>(),
             "bars": self.bars.iter().map(|(n, d, q)| json!([n, d, q])).collect::<Vec<_>>(),
             "sources": self.sources.iter().map(|s| json!({ "id": s.id, "name": s.name, "address": s.address }))
@@ -307,7 +314,13 @@ impl AraDocument {
         }
         Some(Self {
             name: text(value, "name")?,
+            // An older engine's document is one of its own.
+            document: match value.get("document") {
+                None | Some(Value::Null) => String::new(),
+                Some(_) => text(value, "document")?,
+            },
             sequence: text(value, "sequence")?,
+            order: value.get("order").and_then(Value::as_u64).and_then(|o| u32::try_from(o).ok()).unwrap_or(0),
             tempo_bpm,
             tempo,
             bars,
@@ -825,7 +838,9 @@ mod tests {
             tempo: vec![(0.0, 0.0), (0.5, 1.0), (2.5, 4.0)],
             bars: vec![(4, 4, 0.0), (3, 4, 8.0)],
             name: "Song".into(),
+            document: "4242-1".into(),
             sequence: "Vocal".into(),
+            order: 3,
             tempo_bpm: 120.0,
             sources: vec![AraSource { id: "content-7".into(), name: "take.wav".into(), address: "/dev/shm/a".into() }],
             regions: vec![AraRegion {

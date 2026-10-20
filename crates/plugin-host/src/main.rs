@@ -423,6 +423,7 @@ impl Loaded {
                     let age = plugin.age();
                     if age < SETTLE {
                         suhina_plugins::trace!("vst3 unload: {age:?} old; released later");
+                        plugin.leave_document();
                         let at = Instant::now() + (SETTLE - age);
                         SETTLING.with(|settling| settling.borrow_mut().push((at, plugin)));
                         return;

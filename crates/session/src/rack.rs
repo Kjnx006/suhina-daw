@@ -221,10 +221,9 @@ pub struct Hosted {
     /// plug-ins before it waits for this one's answer (#151), so the round trip is timed from
     /// here, not from the wait.
     sent_at: Option<std::time::Instant>,
-    /// Whether the plug-in is told where the song is with every block (an ARA renderer,
-    /// ADR 0028), and what it is told for the next one.
-    follows_song: bool,
-    transport: (bool, u64, f64),
+    /// Where the song is, as the plug-in is told with the next block: its tempo-synced parts
+    /// and an ARA renderer (ADR 0028) follow it.
+    song: suhina_engine::SongPosition,
 }
 
 impl Hosted {
@@ -240,16 +239,8 @@ impl Hosted {
             carried: Vec::with_capacity(MAX_EVENTS),
             counts: Arc::new(BlockCounts::default()),
             sent_at: None,
-            follows_song: false,
-            transport: (false, 0, 120.0),
+            song: suhina_engine::SongPosition::default(),
         }
-    }
-
-    /// Tells the plug-in where the song is with every block it is given
-    /// ([`PluginProcessor::transport`]), as an ARA renderer needs (ADR 0028).
-    pub fn following_song(mut self) -> Self {
-        self.follows_song = true;
-        self
     }
 
     /// The counts this keeps while the engine runs it.
@@ -354,12 +345,14 @@ impl Hosted {
         for &(frame, event) in events {
             push_event(&mut self.notes, u32::try_from(frame).unwrap_or(u32::MAX), event);
         }
-        if self.follows_song {
-            let (playing, position, tempo) = self.transport;
-            let tempo = if tempo.is_finite() { tempo.clamp(1.0, 999.0) as f32 } else { 120.0 };
-            self.params.push(Event::transport(playing, position));
-            self.params.push(Event::tempo(tempo));
-        }
+        // Where the song is, with every block: tempo-synced effects and instruments lock to it,
+        // an ARA renderer plays by it.
+        let song = self.song;
+        let tempo = if song.tempo.is_finite() { song.tempo.clamp(1.0, 999.0) as f32 } else { 120.0 };
+        self.params.push(Event::transport(song.playing, song.position));
+        self.params.push(Event::tempo(tempo));
+        self.params.push(Event::beat(song.beat));
+        self.params.push(Event::bar(song.bar, song.bar_start, song.numerator, song.denominator));
         let room = self.params.capacity().saturating_sub(self.params.len());
         let automated = self.automated.len().min(room);
         self.params.extend(self.automated.drain(..automated));
@@ -493,8 +486,8 @@ impl PluginProcessor for Hosted {
         }
     }
 
-    fn transport(&mut self, playing: bool, position: u64, tempo: f64) {
-        self.transport = (playing, position, tempo);
+    fn transport(&mut self, song: &suhina_engine::SongPosition) {
+        self.song = *song;
     }
 
     fn automate(&mut self, params: &[ParamEvent]) {
@@ -515,6 +508,13 @@ impl PluginProcessor for Hosted {
 
 /// The installed plug-in for `device` and whether it is an instrument; `None` when nothing
 /// installed stands for it (or it is not a plug-in).
+/// A key for a rack's shared ARA documents, unique in this process
+/// ([`suhina_plugins::protocol::AraDocument::document`]).
+fn next_ara_document() -> String {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    format!("{}-{}", std::process::id(), NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+}
+
 fn find<'a>(catalog: &'a Catalog, device: &Device) -> Option<(suhina_plugins::matching::Match<'a>, bool)> {
     let (found, _) = crate::plugins::device_plugin(catalog, device)?;
     let instrument = is_instrument(found.plugin);
@@ -823,6 +823,9 @@ pub struct Rack {
     /// not say so (a scan that missed it): they are loaded again with their track's clips, and
     /// from then on as plug-ins that edit clips.
     ara_found: std::collections::HashSet<u64>,
+    /// The key of the ARA documents this rack's plug-ins share in their host processes: one a
+    /// plug-in per project, each track a region sequence of it ([`AraDocument::document`]).
+    ara_document: String,
     /// The plug-ins (by spec) found that way: the next device of one starts with its clips at
     /// once, rather than loading twice. Taken by [`Rack::take_ara_learned`] for the catalog.
     ara_plugins: std::collections::HashSet<String>,
@@ -866,6 +869,7 @@ impl Default for Rack {
             ara_notes: HashMap::new(),
             ara_notes_hidden: std::collections::HashSet::new(),
             ara_found: std::collections::HashSet::new(),
+            ara_document: next_ara_document(),
             ara_plugins: std::collections::HashSet::new(),
             ara_learned: Vec::new(),
             carries: Vec::new(),
@@ -1225,7 +1229,10 @@ impl Rack {
             let edits_clips =
                 matched.plugin.ara || self.ara_found.contains(&found.key) || self.ara_plugins.contains(&spec);
             let layout = found.track.filter(|_| edits_clips).map(|t| crate::ara::Layout::of(project, audio, t));
-            let ara = layout.as_ref().and_then(|l| l.document(audio));
+            let ara = layout.as_ref().and_then(|l| l.document(audio)).map(|(mut document, sources)| {
+                document.document.clone_from(&self.ara_document);
+                (document, sources)
+            });
             let (ara, ara_sources) = ara.map_or((None, Vec::new()), |(document, sources)| (Some(document), sources));
             let launch = Launch {
                 host: env.host.clone(),
@@ -1435,6 +1442,7 @@ impl Rack {
             if !instance.ara_sources.is_empty()
                 && let Some(mut document) = now.document_with(audio, &mut instance.ara_sources)
             {
+                document.document.clone_from(&self.ara_document);
                 // A clip that got its own content starts with the edits of the one it copies.
                 for (region, origin) in document.regions.iter_mut().zip(now.clone_origins(layout)) {
                     region.clone_of = origin;
@@ -1500,7 +1508,6 @@ impl Rack {
                     instance.state_refused = refused;
                     // A plug-in with an ARA document plays its regions at the song's position.
                     let hosted = Hosted::new(audio);
-                    let hosted = if instance.ara_sources.is_empty() { hosted } else { hosted.following_song() };
                     instance.counts = Some(hosted.counts());
                     match player.send_plugin(started.key, Box::new(hosted)) {
                         Ok(()) => instance.status = PluginStatus::Running,
@@ -2024,6 +2031,9 @@ impl OfflinePlugins {
 pub fn start_offline(project: &Project, audio: &AudioPool, env: &PluginEnv, sample_rate: u32) -> OfflinePlugins {
     let mut offline = OfflinePlugins::none();
     let mut missing = Vec::new();
+    // The render's ARA plug-ins share documents as the playing ones do, so it sounds as heard;
+    // a key of its own keeps them apart from the playing ones in the same host process.
+    let ara_document = next_ara_document();
     for found in plugin_devices(project) {
         let Some(device) = project
             .channels
@@ -2041,9 +2051,9 @@ pub fn start_offline(project: &Project, audio: &AudioPool, env: &PluginEnv, samp
             .track
             .filter(|_| matched.plugin.ara)
             .and_then(|t| crate::ara::Layout::of(project, audio, t).document(audio));
-        let follows_song = ara.is_some();
-        let ara = ara.map(|(document, sources)| {
+        let ara = ara.map(|(mut document, sources)| {
             offline._ara_sources.extend(sources);
+            document.document.clone_from(&ara_document);
             document
         });
         let launch = Launch {
@@ -2062,7 +2072,7 @@ pub fn start_offline(project: &Project, audio: &AudioPool, env: &PluginEnv, samp
                     offline.notices.push(format!("{} did not take its saved settings ({why})", device.name));
                 }
                 let info = PluginSlotInfo { instrument, latency: control.latency() };
-                let hosted = if follows_song { Hosted::new(audio).following_song() } else { Hosted::new(audio) };
+                let hosted = Hosted::new(audio);
                 offline.plugins.insert(found.key, info, Box::new(hosted));
                 offline.controls.push(control);
             }

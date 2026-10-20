@@ -99,7 +99,7 @@ pub use metronome::ClickSound;
 use plugin::{DEADLINE_SHARE, Delay};
 pub use plugin::{
     Followed, Joint, MAX_JOINED, OFFLINE_TIMEOUT, PluginDevice, PluginProcessor, PluginSlotInfo, Plugins, Sent,
-    plugin_devices, plugin_key,
+    SongPosition, plugin_devices, plugin_key,
 };
 pub use plugin_params::{MAX_BLOCK_PARAMS, ParamEvent, RAMP_STEP, param_id};
 pub use preview::{PreviewMonitor, PreviewNote, PreviewNotes, preview_notes};
@@ -823,8 +823,19 @@ impl Renderer {
         // block runs: a chain may run part of it early, when notes crowd it.
         let at = self.running.then(|| self.time());
         let time = self.time();
+        let (bar, bar_start, signature) = self.graph.launcher.bar();
+        let song = plugin::SongPosition {
+            playing: self.running,
+            position: time,
+            tempo: context.tempo,
+            beat: context.beat,
+            bar,
+            bar_start,
+            numerator: signature.numerator,
+            denominator: signature.denominator,
+        };
         for chain in &mut self.graph.chains {
-            chain.transport(self.running, time, context.tempo);
+            chain.transport(&song);
             chain.automate(at, frames);
             chain.automate_mix(time, frames, self.running);
         }

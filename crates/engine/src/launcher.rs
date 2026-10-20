@@ -818,6 +818,20 @@ impl Launcher {
         self.follows_map = false;
     }
 
+    /// The bar the clock is in: its number from 0, the beat it starts at and its time
+    /// signature, the map's or the one a scene set. Never allocates.
+    pub(crate) fn bar(&self) -> (u32, f64, TimeSignature) {
+        let beat = if self.beat.is_finite() { self.beat.max(0.0) } else { 0.0 };
+        if self.follows_map {
+            let here = self.meter.position(beat + 1e-9);
+            return (here.bar, here.bar_start, here.time_signature);
+        }
+        let into = (beat - self.bar_origin).max(0.0);
+        let bars = if self.bar_beats > 0.0 { (into / self.bar_beats + 1e-9).floor() } else { 0.0 };
+        let number = (self.bars_before + bars).clamp(0.0, f64::from(u32::MAX)) as u32;
+        (number, self.bar_origin + bars * self.bar_beats, self.time_signature)
+    }
+
     /// Whether the clock follows the tempo map (no scene has taken it off).
     pub(crate) fn follows_map(&self) -> bool {
         self.follows_map
