@@ -147,6 +147,27 @@ pub(crate) fn insert_time(session: &mut Session, params: &Value) -> Result<Value
         .map(|c| c.start)
         .chain(p.arrangement.markers.iter().map(|m| m.beat))
         .fold(0.0, f64::max);
+    // The rest that moves later too: tempo changes, automation points and the loop's end, which
+    // `transport.setLoop` and the automation commands also keep within the song's last beat.
+    let automation: Vec<f64> = p
+        .channels
+        .iter()
+        .flat_map(|channel| {
+            let devices = suhina_model::walk_devices(&channel.devices);
+            let device_lanes = devices.into_iter().flat_map(|(_, device)| &device.automation);
+            channel.automation.iter().chain(device_lanes).flat_map(|lane| lane.points.iter().map(|pt| pt.beat))
+        })
+        .collect();
+    let loop_end = p.transport.loop_range.as_ref().filter(|r| after(r.start) || r.end > start + 1e-9).map(|r| r.end);
+    let last = p
+        .transport
+        .tempo_changes
+        .iter()
+        .map(|change| change.beat)
+        .chain(automation)
+        .filter(|beat| after(*beat))
+        .chain(loop_end)
+        .fold(last, f64::max);
     if last + length > suhina_engine::MAX_START_BEAT {
         return Err(format!("the song would run past beat {}", suhina_engine::MAX_START_BEAT).into());
     }
