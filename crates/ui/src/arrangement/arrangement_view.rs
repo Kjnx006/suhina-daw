@@ -3126,8 +3126,8 @@ fn clip_box<'a>(
         suhina_plugins::trace::state(
             &format!("fade handles of clip-{}", clip.id.0),
             format!(
-                "on {} row {}/{} at beat {:.3} for {:.3}, clip {:?}, row {:?}, selected {selected}, pointer in {pointer_in}",
-                lane.name, clip.row, clip.rows, clip.start, clip.length, rect, row.clip
+                "on {} row {}/{} at beat {:.3} for {:.3}, selected {selected}, pointer in {pointer_in}",
+                lane.name, clip.row, clip.rows, clip.start, clip.length
             ),
         );
     }

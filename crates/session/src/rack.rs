@@ -667,6 +667,12 @@ struct Instance {
     state_refused: Option<String>,
     /// Whether its editor is open, as last known.
     editor_open: bool,
+    /// Reads of its state still to come before a change made in its editor shows
+    /// ([`PluginEdits`] counts a change once two reads agree): 2 while the editor is open, one
+    /// less with each read after it closed. Only these plug-ins are read before the window asks
+    /// whether to save ([`Rack::check_edits`]): nothing else changes a plug-in's state outside
+    /// the project.
+    unsettled_reads: u8,
     /// How the editor was opened: embedded in the session's window, or in a window of its
     /// own. Set when it is asked to open, so a placement that comes while it opens is kept.
     editor_embedded: bool,
@@ -726,6 +732,7 @@ impl Instance {
             generation,
             state_refused: None,
             editor_open: false,
+            unsettled_reads: 0,
             editor_embedded: false,
             editor_size: None,
             placement_wanted: None,
@@ -925,6 +932,11 @@ impl Rack {
     /// answers: at most [`SAVE_WAIT`] in all, with the time it takes a plug-in lent out for
     /// something else (a read just after it started) to come back first.
     fn read_states(&mut self) {
+        self.read_states_of(|_| true);
+    }
+
+    /// [`Rack::read_states`] for the running plug-ins `wanted` picks by key.
+    fn read_states_of(&mut self, wanted: impl Fn(u64) -> bool) {
         let deadline = Instant::now() + SAVE_WAIT;
         let mut notices = Vec::new();
         let lent = |rack: &Self, keys: Option<&[u64]>| {
@@ -936,7 +948,8 @@ impl Rack {
             std::thread::sleep(Duration::from_millis(2));
             self.take_returned(&mut notices);
         }
-        let running: Vec<u64> = self.instances.iter().filter(|(_, i)| i.control.is_some()).map(|(k, _)| *k).collect();
+        let running: Vec<u64> =
+            self.instances.iter().filter(|(k, i)| i.control.is_some() && wanted(**k)).map(|(k, _)| *k).collect();
         let asked: Vec<u64> = running.into_iter().filter(|key| self.lend(*key, read_state).is_ok()).collect();
         while lent(self, Some(&asked)) && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(2));
@@ -945,12 +958,19 @@ impl Rack {
         self.notices.extend(notices);
     }
 
-    /// Reads the running plug-ins' states twice in a row, so a change made in an editor since
-    /// the last read counts now, not after the next two reads ([`SAVE_EVERY`] apart): before
-    /// the window asks whether to save. Waits at most [`SAVE_WAIT`] for each read.
+    /// Reads twice in a row the states of the running plug-ins whose editor is open or was
+    /// since their state last settled, so a change made in an editor counts now, not after the
+    /// next two reads ([`SAVE_EVERY`] apart): before the window asks whether to save. Only those:
+    /// reading every plug-in held the window up to two seconds in a large project. Waits at
+    /// most [`SAVE_WAIT`] for each read.
     pub(crate) fn check_edits(&mut self) {
-        self.read_states();
-        self.read_states();
+        let edited: std::collections::HashSet<u64> =
+            self.instances.iter().filter(|(_, i)| i.editor_open || i.unsettled_reads > 0).map(|(k, _)| *k).collect();
+        if edited.is_empty() {
+            return;
+        }
+        self.read_states_of(|key| edited.contains(&key));
+        self.read_states_of(|key| edited.contains(&key));
     }
 
     /// Whether a plug-in's state changed since the project was last saved or opened, without
@@ -1010,6 +1030,11 @@ impl Rack {
             let Returned { key, generation, control, done } = returned;
             if let Done::Saved(Some(state)) = &done {
                 self.edits.read(key, state);
+                if let Some(instance) = self.instances.get_mut(&key)
+                    && !instance.editor_open
+                {
+                    instance.unsettled_reads = instance.unsettled_reads.saturating_sub(1);
+                }
             }
             if let Done::Stopped(state) = done {
                 // A plug-in loaded again with new clips starts with this state.
@@ -1035,6 +1060,7 @@ impl Rack {
                     match done {
                         Done::Opened(Ok(size)) => {
                             instance.editor_open = true;
+                            instance.unsettled_reads = 2;
                             instance.editor_size = Some(size);
                         }
                         Done::Opened(Err(why)) => {
@@ -1126,6 +1152,7 @@ impl Rack {
         if let Some(control) = instance.control.as_mut() {
             if control.editor_open() {
                 instance.editor_open = true;
+                instance.unsettled_reads = 2;
                 instance.editor_size = control.editor_size();
             } else {
                 instance.editor_gone();

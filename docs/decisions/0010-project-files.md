@@ -90,7 +90,9 @@ Suhina (October 2026) the extension followed: files are `.suhina` from 2026-10-1
    dialog (#319): the window only asks for one, and the desktop app shows it with `rfd` (MIT;
    on Linux through the desktop portal, with no GTK), so the window and its tests need none. Closing a project,
    opening another in its place or quitting while a project has unsaved changes asks first (it
-   reads the running plug-ins' states first, so a change made a moment ago in an editor counts):
+   reads first the states of the plug-ins whose editor is open, or was since their state last
+   settled, so a change made a moment ago in an editor counts; reading every plug-in held the
+   window up to two seconds in a large project):
    Save, Don't save or Cancel; quitting asks about each such project in turn, and Save on one
    that has no file yet asks for a name before the app closes.
 10. **`.suhina`, and `.locr` still read** (2026-10-13; superseded by decision 12). New projects,

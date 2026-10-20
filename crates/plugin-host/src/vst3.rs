@@ -736,7 +736,8 @@ impl Vst3Plugin {
         let pending = self.pending.clone();
         let mapping = MidiMapping::of(self.controller.as_ref());
         let (buses, sample_rate, instance) = (self.buses.clone(), self.sample_rate, self.instance);
-        let bound = self.ara.is_some();
+        // An ARA-bound instance's output is traced with its track's name.
+        let bound = self.ara.as_ref().map(|ara| ara.track().to_string());
         let audio = AudioSide(processor);
         let thread = thread::Builder::new()
             .name("plug-in audio".into())
@@ -1225,15 +1226,15 @@ fn serve(
     sample_rate: f64,
     (pending, mapping): (Pending, MidiMapping),
     (stop, flush): (&AtomicBool, &AtomicBool),
-    ara_bound: bool,
+    ara_track: Option<String>,
 ) -> Served {
     let processor = audio.0;
     let waiting = pending.clone();
     // SAFETY: a live, active processor, on the audio thread.
     let _ = unsafe { processor.setProcessing(1) };
     let mut block = Vst3Block::new(processor, &served, buses, sample_rate, (pending, mapping));
-    if ara_bound && suhina_plugins::trace::on() {
-        block.watch = Some(Watch { instance, frames: 0, peak: 0.0 });
+    if let Some(track) = ara_track.filter(|_| suhina_plugins::trace::on()) {
+        block.watch = Some(Watch { instance, track, frames: 0, peak: 0.0 });
     }
     if let Some(mut block) = crate::audio::serve(instance, block, &mut served, stop) {
         if flush.load(Ordering::Acquire) && waiting.lock().is_ok_and(|w| !w.is_empty()) {
@@ -1273,6 +1274,8 @@ struct Vst3Block {
 /// loudest sample.
 struct Watch {
     instance: u32,
+    /// The track it plays, by name.
+    track: String,
     frames: u64,
     peak: f32,
 }
@@ -1418,8 +1421,9 @@ impl Vst3Block {
         #[allow(clippy::unnecessary_cast, reason = "the flags are signed on Windows")]
         let playing = self.context.state & (Flags::kPlaying as u32) != 0;
         suhina_plugins::trace!(
-            "ara audio {}: {}, song at {:.2} s, peak {:.4}",
+            "ara audio {} ({}): {}, song at {:.2} s, peak {:.4}",
             watch.instance,
+            watch.track,
             if playing { "playing" } else { "stopped" },
             self.context.projectTimeSamples as f64 / rate,
             watch.peak

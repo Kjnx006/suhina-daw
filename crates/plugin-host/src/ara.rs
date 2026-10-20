@@ -938,6 +938,11 @@ impl Document {
         Ok(made)
     }
 
+    /// The track this part of the document is, by name.
+    pub(crate) fn track(&self) -> &str {
+        &self.sequence_described.0
+    }
+
     /// Tells the plug-in's editor view which region the host has selected (`clip-<id>`), so its
     /// editor shows it; `None`, or an id the track does not hold, selects nothing. Returns
     /// whether the plug-in was told.

@@ -527,11 +527,52 @@ pub(crate) fn send_now(message: &Message) -> bool {
     now.as_mut().is_some_and(|writer| send(writer, message).is_ok())
 }
 
+/// A message as the trace writes it: a list of numbers (a plug-in's state, an archive) as its
+/// length, and cut to `most` characters.
+fn traced(message: &Message, most: usize) -> String {
+    let text = format!("{message:?}");
+    let mut out = String::with_capacity(text.len().min(most + 16));
+    let mut rest = text.as_str();
+    while let Some(open) = rest.find('[') {
+        let (before, list) = rest.split_at(open);
+        out.push_str(before);
+        let Some(close) = list.find(']') else {
+            rest = list;
+            break;
+        };
+        let inside = &list[1..close];
+        if inside.len() > 24 && inside.bytes().all(|b| b.is_ascii_digit() || b == b',' || b == b' ' || b == b'-') {
+            out.push_str(&format!("<{} numbers>", inside.split(',').count()));
+        } else {
+            out.push_str(&list[..=close]);
+        }
+        rest = &list[close + 1..];
+    }
+    out.push_str(rest);
+    let cut = out.char_indices().nth(most).map_or(out.len(), |(i, _)| i);
+    out.truncate(cut);
+    out
+}
+
+/// Whether a memory report goes into the trace: one a minute, or when it moved by a tenth since
+/// the last one traced. Every other message does.
+fn memory_worth_tracing(message: &Message) -> bool {
+    static LAST: std::sync::Mutex<Option<(u64, Instant)>> = std::sync::Mutex::new(None);
+    let Message::Memory { bytes } = message else { return true };
+    let mut last = LAST.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let due = match *last {
+        Some((was, at)) => at.elapsed() >= Duration::from_secs(60) || bytes.abs_diff(was) > was / 10,
+        None => true,
+    };
+    if due {
+        *last = Some((*bytes, Instant::now()));
+    }
+    due
+}
+
 fn send(writer: &mut impl Write, message: &Message) -> std::io::Result<()> {
-    if suhina_plugins::trace::on() && !matches!(message, Message::AraNotes { .. }) {
-        let text = format!("{message:?}");
-        let cut = text.char_indices().nth(300).map_or(text.len(), |(i, _)| i);
-        suhina_plugins::trace!("host sends {}", &text[..cut]);
+    if suhina_plugins::trace::on() && !matches!(message, Message::AraNotes { .. }) && memory_worth_tracing(message) {
+        suhina_plugins::trace!("host sends {}", traced(message, 300));
     }
     let mut out = message.encode();
     out.push('\n');
@@ -686,9 +727,7 @@ fn run(address: &str) -> Result<(), Box<dyn std::error::Error>> {
             break;
         }
         if suhina_plugins::trace::on() {
-            let text = format!("{message:?}");
-            let cut = text.char_indices().nth(400).map_or(text.len(), |(i, _)| i);
-            suhina_plugins::trace!("host gets {}", &text[..cut]);
+            suhina_plugins::trace!("host gets {}", traced(&message, 400));
         }
         if let Some(reply) = answer(&mut instances, message) {
             send(&mut writer, &reply)?;

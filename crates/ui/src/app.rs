@@ -2775,6 +2775,8 @@ impl App {
         self.frame_trace.mark("commands");
         self.frame_trace.note(|| format!("{ran} commands"));
         self.guard_quit(ui.ctx());
+        // Reading the plug-ins' states before asking whether to save, when the window is closed.
+        self.frame_trace.mark("quit check");
         // The views drew before the actions and drops of this frame ran: when the project changed,
         // ask for a frame at once, so what the user just did (a moved clip, a file that landed)
         // is on screen without waiting for another click or pointer move.

@@ -122,7 +122,7 @@ def summary(entries, last):
     for took, ms, main, text in sorted(frames, reverse=True)[:last]:
         print(f"  {at(ms, start)}  {took:7.1f} ms  {text[text.index(':') + 2:][:150]}")
     if any(main == "rest" for _, _, main, _ in frames):
-        print("  ('rest' is time outside the parts the frame times: the window's own events, or an editor's)")
+        print("  ('rest' is time after the frame's last timed part, outside the parts it names)")
 
     updates = [float(m.group(1)) for _, _, t in entries if (m := re.match(r"slow engine update: ([\d.]+) ms", t))]
     if updates:
