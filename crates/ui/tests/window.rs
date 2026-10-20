@@ -2032,7 +2032,22 @@ fn the_waveform_zoom_draws_every_audio_clip_larger_and_is_kept_as_a_setting() {
         harness.step();
     }
     harness.run_steps(2);
-    assert!(harness.state().arrangement().waveform_zoom > 12.0, "{}", harness.state().arrangement().waveform_zoom);
+    let zoom = harness.state().arrangement().waveform_zoom;
+    assert!(zoom > 12.0, "{zoom}");
+    // The wheel over the slider steps it, and the view behind it stays where it is.
+    let scroll = harness.state().arrangement().scroll;
+    harness.hover_at(slider.center());
+    harness.step();
+    harness.input_mut().events.push(egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Line,
+        delta: egui::vec2(-1.0, -1.0),
+        modifiers: Modifiers::NONE,
+        phase: egui::TouchPhase::Move,
+    });
+    // The wheel is smoothed over frames: long enough for all of it to land.
+    harness.run_steps(30);
+    assert!((harness.state().arrangement().waveform_zoom - zoom / 1.25).abs() < 1e-4);
+    assert_eq!(harness.state().arrangement().scroll, scroll, "the lanes did not scroll");
 }
 
 #[test]
