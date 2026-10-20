@@ -129,7 +129,7 @@ impl PluginStatus {
 }
 
 /// One plug-in device's running plug-in, as the session sees it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PluginReport {
     pub status: PluginStatus,
     /// The installed plug-in that stands for it: name, vendor, how it was found.
@@ -154,6 +154,9 @@ pub struct PluginReport {
     /// It is bound to an ARA document of its track's audio clips (ADR 0028), so its editor
     /// edits them.
     pub ara: bool,
+    /// Its parameters as it last listed them, for its generated panel (#679); `None` until it
+    /// has, or while it does not run.
+    pub params: Option<Arc<[suhina_plugins::ParamInfo]>>,
 }
 
 /// How far a project's plug-ins have got with starting, for a dialog while they load.
@@ -618,10 +621,21 @@ enum Done {
     Stopped(Option<SavedState>),
     /// Its ARA document was brought in line with its track's clips.
     AraUpdated(Result<(), String>),
+    /// Its parameters were listed for its generated panel; `None` when it did not answer.
+    Listed(Option<Vec<suhina_plugins::ParamInfo>>),
     /// The edits of a clip carried to another track were stored ([`Carry`], by its number).
     AraExported(u64, Result<(String, Vec<u8>), String>),
     /// They were given to the other track's plug-in, or not yet.
     AraImported(u64, Result<(), String>),
+}
+
+/// How often a shown plug-in's parameters are listed again, for its generated panel to follow
+/// changes made in its own editor.
+const LIST_EVERY: Duration = Duration::from_secs(2);
+
+/// A parameter list's ids and ranges (lowest, highest), as [`Instance::ranges`] keeps them.
+fn ranges(list: &[suhina_plugins::ParamInfo]) -> Vec<(u32, f64, f64)> {
+    list.iter().map(|p| (p.id, p.min.min(p.max), p.max.max(p.min))).collect()
 }
 
 /// How long a clip's edits wait for the other track's plug-in to run with the clip.
@@ -695,6 +709,10 @@ struct Instance {
     counts: Option<Arc<BlockCounts>>,
     /// Its parameters' ids and ranges (lowest, highest), once listed ([`Rack::params`]).
     ranges: Option<Vec<(u32, f64, f64)>>,
+    /// Its parameters as last listed in the background for its generated panel, and when.
+    listed: Option<(Arc<[suhina_plugins::ParamInfo]>, Instant)>,
+    /// A listing for the panel is under way.
+    listing: bool,
     /// For a plug-in that edits clips (ADR 0028): its track's clips as it was loaded with them.
     ara_layout: Option<crate::ara::Layout>,
     /// The audio sources of the ARA document it was loaded with, kept for as long as it runs;
@@ -722,6 +740,8 @@ impl Instance {
             spec: String::new(),
             info: PluginSlotInfo::default(),
             ranges: None,
+            listed: None,
+            listing: false,
             control: None,
             generation,
             state_refused: None,
@@ -1059,6 +1079,13 @@ impl Rack {
                             ));
                             instance.ara_failed = true;
                         }
+                        Done::Listed(list) => {
+                            instance.listing = false;
+                            if let Some(list) = list {
+                                instance.ranges = Some(ranges(&list));
+                                instance.listed = Some((list.into(), Instant::now()));
+                            }
+                        }
                         Done::Saved(_) | Done::Stopped(_) => {}
                     }
                     instance.control = Some(control);
@@ -1116,6 +1143,25 @@ impl Rack {
         }
     }
 
+    /// Lists the parameters of the plug-in device `key` again, in the background, for its
+    /// generated panel, when it runs and its list is older than [`LIST_EVERY`]; the next
+    /// [`Rack::report`] after it answers carries it. The window asks for this while it shows the
+    /// device's panel; commands never do, so they do not find the plug-in busy.
+    pub fn list_params(&mut self, key: u64) {
+        let stale = self.instances.get(&key).is_some_and(|i| {
+            i.status == PluginStatus::Running
+                && i.control.is_some()
+                && !i.listing
+                && i.listed.as_ref().is_none_or(|(_, at)| at.elapsed() >= LIST_EVERY)
+        });
+        if stale
+            && self.lend(key, |control| Done::Listed(control.params().ok())).is_ok()
+            && let Some(instance) = self.instances.get_mut(&key)
+        {
+            instance.listing = true;
+        }
+    }
+
     /// What is known about the plug-in device `key`.
     pub fn report(&mut self, key: u64) -> Option<PluginReport> {
         let instance = self.instances.get_mut(&key)?;
@@ -1140,6 +1186,7 @@ impl Rack {
             no_time: instance.counts.as_ref().map_or(0, |c| c.no_time()),
             state_refused: instance.state_refused.clone(),
             ara: !instance.ara_sources.is_empty(),
+            params: instance.listed.as_ref().map(|(list, _)| Arc::clone(list)),
         })
     }
 
@@ -1755,10 +1802,16 @@ impl Rack {
     /// The parameters of the plug-in device `key` as its plug-in lists them now (it waits for
     /// the host's answer), remembered so values set later can be kept in range.
     pub fn params(&mut self, key: u64) -> Result<Vec<suhina_plugins::ParamInfo>, CommandError> {
+        // Out for its panel's listing: the list it gave last is as good, and nothing waits.
+        if let Some(instance) = self.instances.get(&key)
+            && instance.listing
+            && let Some((list, _)) = &instance.listed
+        {
+            return Ok(list.to_vec());
+        }
         let list = self.running(key)?.params().map_err(|e| CommandError(e.to_string()))?;
         if let Some(instance) = self.instances.get_mut(&key) {
-            let ranges = list.iter().map(|p| (p.id, p.min.min(p.max), p.max.max(p.min))).collect();
-            instance.ranges = Some(ranges);
+            instance.ranges = Some(ranges(&list));
         }
         Ok(list)
     }

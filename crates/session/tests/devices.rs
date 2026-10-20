@@ -935,3 +935,22 @@ fn an_added_instrument_replaces_the_one_on_the_track() {
     run(&mut session, "edit.undo", json!({})).unwrap();
     assert_eq!(names(&session), ["Pitch", "Sampler", "Utility"]);
 }
+
+/// What a built-in device's old `.sd` wrapper looked like: one `native_device` node between the
+/// input and the output.
+const UTILITY_WRAPPER: &str = r#"{"format":"suhina-device","version":4,
+  "device":{"id":"utility","name":"Utility","role":"effect","parameters":[]},
+  "nodes":[{"id":"in","kind":"audio_input"},{"id":"device","kind":"native_device","device":"utility"},
+           {"id":"out","kind":"audio_output"}],
+  "connections":[{"from":"in","to":"device"},{"from":"device","to":"out"}]}"#;
+
+#[test]
+fn a_wrapper_file_is_no_longer_a_device_to_add() {
+    let path = std::env::temp_dir().join(format!("suhina-wrapper-{}.sd", std::process::id()));
+    std::fs::write(&path, UTILITY_WRAPPER).unwrap();
+    let mut session = Session::new(project());
+    let refused = run(&mut session, "device.addSd", json!({ "track": 1, "path": path }));
+    std::fs::remove_file(&path).unwrap();
+    assert!(refused.is_err(), "{refused:?}");
+    assert!(session.project().channels[0].devices.is_empty());
+}

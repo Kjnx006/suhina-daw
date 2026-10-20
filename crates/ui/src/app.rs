@@ -435,6 +435,9 @@ pub struct App {
     pending_drop: Option<PendingDrop>,
     /// Where the detail area is this frame and the track it shows, for drops on its devices.
     detail_drop: Option<(Rect, TrackId)>,
+    /// The device whose expanded panel is open over the main area this frame, as the detail
+    /// area found it (ADR 0021 › Amendment: device panels, 6).
+    expanded_panel: Option<(TrackId, detail_view::DeviceBox)>,
     sample_drops: Vec<crate::detail::device_canvas::SampleTarget>,
     /// The piano roll a selected MIDI clip shows in the detail area.
     piano_roll: PianoRollState,
@@ -565,6 +568,7 @@ impl App {
             map_window: MapWindow::default(),
             pending_drop: None,
             detail_drop: None,
+            expanded_panel: None,
             sample_drops: Vec::new(),
             piano_roll: PianoRollState::default(),
             recovery: Vec::new(),
@@ -2364,6 +2368,7 @@ impl App {
                 self.detail_showing = detail_view::Showing::Clip;
             }
             self.last_clip = shown_clip;
+            self.expanded_panel = None;
             let inner = if grid.is_some() && self.detail_open {
                 self.detail_area(ui, inner, &mut actions)
             } else {
@@ -2656,6 +2661,10 @@ impl App {
                     }
                     (None, _) => self.start_panel(ui),
                 });
+            }
+            // A device's expanded panel, over the views (and the large sample map).
+            if let Some((track, device)) = self.expanded_panel.take() {
+                detail_view::show_expanded(ui, inner, track, &device, &mut actions);
             }
             drop_overlay(ui, view_area);
         });
@@ -2986,6 +2995,8 @@ impl App {
                     suhina_engine::model::walk_devices(&c.devices).into_iter().map(|(path, _)| path).collect()
                 });
             for path in paths {
+                // Its generated panel follows the parameters it lists (#679).
+                session.list_plugin_params_at(shown_track, &path);
                 if let Some(report) = session.plugin_report_at(shown_track, &path) {
                     reports.insert((shown_track, path), report);
                 }
@@ -3193,6 +3204,7 @@ impl App {
         {
             shown.follow_automation(session.project(), monitor.beat());
         }
+        self.expanded_panel = detail_view::expanded_device(ui.ctx(), &shown);
         if let Some(session) = self.session() {
             for channel in session.project().channels.iter().filter(|channel| {
                 session
