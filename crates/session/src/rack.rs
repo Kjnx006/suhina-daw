@@ -1186,7 +1186,11 @@ impl Rack {
             no_time: instance.counts.as_ref().map_or(0, |c| c.no_time()),
             state_refused: instance.state_refused.clone(),
             ara: !instance.ara_sources.is_empty(),
-            params: instance.listed.as_ref().map(|(list, _)| Arc::clone(list)),
+            params: instance
+                .listed
+                .as_ref()
+                .filter(|_| instance.status == PluginStatus::Running)
+                .map(|(list, _)| Arc::clone(list)),
         })
     }
 
@@ -1733,6 +1737,8 @@ impl Rack {
         self.next_generation += 1;
         instance.generation = self.next_generation;
         instance.status = PluginStatus::Loading;
+        // The new process may list other parameters: its panel waits for its own list.
+        instance.listed = None;
         let (sender, generation) = (self.sender.clone(), self.next_generation);
         let spawned = std::thread::Builder::new().name("suhina-plugin-restart".into()).spawn(move || {
             let mut control = control;
@@ -1794,11 +1800,6 @@ impl Rack {
         Ok(())
     }
 
-    /// Opens the editor of the plug-in device `key`; returns the size of its inside. Over an
-    /// owner window (the desktop app's) it opens on a thread of its own and `None` comes back
-    /// at once: the host making a window that the app's window owns waits for the app's window
-    /// thread, which must not be waiting for the host meanwhile. Embedded (the setting), it
-    /// opens hidden inside that window until [`Rack::place_editor`] puts it somewhere.
     /// The parameters of the plug-in device `key` as its plug-in lists them now (it waits for
     /// the host's answer), remembered so values set later can be kept in range.
     pub fn params(&mut self, key: u64) -> Result<Vec<suhina_plugins::ParamInfo>, CommandError> {
@@ -1823,6 +1824,11 @@ impl Rack {
         Some(ranges.iter().find(|(i, _, _)| *i == id).map(|&(_, min, max)| (min, max)))
     }
 
+    /// Opens the editor of the plug-in device `key`; returns the size of its inside. Over an
+    /// owner window (the desktop app's) it opens on a thread of its own and `None` comes back
+    /// at once: the host making a window that the app's window owns waits for the app's window
+    /// thread, which must not be waiting for the host meanwhile. Embedded (the setting), it
+    /// opens hidden inside that window until [`Rack::place_editor`] puts it somewhere.
     pub fn open_editor(&mut self, key: u64) -> Result<Option<(u32, u32)>, CommandError> {
         if self.lent_out(key, true) {
             return Ok(None);

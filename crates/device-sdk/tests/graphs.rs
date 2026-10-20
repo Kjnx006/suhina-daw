@@ -775,5 +775,6 @@ fn the_expanded_panel_fixture_reads_and_round_trips() {
     let expanded = g.expanded.as_ref().unwrap();
     assert_eq!(expanded.controls[0].name, "Big power switch");
     assert!(g.ui.is_none());
-    assert_eq!(g.to_sd().unwrap(), text);
+    // A Windows checkout may have turned the fixture's line ends into CRLF; `to_sd` writes LF.
+    assert_eq!(g.to_sd().unwrap(), text.replace("\r\n", "\n"));
 }

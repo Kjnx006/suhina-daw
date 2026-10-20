@@ -485,6 +485,11 @@ impl Detail {
                     }
                     if let Some(graph) = device_box.graph.as_mut() {
                         for parameter in graph.parameters.iter_mut().filter(|p| p.id == lane.param) {
+                            let value = value.clamp(parameter.min, parameter.max);
+                            // A plug-in's text is for the value it listed, not the one played.
+                            if value != parameter.value {
+                                parameter.text.clear();
+                            }
                             parameter.value = value;
                         }
                     }
@@ -3148,6 +3153,32 @@ mod tests {
         assert!(running.canvas.is_none() && running.expanded.is_none());
         // A plug-in that does not run has no controls to send to.
         assert_eq!(graph(PluginStatus::Crashed("gone".into())), None);
+    }
+
+    /// While automation plays, a plug-in's list shows the automated value, kept in range, and
+    /// drops the text the plug-in gave for the value it listed.
+    #[test]
+    fn automation_replaces_a_plug_ins_listed_text_with_the_value_it_plays() {
+        use suhina_engine::model::{AutomationLane, AutomationPoint};
+        let mut project = with_plugin();
+        let point = |beat, value| AutomationPoint { beat, value, curve: 0.0 };
+        project.channels[0].devices[0].automation = vec![
+            AutomationLane { param: "1".into(), points: vec![point(0.0, 0.75), point(8.0, 0.75)], enabled: true },
+            AutomationLane { param: "2".into(), points: vec![point(0.0, 3.0), point(8.0, 3.0)], enabled: true },
+        ];
+        let mut detail = build_with(
+            &project,
+            Some(TrackId(1)),
+            None,
+            &mut |_, _| Some(listing(PluginStatus::Running)),
+            crate::detail::nam_panel::Lists::default(),
+        );
+        detail.follow_automation(&project, 4.0);
+        let Detail::Devices(chain) = detail else { panic!() };
+        let graph = chain.devices[0].graph.as_ref().unwrap();
+        let shown: Vec<_> = graph.parameters.iter().map(|p| (p.value, p.text.as_str())).collect();
+        assert_eq!(shown, [(0.75, ""), (1.0, "")]);
+        assert_eq!(value_text(&graph.parameters[0], 0.75), "0.75");
     }
 
     #[test]
