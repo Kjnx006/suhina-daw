@@ -353,6 +353,8 @@ impl Hosted {
         self.params.push(Event::tempo(tempo));
         self.params.push(Event::beat(song.beat));
         self.params.push(Event::bar(song.bar, song.bar_start, song.numerator, song.denominator));
+        let (start, end) = song.cycle.unwrap_or((0.0, 0.0));
+        self.params.push(Event::cycle(song.cycle.is_some(), start as f32, end as f32));
         let room = self.params.capacity().saturating_sub(self.params.len());
         let automated = self.automated.len().min(room);
         self.params.extend(self.automated.drain(..automated));

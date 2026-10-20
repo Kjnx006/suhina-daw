@@ -194,7 +194,7 @@ CHAPTERS = [
      "processor, a plug-in manager (plug-ins switched off, folders per format and switched off), latency "
      "compensation (followed when a plug-in changes its latency while it plays), saved state "
      "(a change in an editor counts as unsaved), VST2 read and matched to VST3, parameters set "
-     "and automated from the engine, the song's tempo, transport, position, bar and time signature "
+     "and automated from the engine, the song's tempo, transport, position, bar, time signature and loop "
      "given to every plug-in, ARA plug-ins on audio tracks (arrangement clips, edits saved, "
      "clip changes followed live, the editor in the clip's place, one document a plug-in and project "
      "so its editor shows every track; warped and looped clips not yet). Missing AU, VST2 hosting, "

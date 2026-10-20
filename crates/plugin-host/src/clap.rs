@@ -815,6 +815,11 @@ fn follow_song(transport: &mut TransportEvent, events: &[Event], sample_rate: f6
             }
             EventKind::Tempo { bpm } => transport.tempo = f64::from(bpm),
             EventKind::Beat { beat } => transport.song_pos_beats = BeatTime::from_float(beat),
+            EventKind::Cycle { on, start, end } => {
+                transport.flags.set(TransportFlags::IS_LOOP_ACTIVE, on);
+                transport.loop_start_beats = BeatTime::from_float(f64::from(start));
+                transport.loop_end_beats = BeatTime::from_float(f64::from(end));
+            }
             EventKind::Bar { number, start, numerator, denominator } => {
                 transport.bar_number = i32::try_from(number).unwrap_or(i32::MAX);
                 transport.bar_start = BeatTime::from_float(start);
@@ -1023,7 +1028,11 @@ fn push_event(buffer: &mut EventBuffer, event: &Event) {
             buffer.push(&MidiEvent::new(event.frame, 0, [0xE0 | (channel & 0x0F), low, high]));
         }
         // The song's place goes to the plug-in as the block's transport ([`follow_song`]).
-        EventKind::Transport { .. } | EventKind::Tempo { .. } | EventKind::Beat { .. } | EventKind::Bar { .. } => {}
+        EventKind::Transport { .. }
+        | EventKind::Tempo { .. }
+        | EventKind::Beat { .. }
+        | EventKind::Bar { .. }
+        | EventKind::Cycle { .. } => {}
     }
 }
 

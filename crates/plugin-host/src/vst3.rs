@@ -1363,8 +1363,8 @@ impl Vst3Block {
 }
 
 /// Puts the song's place the engine sent with the block into the plug-in's process context:
-/// playing or stopped, the arrangement position in samples and in beats, the tempo, the bar and
-/// the time signature. A block without it leaves the context as it was, counting on from the
+/// playing or stopped, the arrangement position in samples and in beats, the tempo, the bar, the
+/// time signature and the loop. A block without it leaves the context as it was, counting on from the
 /// last block.
 fn follow_song(context: &mut ProcessContext, events: &[suhina_ipc::Event]) {
     use suhina_ipc::EventKind;
@@ -1388,6 +1388,13 @@ fn follow_song(context: &mut ProcessContext, events: &[suhina_ipc::Event]) {
                 context.projectTimeMusic = beat;
                 context.state |= bits(Flags::kProjectTimeMusicValid);
                 told_beat = true;
+            }
+            EventKind::Cycle { on, start, end } => {
+                context.cycleStartMusic = f64::from(start);
+                context.cycleEndMusic = f64::from(end);
+                let cycle = bits(Flags::kCycleActive);
+                context.state = if on { context.state | cycle } else { context.state & !cycle };
+                context.state |= bits(Flags::kCycleValid);
             }
             EventKind::Bar { start, numerator, denominator, .. } => {
                 context.barPositionMusic = start;

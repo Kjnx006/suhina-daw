@@ -833,6 +833,7 @@ impl Renderer {
             bar_start,
             numerator: signature.numerator,
             denominator: signature.denominator,
+            cycle: self.graph.loop_beats,
         };
         for chain in &mut self.graph.chains {
             chain.transport(&song);

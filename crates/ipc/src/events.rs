@@ -38,6 +38,9 @@ pub enum EventKind {
     /// The bar the block starts in: its number (from 0), the beat it starts at and its time
     /// signature, beside [`EventKind::Transport`].
     Bar { number: u32, start: f64, numerator: u8, denominator: u8 },
+    /// The arrangement loop as the block starts, in beats: whether it is on, and where it starts
+    /// and ends, beside [`EventKind::Transport`].
+    Cycle { on: bool, start: f32, end: f32 },
 }
 
 /// One event at `frame` of the block (0 is its first frame). `note` ties a note's start and end
@@ -76,6 +79,11 @@ impl Event {
     /// The song's place in beats at the start of a block ([`EventKind::Beat`]).
     pub fn beat(beat: f64) -> Self {
         Self { frame: 0, note: -1, kind: EventKind::Beat { beat } }
+    }
+
+    /// The arrangement loop at the start of a block ([`EventKind::Cycle`]).
+    pub fn cycle(on: bool, start: f32, end: f32) -> Self {
+        Self { frame: 0, note: -1, kind: EventKind::Cycle { on, start, end } }
     }
 
     /// The bar a block starts in ([`EventKind::Bar`]).
@@ -121,6 +129,11 @@ impl Event {
                 frame = number;
                 spare = denominator;
                 (9, 0, numerator, value)
+            }
+            // The loop's end in the note's bytes.
+            EventKind::Cycle { on, start, end } => {
+                note = i32::from_le_bytes(end.to_le_bytes());
+                (10, u8::from(on), 0, start)
             }
         };
         let mut out = [0; EVENT_BYTES];
@@ -169,6 +182,13 @@ impl Event {
                 let denominator = spare.clamp(1, 64);
                 return Some(Self::bar(u32::from_le_bytes([f0, f1, f2, f3]), start, numerator, denominator));
             }
+            // A loop that is not a span of the song reads as no loop.
+            10 => {
+                let end = f32::from_le_bytes([n0, n1, n2, n3]);
+                let span = value.is_finite() && end.is_finite() && value >= 0.0 && end > value;
+                let (start, end) = if span { (value, end) } else { (0.0, 0.0) };
+                return Some(Self::cycle(span && channel != 0, start, end));
+            }
             5 => {
                 let id = u32::from_le_bytes([n0, n1, n2, n3]);
                 let event = Self {
@@ -206,6 +226,8 @@ mod tests {
             Event::beat(1_234.567_890_123),
             Event::bar(0, 0.0, 4, 4),
             Event::bar(311, 1244.0, 7, 8),
+            Event::cycle(true, 123.5, 676.0),
+            Event::cycle(false, 0.0, 0.0),
         ];
         for event in events {
             assert_eq!(Event::decode(&event.encode()), Some(event));
@@ -214,8 +236,9 @@ mod tests {
         assert_eq!(Event::decode(&wild), Some(Event::note_on(1, 15, 127, 0.0)));
         wild[8..12].copy_from_slice(&9.0f32.to_le_bytes());
         assert_eq!(Event::decode(&wild), Some(Event::note_on(1, 15, 127, 1.0)));
-        wild[4] = 10;
+        wild[4] = 11;
         assert_eq!(Event::decode(&wild), None);
+        assert_eq!(Event::decode(&Event::cycle(true, 8.0, 4.0).encode()), Some(Event::cycle(false, 0.0, 0.0)));
         // A place that is not a place reads as the start; a meter out of range is kept in it.
         assert_eq!(Event::decode(&Event::beat(f64::NAN).encode()), Some(Event::beat(0.0)));
         assert_eq!(Event::decode(&Event::bar(2, -8.0, 0, 200).encode()), Some(Event::bar(2, 0.0, 1, 64)));

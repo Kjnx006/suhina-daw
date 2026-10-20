@@ -85,6 +85,8 @@ pub struct SongPosition {
     pub bar_start: f64,
     pub numerator: u8,
     pub denominator: u8,
+    /// The arrangement loop, in beats, while it is on.
+    pub cycle: Option<(f64, f64)>,
 }
 
 impl Default for SongPosition {
@@ -98,6 +100,7 @@ impl Default for SongPosition {
             bar_start: 0.0,
             numerator: 4,
             denominator: 4,
+            cycle: None,
         }
     }
 }
