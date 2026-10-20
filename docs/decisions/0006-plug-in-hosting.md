@@ -303,7 +303,12 @@ workspace forbids.
    the instance stays on the host's main thread (with the plug-in's main-thread callbacks), the
    started audio processor on its audio thread. Every audio port the plug-in declares gets a
    buffer with the channels it declared (a plug-in may read them all, and one given fewer can
-   crash, #327); the link's stereo goes through the main ports and the rest get silence. A
+   crash, #327); the link goes through the main ports and the rest get silence, by one channel
+   rule for both formats (`audio::feed_main` and `audio::collect_main` in
+   `crates/plugin-host/src/audio.rs`, #767): a channel of the main input the link has none for
+   repeats the link's last channel, so a mono source reaches both sides of a stereo input; a
+   channel of the link the main output has none for repeats the output's last, so a mono output
+   reaches both sides of a stereo link. A
    plug-in is named `clap:<file>` or
    `clap:<file>#<id>`; the only `unsafe` the host needs for it is opening the file. A CLAP gain
    built into the host (`test:clap`, made with `clack-plugin`) lets the tests run the whole path
@@ -313,7 +318,7 @@ workspace forbids.
    thread (connected through their connection points, the controller given the component's
    state; the host makes the messages and attribute lists they send each other,
    `IHostApplication::createInstance` in `crates/plugin-host/src/vst3_message.rs`, without which
-   some plug-ins crash as soon as they are connected and others when given a state), `setProcessing` and `process` on the audio thread, stereo on the main buses and
+   some plug-ins crash as soon as they are connected and others when given a state), `setProcessing` and `process` on the audio thread, the link on the main buses (by the rule above) and
     silent buffers for any other bus. A plug-in is named `vst3:<bundle or file>[#<class id>]`;
     in a bundle, the executable is looked up per system: `Contents/<arch>-win/<name>` on Windows,
     `Contents/x86_64-linux/<stem>.so` on Linux, and on macOS in `Contents/MacOS` (the file named

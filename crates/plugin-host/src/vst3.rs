@@ -1455,12 +1455,7 @@ impl crate::audio::Block for Vst3Block {
             }
         }
         if let Some(main) = self.in_buffers.first_mut() {
-            for (index, channel) in main.iter_mut().enumerate() {
-                let source = index.min(link_channels.saturating_sub(1));
-                for (frame, sample) in channel.iter_mut().take(frames).enumerate() {
-                    *sample = input.get(frame * link_channels + source).copied().unwrap_or(0.0);
-                }
-            }
+            crate::audio::feed_main(input, link_channels, frames, main);
         }
         follow_song(&mut self.context, events);
         let mapping = &self.mapping;
@@ -1489,14 +1484,7 @@ impl crate::audio::Block for Vst3Block {
             return;
         }
         if let Some(main) = self.out_buffers.first() {
-            for channel in 0..link_channels {
-                let Some(source) = main.get(channel.min(main.len().saturating_sub(1))) else { break };
-                for (frame, sample) in source.iter().take(frames).enumerate() {
-                    if let Some(out) = output.get_mut(frame * link_channels + channel) {
-                        *out = *sample;
-                    }
-                }
-            }
+            crate::audio::collect_main(main, link_channels, frames, output);
         }
         self.watch_output(output, frames);
     }
