@@ -3541,8 +3541,6 @@ impl App {
         &mut self.piano_roll
     }
 
-    /// Tells the active project where the panel shows its embedded plug-in editors this frame
-    /// (none: they are hidden).
     /// Whether something drawn over the whole window is open (Settings or a dialog): an embedded
     /// plug-in editor is a native window egui cannot draw over, so it is hidden meanwhile (#723).
     fn over_the_window(&self) -> bool {
@@ -3552,11 +3550,15 @@ impl App {
             || self.project_dialog.is_some()
             || self.save_prompt.is_some()
             || self.unsaved_prompt.is_some()
+            || self.ara_prompt.is_some()
+            || self.missing.open
             || self.recovery_open.is_some()
             || !self.recovery.is_empty()
             || !self.agent_asks.is_empty()
     }
 
+    /// Tells the active project where the panel shows its embedded plug-in editors this frame
+    /// (none: they are hidden).
     fn place_editors(&mut self, places: &[detail_view::EditorPlace]) {
         // One placement a frame: with something over the window the editors are told to hide,
         // never shown first and hidden after (which left them over Settings).
@@ -4305,6 +4307,8 @@ impl App {
         let dialog = self.project_dialog.is_some()
             || self.save_prompt.is_some()
             || self.unsaved_prompt.is_some()
+            || self.ara_prompt.is_some()
+            || self.missing.open
             || !self.agent_asks.is_empty();
         let session_view = self.shown == View::Session && !self.sample_map.view.large;
         // A clicked slot or button keeps the focus; only a text field takes the keys away.
@@ -4361,9 +4365,13 @@ impl App {
     /// Runs the actions whose keys were pressed (the keymap), unless a text field has the
     /// keyboard or Settings is waiting for a key to bind.
     fn shortcuts(&mut self, ui: &Ui, actions: &mut Vec<Action>) {
+        // A prompt waiting on a stored edit (the ARA one) included: a key that changed the
+        // project meanwhile would leave that edit naming what is gone.
         let dialog = self.project_dialog.is_some()
             || self.save_prompt.is_some()
             || self.unsaved_prompt.is_some()
+            || self.ara_prompt.is_some()
+            || self.missing.open
             || self.about_open
             || !self.agent_asks.is_empty()
             || self.updates.open;
@@ -6927,6 +6935,32 @@ mod tests {
         assert_eq!(count(&harness), tracks - 1);
         assert!(harness.state().session().unwrap().project().tracks.iter().all(|t| t.name != "Keys"));
         assert!(clips(&harness) < slots, "the track's clips went with it, no other clip did");
+    }
+
+    /// The ARA edits prompt and the missing files panel are drawn over the window: plug-in
+    /// editors hide, and the keys that edit the project wait until they close.
+    #[test]
+    fn the_ara_prompt_and_the_missing_files_panel_hold_the_keys_and_hide_the_editors() {
+        use egui_kittest::kittest::Queryable;
+        let mut app = App::new();
+        app.set_session(suhina_session::Session::new(crate::demo::demo_project()), &[]);
+        assert!(!app.over_the_window());
+        app.missing.open = true;
+        assert!(app.over_the_window());
+        app.missing.open = false;
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(Vec2::new(1280.0, 800.0))
+            .build_ui_state(|ui, app: &mut App| app.ui(ui), app);
+        harness.run();
+        let count = |h: &egui_kittest::Harness<'_, App>| h.state().session().map_or(0, |s| s.project().tracks.len());
+        let tracks = count(&harness);
+        harness.get_by_label("Track Keys").click();
+        harness.run();
+        harness.state_mut().ara_prompt = Some((Action::new("clip.moveMany", json!({})), "Editor".into()));
+        assert!(harness.state().over_the_window());
+        harness.key_press(egui::Key::Delete);
+        harness.run();
+        assert_eq!(count(&harness), tracks, "Delete waits for the prompt");
     }
 
     #[test]
