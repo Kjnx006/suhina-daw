@@ -275,6 +275,9 @@ the list below, in a first form). Where it differs from the decisions above it i
   support ARA`).
 - **Persistent ids.** A source's id is its audio pool key, a modification's is `content-<id>`, a
   region's is `clip-<id>` ([#568](https://github.com/suhina-daw/suhina-daw/issues/568)).
+- **Loops.** A looped clip is a region for each pass through its loop, all of one modification,
+  so an edit plays in every repeat: the first pass's region is `clip-<id>`, the later ones
+  `clip-<id>-<pass>`.
 - **Audio** (decision 4). `suhina_ipc::AudioSource` writes a file's decoded samples once, planar
   32-bit floats after a checked header, into a region the host maps read only; `readAudioSamples`
   copies from it in chunks, as 32- or 64-bit samples, with silence outside the source.
@@ -325,8 +328,7 @@ the list below, in a first form). Where it differs from the decisions above it i
 - **An ARA plug-in goes first in its chain**, wherever it is dropped or `device.addPlugin` puts
   it (the result says `moved_first`): it plays the clips from their files, so a device before it
   would not be heard. Observed in another host, which moves it there too.
-- **Other interim limits.** Warped clips are described at their file's speed (their start and end follow the song), loops
-  are not repeated, and the overlap guard and suspension (decision 6) are not built: overlapping
+- **Other interim limits.** Warped clips are described at their file's speed (their start and end follow the song), and the overlap guard and suspension (decision 6) are not built: overlapping
   clips are both in the document. Offline renders load the plug-in with the same document. The
   `notifyDocumentDataChanged` flag is kept but not read yet: the edits are noticed when the
   state is read. `test:ara` (decision 10) does not exist yet; the test VST3 plug-in, listed as an

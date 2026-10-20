@@ -751,15 +751,20 @@ pub(crate) fn move_to_track(session: &mut Session, params: &Value) -> Result<Val
         .or_else(|| device_at(devices, &path))
         .cloned()
         .ok_or("the device is missing")?;
-    let instrument = match chain_role(&device) {
-        Some(role) => role == Role::Instrument,
-        None => session
-            .plugins
-            .env()
-            .and_then(|env| crate::device_plugin(&env.catalog, &device))
-            .is_some_and(|(found, _)| crate::is_instrument(found.plugin)),
-    };
-    let midi_effect = chain_role(&device) == Some(Role::MidiEffect);
+    // A group is what its branches start with (`kind_of`); a single device is its own role, or a
+    // plug-in's in the catalog.
+    let grouped = crate::device_groups::kind_of(session, &device);
+    let instrument = grouped == crate::device_groups::Kind::Instrument
+        || match chain_role(&device) {
+            Some(role) => role == Role::Instrument,
+            None => session
+                .plugins
+                .env()
+                .and_then(|env| crate::device_plugin(&env.catalog, &device))
+                .is_some_and(|(found, _)| crate::is_instrument(found.plugin)),
+        };
+    let midi_effect = !instrument
+        && (grouped == crate::device_groups::Kind::MidiEffect || chain_role(&device) == Some(Role::MidiEffect));
     let plays_notes = session.project.tracks.iter().find(|t| t.id == to).is_some_and(|t| t.content.notes);
     if (instrument || midi_effect) && !plays_notes {
         let what = if instrument { "an instrument" } else { "a MIDI effect" };

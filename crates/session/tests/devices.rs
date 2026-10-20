@@ -902,6 +902,29 @@ fn a_device_moves_or_copies_to_another_track_in_one_step() {
     );
 }
 
+#[test]
+fn an_instrument_group_moved_to_another_track_takes_its_instrument_s_place() {
+    let mut session = Session::new(project());
+    run(&mut session, "device.add", json!({ "track": "Keys", "id": "fm-synth" })).unwrap();
+    run(&mut session, "device.group", json!({ "track": "Keys", "device": 0, "name": "Layer" })).unwrap();
+    run(&mut session, "track.add", json!({ "kind": "midi", "name": "Lead" })).unwrap();
+    run(&mut session, "device.add", json!({ "track": "Lead", "id": "fm-synth" })).unwrap();
+    run(&mut session, "device.add", json!({ "track": "Lead", "id": "delay" })).unwrap();
+    let chain = |s: &Session, name: &str| {
+        let p = s.project();
+        let channel = p.tracks.iter().find(|t| t.name == name).and_then(|t| t.channel).unwrap();
+        p.channels.iter().find(|c| c.id == channel).unwrap().devices.iter().map(|d| d.name.clone()).collect::<Vec<_>>()
+    };
+    let lead = chain(&session, "Lead");
+    // A group whose branches start with an instrument is an instrument: it goes where Lead's
+    // instrument was, before its effects, and takes its place.
+    run(&mut session, "device.moveToTrack", json!({ "track": "Keys", "device": 0, "to_track": "Lead" })).unwrap();
+    let moved = chain(&session, "Lead");
+    assert_eq!(moved.len(), lead.len(), "{moved:?}");
+    assert_eq!(moved.first().map(String::as_str), Some("Layer"));
+    assert_eq!(moved.last(), lead.last(), "the effect stays after it");
+}
+
 /// A track plays one instrument: one added to a track that has one takes its place, with the
 /// effects after it kept, as one undo step; built-in and plug-in instruments alike.
 #[test]

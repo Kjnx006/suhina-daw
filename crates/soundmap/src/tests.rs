@@ -674,3 +674,25 @@ fn an_old_cache_is_analysed_again_never_misread() {
         other => panic!("{other:?}"),
     }
 }
+
+#[test]
+fn a_diff_from_the_update_thread_is_taken_in_once_whatever_the_channel_says() {
+    let diff = || Diff { loaded: Vec::new(), work: Vec::new(), gone: Vec::new(), folders: HashSet::new() };
+    let mut map = SoundMap::new(None, 1);
+    // Still working: nothing yet, and the update stays awaited.
+    let (sender, receiver) = channel();
+    map.diffing = Some(receiver);
+    assert!(!map.take_diff(false));
+    assert!(map.diffing.is_some());
+    // Done and gone at once: the diff that came in is taken in, not dropped by a second read.
+    sender.send(diff()).unwrap();
+    drop(sender);
+    assert!(map.take_diff(false));
+    assert!(map.diffing.is_none());
+    // Gone without a diff: nothing to wait for any more.
+    let (sender, receiver) = channel::<Diff>();
+    map.diffing = Some(receiver);
+    drop(sender);
+    assert!(!map.take_diff(false));
+    assert!(map.diffing.is_none());
+}

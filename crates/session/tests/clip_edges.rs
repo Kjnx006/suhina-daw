@@ -147,6 +147,24 @@ fn a_stretched_clip_whose_content_another_plays_gets_its_own() {
     assert_eq!(session.project().content(ContentId(1)).unwrap().length, 8.0, "the other keeps its speed");
 }
 
+/// Warp turned on after a tempo change: the four-second loop, eight beats at the 120 bpm it was
+/// imported at, keeps its own speed at the song's 90 bpm, so its end marker is at six beats.
+#[test]
+fn warp_turned_on_marks_the_audio_s_end_at_the_song_s_tempo_now() {
+    let mut p = project();
+    p.transport.tempo_bpm = 90.0;
+    let mut session = Session::new(p);
+    let clip = first(&session, 3).id.0;
+    run(&mut session, "clip.setAudio", json!({ "clip": clip, "warp": true })).unwrap();
+    let markers = match &session.project().content(ContentId(1)).unwrap().lanes[0].data {
+        LaneData::Audio(region) => region.warp_markers.clone(),
+        LaneData::Notes(_) => panic!("not audio"),
+    };
+    let end = markers.last().unwrap();
+    assert!((end.time - 6.0).abs() < 1e-9, "{markers:?}");
+    assert_eq!(end.audio_time, 4.0);
+}
+
 /// The clip properties' audio controls (#699): warp on gives the audio two warp markers and
 /// keeps them when turned off again; the mode and transpose are set; one undo step each.
 #[test]
