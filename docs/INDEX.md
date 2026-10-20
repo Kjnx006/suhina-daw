@@ -98,6 +98,7 @@ after every merge; do not edit by hand. Find a document by what you are about to
 | [Waveforms](spec/waveforms.md) | spec | current | waveform, peaks, RMS, waveform drawing, zoom, samples, stereo lanes, dB scale, clip waveform, preview waveform, sample map tooltip, frame budget | How waveforms are computed and drawn in clips, the browser's preview and the sample map's tooltips: peak levels with RMS, lanes per channel, the shape, samples close up, the dB scale, the frame budget |
 | [Window zoom](spec/window-zoom.md) | spec | current | zoom, UI zoom, window zoom, interface size, scale, Ctrl+Plus, Ctrl+Minus, Cmd+Plus, bigger text, high-DPI, zoom display | Zooming the whole window (every panel, text and control larger or smaller), its keys, limits and how it is remembered |
 | [The claim bot](claim-bot.md) | howto | current | claim, /claim, /claim @user, claim for someone else, on behalf, /unclaim, /hold, /ready, claim bot, project board, PROJECT_TOKEN, status automation, good first issue, lapsed claim, duplicate pull request, feature not agreed, project sync, board out of date, cards missing from the board, Touches, overlapping work, overlap, blocked by, blocked, dependency, Depends on, stacked pull requests, merge order, trusted contributor, TRUSTED_CONTRIBUTORS, maintainer, who may claim, claim limit, too many claims | How the claim bot moves an issue's card on the project board, holds work, refuses blocked work, lists overlapping work, and how the Depends on check orders pull requests |
+| [Reviewing a pull request](code-review.md) | howto | current | code review, reviewing a pull request, review feedback, contributor changes, security review, performance review, approval readiness, Codex review | How to review pull requests for requirements, correctness, performance, security, and regression risks |
 | [Debugging the running app](debugging.md) | howto | current | debugging, bug hunting, trace, SUHINA_TRACE, --trace, diagnostic log, live debugging, UI lag, slow frame, frame time, stutter, plug-in host log, ARA, Melodyne, playhead jumps, flicker, timing, latency, screen recording, video frames, contact sheet | How to find out what the running app does around a bug: the trace log (suhina --trace), adding trace points, reading the log, and reading a screen recording frame by frame |
 | [Author a data-only SDK device](device-sdk.md) | howto | current | make an effect, MIDI effect or instrument, SDK tutorial, .sd example, node discovery | Author data-only effects, MIDI effects and instruments in Rust or with AI agents |
 | [Keyboard shortcuts](guide/keyboard-shortcuts.md) | howto | current | user guide, keyboard shortcuts, what does this key do, list of keys, every shortcut explained, keybindings, hotkeys, action ids, which action a key runs, back up keys, share keymap, keymap.json, rebind a key, keys for agents | User guide to the keyboard shortcuts, one entry per action with its default key, where it works and what it does, written for users and for agents |
@@ -118,7 +119,7 @@ Change this code, and check these documents.
 | `.claude/skills/how-to-check/SKILL.md` | [How to check it](how-to-check.md) |
 | `.github/ISSUE_TEMPLATE/5-preset.yml` | [0014: Presets for devices](decisions/0014-stock-presets.md) |
 | `.github/PULL_REQUEST_TEMPLATE/preset.md` | [0014: Presets for devices](decisions/0014-stock-presets.md) |
-| `.github/pull_request_template.md` | [How to check it](how-to-check.md) |
+| `.github/pull_request_template.md` | [Reviewing a pull request](code-review.md), [How to check it](how-to-check.md) |
 | `.github/workflows/ci.yml` | [Releasing](releasing.md) |
 | `.github/workflows/claim.yml` | [The claim bot](claim-bot.md) |
 | `.github/workflows/depends-on.yml` | [The claim bot](claim-bot.md) |
@@ -129,6 +130,8 @@ Change this code, and check these documents.
 | `.github/workflows/release.yml` | [Releasing](releasing.md) |
 | `.github/workflows/test-build-links.yml` | [Releasing](releasing.md) |
 | `.github/workflows/test-build.yml` | [Releasing](releasing.md) |
+| `AGENTS.md` | [Reviewing a pull request](code-review.md) |
+| `CONTRIBUTING.md` | [Reviewing a pull request](code-review.md) |
 | `Cargo.toml` | [Architecture](architecture.md) |
 | `apps/suhina-cli/build.rs` | [Releasing](releasing.md) |
 | `apps/suhina-cli/src/main.rs` | [0028: MCP in the running app](decisions/0028-mcp-in-the-running-app.md), [MCP server](mcp.md), [Export](spec/export.md) |
