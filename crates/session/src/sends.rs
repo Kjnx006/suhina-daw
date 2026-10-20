@@ -84,9 +84,15 @@ pub(crate) fn set_send(session: &mut Session, params: &Value) -> Result<Value, C
     let (ret, _) = return_at(&session.project, params, "return")?;
     let from = channel_param(session, params)?.id;
     let track = session.project.tracks.iter().find(|t| t.channel == Some(from)).map(|t| t.id);
+    let heard_before = track.is_some_and(|t| suhina_engine::send_heard(&session.project, t, ret));
     let (send, name) = send_param(session, params)?;
     let was = send.level;
     send.level = gain;
+    // A send that plays neither before nor after (a muted track's, one at silence): nothing the
+    // engine plays changes, so no new graph (each step of a muted track's knob built one).
+    if !heard_before && !track.is_some_and(|t| suhina_engine::send_heard(&session.project, t, ret)) {
+        session.unheard_edit = true;
+    }
     // A turn of a send that plays: a playing engine takes it as a message, smoothed, instead of
     // a new graph (one a step held the window up 60 to 80 ms in a large project). One that
     // starts from silence is not in the graph yet and takes a new one.

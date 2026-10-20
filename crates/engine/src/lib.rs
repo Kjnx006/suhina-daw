@@ -141,6 +141,19 @@ pub const MIXER_SEND: usize = usize::MAX - 1;
 /// graph takes it without a new graph where the track's chain can.
 pub const MIXER_PAN: usize = usize::MAX - 2;
 
+/// Whether `project` plays the send from `source` to return `target`: both heard, a level above
+/// silence, no loop. A send that plays neither before an edit nor after it changes nothing the
+/// engine plays.
+pub fn send_heard(project: &Project, source: TrackId, target: TrackId) -> bool {
+    sends::plan(project).iter().any(|p| p.source == source && p.target == target)
+}
+
+/// Whether `track` is heard in `project`: not muted, nor silenced by a solo, along its way to
+/// the main output. The volume and pan of a track that is not heard change nothing it plays.
+pub fn track_heard(project: &Project, track: TrackId) -> bool {
+    track_gains(project, track).is_some()
+}
+
 /// What the last graph's build took, part by part, for the trace (`docs/debugging.md`): an
 /// edit to a large project held the window up for over a second there.
 pub mod build_report {
