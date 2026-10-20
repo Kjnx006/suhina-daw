@@ -17,7 +17,7 @@ use suhina_soundmap::{DEFAULT_MAX_SECONDS, MAX_SECONDS_RANGE, MAX_SIMILAR, Map, 
 use crate::commands::{CommandKind, CommandSpec, ParamType, optional, param};
 use crate::{CommandError, Projects};
 
-const PLACE: &str = "pinned, recent:samples, or a folder (default: every folder)";
+const PLACE: &str = "pinned, recent:all, recent:samples, or a folder (default: every folder)";
 
 static SOUND_MAP_COMMANDS: &[CommandSpec<Projects>] = &[
     CommandSpec {
@@ -157,12 +157,18 @@ fn sample_files(projects: &mut Projects) -> Vec<SourceFile> {
         .collect()
 }
 
-/// The samples of a place: `None` for every folder, `pinned`, `recent:samples`, or a folder.
+/// The samples of a place: `None` for every folder, `pinned`, `recent:all` or `recent:samples`,
+/// or a folder.
 pub fn scope_files(projects: &mut Projects, place: Option<&str>) -> Result<Vec<SourceFile>, CommandError> {
     let files = sample_files(projects);
     let keys: Option<Vec<String>> = match place {
         None => return Ok(files),
         Some("pinned") => Some(projects.file_library_mut().pinned()),
+        // The browser's Recent: every group's recent items (the samples are among them).
+        Some("recent:all") => {
+            let library = projects.file_library_mut();
+            Some(Group::ALL.into_iter().flat_map(|group| library.recent(group)).collect())
+        }
         Some(p) if p.starts_with("recent:") => {
             let group = Group::parse(&p["recent:".len()..]).ok_or_else(|| format!("unknown recent group in {p:?}"))?;
             Some(projects.file_library_mut().recent(group))

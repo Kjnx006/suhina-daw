@@ -173,3 +173,22 @@ fn samples_are_analysed_laid_out_and_compared() {
     let _ = std::fs::remove_dir_all(&settings);
     let _ = std::fs::remove_dir_all(&samples);
 }
+
+#[test]
+fn the_browsers_recent_place_scopes_the_samples_added_to_a_project() {
+    let settings = temp("recent-settings");
+    let samples = temp("recent-samples");
+    wav(&samples.join("kick.wav"), &kick(0));
+    wav(&samples.join("hat.wav"), &hat(0));
+    let mut p = projects(&settings);
+    run(&mut p, "library.addFolder", json!({ "folder": samples.display().to_string() })).unwrap();
+    let used = samples.join("kick.wav");
+    run(&mut p, "clip.addFiles", json!({ "paths": [used.display().to_string()], "track": 3, "start": 0.0 })).unwrap();
+    let scoped = |p: &mut Projects, place: &str| {
+        let files = suhina_session::scope_files(p, Some(place)).unwrap();
+        files.into_iter().map(|f| f.path.file_name().unwrap().to_string_lossy().into_owned()).collect::<Vec<_>>()
+    };
+    assert_eq!(scoped(&mut p, "recent:all"), ["kick.wav"]);
+    assert_eq!(scoped(&mut p, "recent:samples"), ["kick.wav"]);
+    assert!(suhina_session::scope_files(&mut p, Some("recent:videos")).is_err());
+}

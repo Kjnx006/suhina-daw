@@ -692,7 +692,7 @@ static COMMANDS: &[CommandSpec] = &[
     },
     CommandSpec {
         id: "clip.shiftFades",
-        label: "Lengthen or shorten the fade-in or fade-out of several arrangement clips by the same beats, each from its own, kept from 0 to what the clip's other fade leaves; as one undo step",
+        label: "Lengthen or shorten the fade-in or fade-out of several arrangement clips by the same beats, each from its own, kept from 0 to what the clip's other fade leaves; clips with no audio are left as they are; as one undo step",
         params: &[
             CLIPS,
             param("edge", ParamType::Text, "in or out"),
@@ -3647,6 +3647,13 @@ fn shift_fades(session: &mut Session, params: &Value) -> Result<Value, CommandEr
     let chosen = clip_list(p, params)?;
     let mut changed = 0;
     for (track, index) in chosen {
+        let lane = p.arrangement.lanes.iter().find(|l| l.track == Some(track));
+        let content = lane.and_then(|l| l.clips.get(index)).map(|c| c.content).ok_or("the clip is missing")?;
+        // Only an audio clip has fades (`clip.setFades`): a mixed selection leaves the others.
+        let audio = p.content(content).is_some_and(|c| c.lanes.iter().any(|l| matches!(l.data, LaneData::Audio(_))));
+        if !audio {
+            continue;
+        }
         let clip = p
             .arrangement
             .lanes

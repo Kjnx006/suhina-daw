@@ -3552,6 +3552,7 @@ impl App {
             || self.project_dialog.is_some()
             || self.save_prompt.is_some()
             || self.unsaved_prompt.is_some()
+            || self.ara_prompt.is_some()
             || self.recovery_open.is_some()
             || !self.recovery.is_empty()
             || !self.agent_asks.is_empty()
@@ -4305,6 +4306,7 @@ impl App {
         let dialog = self.project_dialog.is_some()
             || self.save_prompt.is_some()
             || self.unsaved_prompt.is_some()
+            || self.ara_prompt.is_some()
             || !self.agent_asks.is_empty();
         let session_view = self.shown == View::Session && !self.sample_map.view.large;
         // A clicked slot or button keeps the focus; only a text field takes the keys away.
@@ -4364,6 +4366,7 @@ impl App {
         let dialog = self.project_dialog.is_some()
             || self.save_prompt.is_some()
             || self.unsaved_prompt.is_some()
+            || self.ara_prompt.is_some()
             || self.about_open
             || !self.agent_asks.is_empty()
             || self.updates.open;
@@ -6645,6 +6648,14 @@ mod tests {
         harness.step();
         assert_eq!(harness.state().view.drop, None);
         assert_eq!(harness.state().session().map(|s| s.project().clone()), before);
+    }
+
+    #[test]
+    fn the_question_about_a_clips_edits_hides_an_embedded_editor_like_any_dialog() {
+        let mut app = App::new();
+        assert!(!app.over_the_window());
+        app.ara_prompt = Some((Action::new("clip.moveMany", serde_json::json!({})), "Plug-in".into()));
+        assert!(app.over_the_window());
     }
 
     #[test]
