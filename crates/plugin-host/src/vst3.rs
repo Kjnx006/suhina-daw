@@ -869,7 +869,6 @@ impl Vst3Plugin {
         (in_channels, out_channels)
     }
 
-    /// How long ago it was loaded.
     /// Leaves its ARA document now, with its processing stopped: an instance released later
     /// (`Loaded::unload`) must not keep its track's regions in the document the other tracks
     /// share, where the instance loaded in its place puts them again.
@@ -886,6 +885,7 @@ impl Vst3Plugin {
         self.ara = None;
     }
 
+    /// How long ago it was loaded.
     pub(crate) fn age(&self) -> std::time::Duration {
         self.loaded_at.elapsed()
     }

@@ -175,7 +175,12 @@ pub(crate) fn build(
             .unwrap_or((0.0, 0.0));
         chain.set_post(post);
         chain.target = target.map(|(index, _)| index);
-        chain.set_cue(if cued(project, chain.track) { cue_gains(project, chain.track, !is_bus) } else { None });
+        // A live pan reaches the cue as it does the main output: its gains are centred too.
+        chain.set_cue(if cued(project, chain.track) {
+            cue_gains(project, chain.track, !is_bus && live_pan.is_none())
+        } else {
+            None
+        });
         // The volume the gains were built at, which a live volume is taken relative to; none for
         // a bus (its volume scales what plays into it too) or a volume on a lane.
         chain.built_volume = automation::channel_of(project, chain.track)

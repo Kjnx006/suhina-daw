@@ -510,7 +510,12 @@ impl Shared {
         }
         for (id, name, source) in new_sources {
             self.host.sources.push(source);
-            self.add_source(dc, self.host.sources.len() - 1, &id, &name)?;
+            if let Err(why) = self.add_source(dc, self.host.sources.len() - 1, &id, &name) {
+                // No source was made for it: `host.sources` stays in step with `source_ids`,
+                // which the analysis pairs them by.
+                let _refused = self.host.sources.pop();
+                return Err(why);
+            }
         }
         Ok(())
     }

@@ -980,9 +980,10 @@ impl Chain {
             for (frame, ([l, r], [cl, cr])) in
                 cue.as_chunks_mut::<2>().0.iter_mut().zip(buffer.as_chunks::<2>().0).enumerate()
             {
+                // The pan is (1, 1) unless the chain applies it live.
                 let fader = live.at(frame);
-                *l += cl * cue_left * fader;
-                *r += cr * cue_right * fader;
+                *l += cl * cue_left * fader * pan.0.at(frame);
+                *r += cr * cue_right * fader * pan.1.at(frame);
             }
         }
     }

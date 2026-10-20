@@ -332,3 +332,34 @@ fn a_pan_turned_while_playing_moves_the_track_and_its_post_fader_send() {
     });
     assert!(max_diff(&live, &built) < 1e-3, "{}", max_diff(&live, &built));
 }
+
+#[test]
+fn a_pan_turned_while_playing_moves_the_track_on_the_cue_too() {
+    // Cued, the track is heard on the cue bus after its own volume and pan (cue spec): a pan
+    // turned live moves it there as a graph built at the new pan has it.
+    let cued = |pan: f64| {
+        let mut p = sending(1.0, false, vec![]);
+        p.channels[0].cue = true;
+        p.channels[0].pan = pan;
+        p
+    };
+    let cue_of = |renderer: &mut Renderer, blocks: usize| {
+        let mut cue = Vec::new();
+        for _ in 0..blocks {
+            let (mut main, mut block) = (vec![0.0f32; 480 * 2], vec![0.0f32; 480 * 2]);
+            renderer.process_with_cue(&mut main, &mut block);
+            cue.extend(block);
+        }
+        cue
+    };
+    let mut renderer = Renderer::new(&cued(0.0), SR).unwrap();
+    let mut controller = renderer.controller();
+    let mut live = cue_of(&mut renderer, 10);
+    controller.set_device_param(TrackId(1), crate::MIXER_PAN, 0, -0.5).unwrap();
+    live.extend(cue_of(&mut renderer, 30));
+    let mut reference = Renderer::new(&cued(-0.5), SR).unwrap();
+    let built = cue_of(&mut reference, 40);
+    let last = 39 * 480 * 2;
+    assert!(peak(&built[last..]) > 0.05, "the cue hears the track");
+    assert!(max_diff(&live[last..], &built[last..]) < 1e-3, "{}", max_diff(&live[last..], &built[last..]));
+}
