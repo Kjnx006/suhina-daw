@@ -237,6 +237,10 @@ the list below, in a first form). Where it differs from the decisions above it i
   for at most 60 s, and says when it could not be. A clip that keeps its content on the other
   track keeps its modification in the shared document (below), so its edits are already there;
   the archive carries them where it gets a content of its own.
+- **Loading and analysis on the clips.** While an ARA plug-in loads, its track's audio clips say
+  so (dimmed, "<plug-in> loading"); while it analyses them, how far (the least done of the
+  track's sources, from the plug-in's analysis progress, sent as `ara_analysis` when it moves by
+  a percent), with a bar filling along the bottom. The clips cannot be edited in it until then.
 - **Notes on the clips** (#720). After a model update in which the plug-in said a region's,
   modification's or source's notes may have changed (not with "note scope remains unchanged"),
   and after the host's own edits, the host reads every region's notes with a playback-region

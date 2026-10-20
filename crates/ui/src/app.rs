@@ -2173,6 +2173,7 @@ impl App {
     /// Draws the window into `ui` and runs what the user asked for.
     pub fn ui(&mut self, ui: &mut Ui) {
         self.frame_trace.start();
+        self.frame_trace.causes(ui.ctx());
         if self.projects.active().is_some() {
             // The start panel reads its lists again when it next appears.
             self.start_lists = false;
@@ -2422,7 +2423,7 @@ impl App {
             // blocks that can be longer than a frame. An engine that stopped rendering leaves
             // the window at rest.
             let now = ui.input(|i| i.time);
-            if meters != self.view.meters {
+            if !meters.shows_same(&self.view.meters) {
                 self.meters_moved_at = now;
                 ui.ctx().request_repaint();
             } else if meters.moving() && now - self.meters_moved_at < METERS_SETTLE_SECONDS {
@@ -2586,6 +2587,16 @@ impl App {
                                 .filter(|c| c.audio)
                                 .filter_map(|c| Some((c.id, session.clip_notes(c.id)?.clone())))
                                 .collect();
+                            timeline.ara_activity = timeline
+                                .lanes
+                                .iter()
+                                .filter(|l| l.clips.iter().any(|c| c.audio))
+                                .filter_map(|l| Some((l.track, session.ara_activity(l.track)?)))
+                                .collect();
+                            if !timeline.ara_activity.is_empty() {
+                                // Its progress moves without input.
+                                ui.ctx().request_repaint_after(std::time::Duration::from_millis(250));
+                            }
                             timeline.input_channels = session
                                 .player()
                                 .and_then(suhina_session::Player::output_info)

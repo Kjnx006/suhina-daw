@@ -261,6 +261,13 @@ impl Loaded {
     /// A latency the plug-in reported since this was last asked, after restarting its
     /// processing where its format asks for that: the engine is to be told.
     /// The notes an ARA plug-in found in its regions since the last call (#720).
+    fn take_ara_analysis(&self) -> Option<Option<f32>> {
+        match self {
+            Self::Vst3(plugin) => plugin.take_ara_analysis(),
+            Self::Clap(_) | Self::Test { .. } => None,
+        }
+    }
+
     fn take_ara_notes(&self) -> Vec<(String, Vec<suhina_plugins::protocol::AraNote>, bool)> {
         match self {
             Self::Vst3(plugin) => plugin.take_ara_notes(),
@@ -530,7 +537,26 @@ pub(crate) fn send_now(message: &Message) -> bool {
 /// A message as the trace writes it: a list of numbers (a plug-in's state, an archive) as its
 /// length, and cut to `most` characters.
 fn traced(message: &Message, most: usize) -> String {
-    let text = format!("{message:?}");
+    // A state or an archive can be megabytes: formatted whole it took longer than the read.
+    let bytes = |data: &[u8]| format!("<{} bytes>", data.len());
+    let text = match message {
+        Message::State { instance, data, controller } | Message::SetState { instance, data, controller } => {
+            let kind = if matches!(message, Message::State { .. }) { "State" } else { "SetState" };
+            format!(
+                "{kind} {{ instance: {instance}, data: {}, controller: {:?} }}",
+                bytes(data),
+                controller.as_deref().map(bytes)
+            )
+        }
+        Message::AraExported { instance, archive_id, data } => {
+            format!("AraExported {{ instance: {instance}, archive_id: {archive_id:?}, data: {} }}", bytes(data))
+        }
+        Message::AraImport { instance, archive_id, data, from, to, source } => format!(
+            "AraImport {{ instance: {instance}, archive_id: {archive_id:?}, data: {}, from: {from:?}, to: {to:?}, source: {source:?} }}",
+            bytes(data)
+        ),
+        _ => format!("{message:?}"),
+    };
     let mut out = String::with_capacity(text.len().min(most + 16));
     let mut rest = text.as_str();
     while let Some(open) = rest.find('[') {
@@ -665,6 +691,9 @@ fn run(address: &str) -> Result<(), Box<dyn std::error::Error>> {
             loaded.tick();
             for (region, notes, truncated) in loaded.take_ara_notes() {
                 send(&mut writer, &Message::AraNotes { instance: *instance, region, notes, truncated })?;
+            }
+            if let Some(progress) = loaded.take_ara_analysis() {
+                send(&mut writer, &Message::AraAnalysis { instance: *instance, progress })?;
             }
             if let Some(latency) = loaded.latency_changed() {
                 send(&mut writer, &Message::LatencyChanged { instance: *instance, latency })?;

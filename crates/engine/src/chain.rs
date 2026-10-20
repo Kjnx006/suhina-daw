@@ -100,6 +100,11 @@ pub(crate) struct Chain {
     /// The channel's volume `post` was built with, when a live volume may scale it: `None` for
     /// a bus or an automated volume (those take a new graph).
     pub(crate) built_volume: Option<f64>,
+    /// The pan its gains were built at, which a live pan is taken relative to ([`Chain::set_live_pan`]);
+    /// none for a bus, a pan on a lane or one at either end (a side at silence has nothing to scale).
+    pub(crate) built_pan: Option<f64>,
+    /// A live pan's factors on the left and right gains, smoothed like a fader.
+    pub(crate) pan: (LiveVolume, LiveVolume),
     /// A fader move since the graph was built, as a factor on `post`, its cue and its post-fader
     /// sends, smoothed like a fader in OSS hosts (a one-pole low pass at about 25 Hz).
     pub(crate) live: LiveVolume,
@@ -131,7 +136,7 @@ pub(crate) struct Chain {
     context: ProcessContext,
     /// The sample rate its devices were prepared for, which turns a span's first frame into its
     /// song position.
-    sample_rate: f64,
+    pub(crate) sample_rate: f64,
     /// Frames of the current block the devices have run over.
     done: usize,
     /// When the block runs in stages with other chains ([`Chain::advance`]): the next slot to
@@ -392,6 +397,8 @@ impl Chain {
             next_off: NOT_HELD,
             scale: None,
             built_volume: None,
+            built_pan: None,
+            pan: (LiveVolume::default(), LiveVolume::default()),
             live: LiveVolume::default(),
         })
     }
@@ -437,6 +444,8 @@ impl Chain {
             next_off: NOT_HELD,
             scale: None,
             built_volume: None,
+            built_pan: None,
+            pan: (LiveVolume::default(), LiveVolume::default()),
             live: LiveVolume::default(),
         }
     }
@@ -450,6 +459,23 @@ impl Chain {
         {
             self.live.target = (volume / built) as f32;
         }
+    }
+
+    /// Takes a pan knob's turn to `pan` (-1 to 1) from the next block, smoothed: the equal-power
+    /// gains of the new pan against those it was built at; ignored without a
+    /// [`Chain::built_pan`]. Never allocates.
+    pub(crate) fn set_live_pan(&mut self, pan: f64) {
+        let Some(built) = self.built_pan else { return };
+        if !pan.is_finite() {
+            return;
+        }
+        let side = |pan: f64| {
+            let angle = (pan.clamp(-1.0, 1.0) + 1.0) * std::f64::consts::FRAC_PI_4;
+            (angle.cos(), angle.sin())
+        };
+        let (now, was) = (side(pan), side(built));
+        self.pan.0.target = (now.0 / was.0) as f32;
+        self.pan.1.target = (now.1 / was.1) as f32;
     }
 
     /// Sets the gains applied after the devices: the track's gains up to where its sound goes.
@@ -904,6 +930,9 @@ impl Chain {
     /// the result to where the track plays into, and the sends read it before that.
     pub(crate) fn complete(&mut self, frames: usize, context: &ProcessContext) {
         self.live.plan(frames, self.sample_rate);
+        self.pan.0.plan(frames, self.sample_rate);
+        self.pan.1.plan(frames, self.sample_rate);
+        self.plan_sends(frames);
         self.context = *context;
         self.run(frames);
     }
@@ -913,22 +942,24 @@ impl Chain {
     pub(crate) fn mix(&mut self, out: &mut [f32], cue: &mut [f32], frames: usize) {
         let (gain_left, gain_right) = self.post;
         let live = self.live;
+        let pan = self.pan;
         let Some(buffer) = self.buffer.get_mut(..frames.min(MAX_BLOCK) * 2) else { return };
         self.delay.run(buffer);
         let pairs = out.as_chunks_mut::<2>().0.iter_mut().zip(buffer.as_chunks::<2>().0);
         match &self.mix {
-            None if live.steady() => {
+            None if live.steady() && pan.0.steady() && pan.1.steady() => {
                 let fader = live.at(0);
+                let (left, right) = (gain_left * fader * pan.0.at(0), gain_right * fader * pan.1.at(0));
                 for ([l, r], [cl, cr]) in pairs {
-                    *l += cl * gain_left * fader;
-                    *r += cr * gain_right * fader;
+                    *l += cl * left;
+                    *r += cr * right;
                 }
             }
             None => {
                 for (frame, ([l, r], [cl, cr])) in pairs.enumerate() {
                     let fader = live.at(frame);
-                    *l += cl * gain_left * fader;
-                    *r += cr * gain_right * fader;
+                    *l += cl * gain_left * fader * pan.0.at(frame);
+                    *r += cr * gain_right * fader * pan.1.at(frame);
                 }
             }
             // A pan or mute lane alone leaves the volume to the fader, which still moves live.
@@ -1478,7 +1509,7 @@ impl Default for LiveVolume {
 
 impl LiveVolume {
     /// Plans the next block of `frames` frames at `sample_rate`.
-    fn plan(&mut self, frames: usize, sample_rate: f64) {
+    pub(crate) fn plan(&mut self, frames: usize, sample_rate: f64) {
         self.from = self.now;
         let coefficient = (156.825 / sample_rate.max(1.0)).min(1.0);
         let left = (1.0 - coefficient).powi(i32::try_from(frames).unwrap_or(i32::MAX));

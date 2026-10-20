@@ -200,10 +200,17 @@ struct Host {
     sources: Vec<Box<Source>>,
     /// The plug-in said its document data changed (ARA 2.3), so the project has unsaved edits.
     changed: AtomicBool,
+    /// Counts what can change an archive: the plug-in's edits and analyses, and the host's own
+    /// edits and restores. A track's archive stored at the same count is given again rather than
+    /// stored anew (storing a large one held the plug-in's editor up for seconds).
+    archive_changes: AtomicU64,
     /// Counts the times the plug-in said a region's, modification's or source's notes may have
     /// changed, or the host changed the regions: each track's notes are read again after the
     /// next model update when it moved on (#720).
     notes_changed: AtomicU64,
+    /// The sources being analysed (by their host ref, the boxed `Source`) and how far each has
+    /// come, 0 to 1; one is taken out when its analysis completes.
+    analysis: Mutex<Vec<(usize, f32)>>,
     /// The song's tempo map and time signatures, which the plug-in reads through the musical
     /// context's content readers, so its timeline counts bars as the song does. Changed only
     /// inside an edit, on the model thread, so what a reader handed out stays put.
@@ -256,6 +263,11 @@ impl Host {
 
     fn notes_may_have_changed(&self) {
         self.notes_changed.fetch_add(1, Ordering::AcqRel);
+    }
+
+    /// Something an archive holds may have changed.
+    fn archive_may_have_changed(&self) {
+        self.archive_changes.fetch_add(1, Ordering::AcqRel);
     }
 }
 
@@ -350,7 +362,9 @@ impl Shared {
             },
             sources: Vec::new(),
             changed: AtomicBool::new(false),
+            archive_changes: AtomicU64::new(0),
             notes_changed: AtomicU64::new(0),
+            analysis: Mutex::new(Vec::new()),
             tempo: Mutex::new(Vec::new()),
             bars: Mutex::new(Vec::new()),
         });
@@ -449,8 +463,10 @@ impl Shared {
         self.last_model_update.set(Instant::now());
         let Some(dc) = self.controller() else { return };
         let Some(notify) = dc.interface.notifyModelUpdates else { return };
+        let started = Instant::now();
         // SAFETY: a live document controller, not being edited, on its model thread.
         unsafe { notify(dc.reference) };
+        slow_call("notifyModelUpdates", started);
     }
 
     /// Opens the sources of `document` the document does not have yet, before an edit, so a
@@ -584,6 +600,12 @@ impl Shared {
     /// says it can (ADR 0028): the notes then show on the clips without the editor being opened.
     /// The work is the plug-in's, in this process; it says when it is done with a content change.
     fn ask_for_notes(&self, dc: &Controller) {
+        let started = Instant::now();
+        self.ask_for_notes_now(dc);
+        slow_call("asking for notes", started);
+    }
+
+    fn ask_for_notes_now(&self, dc: &Controller) {
         let notes_type = kARAContentTypeNotes as ARAContentType;
         // SAFETY: the plug-in's factory, valid while its module is loaded.
         let Some(factory) = (unsafe { self.factory.as_ref() }) else { return };
@@ -694,6 +716,7 @@ impl Shared {
             // archive and the filter live for the call.
             unsafe { restore(dc.reference, reader, filter) }
         })?;
+        self.host.archive_may_have_changed();
         self.notify_model_updates();
         Ok(restored != 0)
     }
@@ -741,6 +764,9 @@ impl Drop for Shared {
     }
 }
 
+/// An archive as stored: the plug-in's document archive id and the bytes.
+type Stored = (String, Vec<u8>);
+
 /// One plug-in instance's part of an ARA document: its track as a region sequence, the track's
 /// clips as playback regions, and the instance bound to the document, its renderers holding
 /// those regions. The document itself ([`Shared`]) is shared with the instances of the same
@@ -771,6 +797,10 @@ pub(crate) struct Document {
     notes_sent: RefCell<Vec<(String, u64)>>,
     /// Regions' notes read and not yet taken by the main loop: id, notes, whether cut.
     notes_out: RefCell<Vec<(String, Vec<AraNote>, bool)>>,
+    /// The track's archive as last stored, and the document's change count then.
+    stored: RefCell<Option<(u64, Stored)>>,
+    /// The analysis progress last sent, in whole percents; `None` while none was going on.
+    analysis_sent: Cell<Option<u32>>,
     _entry: Interface,
 }
 
@@ -809,6 +839,8 @@ impl Document {
             notes_seen: Cell::new(u64::MAX),
             notes_sent: RefCell::new(Vec::new()),
             notes_out: RefCell::new(Vec::new()),
+            stored: RefCell::new(None),
+            analysis_sent: Cell::new(None),
             _entry: entry,
         };
         let new_sources = made.shared.borrow().open_new_sources(document)?;
@@ -1014,7 +1046,10 @@ impl Document {
         sent.retain(|(id, _)| self.region_described.iter().any(|r| r.id == *id));
         let mut out = self.notes_out.borrow_mut();
         for (region, described) in self.regions.iter().zip(&self.region_described) {
-            let Some((notes, truncated)) = region_notes(&dc, *region, described.start) else {
+            let started = Instant::now();
+            let read = region_notes(&dc, *region, described.start);
+            slow_call(&format!("reading the notes of {}", described.id), started);
+            let Some((notes, truncated)) = read else {
                 suhina_plugins::trace!("ara notes {}: cannot be read", described.id);
                 continue;
             };
@@ -1038,6 +1073,30 @@ impl Document {
         }
     }
 
+    /// How far the analysis of this track's sources has come (the least done of them), when it
+    /// moved by a percent, started or ended since the last call: `Some(None)` when nothing of
+    /// this track is being analysed any more.
+    pub(crate) fn take_analysis(&self) -> Option<Option<f32>> {
+        let shared = self.shared.borrow();
+        let mine: Vec<usize> = shared
+            .source_ids
+            .iter()
+            .zip(&shared.host.sources)
+            .filter(|(id, _)| self.owned_sources.contains(id))
+            .map(|(_, source)| std::ptr::from_ref::<Source>(source) as usize)
+            .collect();
+        let least = {
+            let analysis = shared.host.analysis.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            analysis.iter().filter(|(s, _)| mine.contains(s)).map(|(_, p)| *p).reduce(f32::min)
+        };
+        let percent = least.map(|p| (p * 100.0) as u32);
+        if percent == self.analysis_sent.get() {
+            return None;
+        }
+        self.analysis_sent.set(percent);
+        Some(least)
+    }
+
     /// The regions' notes read since the last call: region id, its notes as they are now
     /// (empty when it has none any more), and whether there were more than the protocol carries.
     pub(crate) fn take_notes(&self) -> Vec<(String, Vec<AraNote>, bool)> {
@@ -1048,7 +1107,25 @@ impl Document {
     /// sources and modifications its clips play (and the document's own data). `None` when the
     /// plug-in cannot store them.
     pub(crate) fn store(&self) -> Option<(String, Vec<u8>)> {
-        self.shared.borrow().store(&self.owned_sources, &self.owned_modifications)
+        let shared = self.shared.borrow();
+        // What the plug-in has queued is counted before the count is read.
+        shared.notify_model_updates();
+        let changes = shared.host.archive_changes.load(Ordering::Acquire);
+        if let Some((at, archive)) = self.stored.borrow().as_ref()
+            && *at == changes
+        {
+            return Some(archive.clone());
+        }
+        let started = Instant::now();
+        let archive = shared.store(&self.owned_sources, &self.owned_modifications)?;
+        suhina_plugins::trace!(
+            "ara store {}: {} bytes in {:.1} ms",
+            self.sequence_described.0,
+            archive.1.len(),
+            started.elapsed().as_secs_f64() * 1000.0
+        );
+        *self.stored.borrow_mut() = Some((changes, archive.clone()));
+        Some(archive)
     }
 
     /// The edits of one modification (`content-<id>`) and its source (the pool key), stored on
@@ -1129,6 +1206,7 @@ impl Document {
         shared.notify_model_updates();
         // Moved, trimmed or new regions: the plug-in need not say so, so their notes are read.
         shared.host.notes_may_have_changed();
+        shared.host.archive_may_have_changed();
         edited
     }
 
@@ -1301,6 +1379,15 @@ impl Drop for Document {
         }
         // The other tracks' plug-ins hear and show the change.
         shared.notify_model_updates();
+    }
+}
+
+/// Traces a call into the plug-in that held this thread (its model thread, where its editor
+/// also runs) 50 ms or more: a stalled editor shows which call it was in.
+fn slow_call(what: &str, started: Instant) {
+    let took = started.elapsed();
+    if took >= Duration::from_millis(50) {
+        suhina_plugins::trace!("ara slow call: {what} took {:.1} ms", took.as_secs_f64() * 1000.0);
     }
 }
 
@@ -1590,13 +1677,27 @@ static MODEL_UPDATE: ARAModelUpdateControllerInterface = ARAModelUpdateControlle
 
 unsafe extern "C" fn analysis_progress(
     host: ARAModelUpdateControllerHostRef,
-    _source: ARAAudioSourceHostRef,
+    source: ARAAudioSourceHostRef,
     state: ARAAnalysisProgressState,
     value: f32,
 ) {
     suhina_plugins::trace!("ara analysis progress state {state} value {value:.2}");
+    // How far the source's analysis has come, for its clips to show.
+    // SAFETY: as in `modification_changed`.
+    if let Some(host) = unsafe { host.cast::<Host>().as_ref() } {
+        let key = source as usize;
+        let mut analysis = host.analysis.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        analysis.retain(|(s, _)| *s != key);
+        if state != kARAAnalysisProgressCompleted as ARAAnalysisProgressState {
+            analysis.push((key, if value.is_finite() { value.clamp(0.0, 1.0) } else { 0.0 }));
+        }
+    }
     // An analysis done: its notes are there to read, whether or not the plug-in also says the
     // content changed.
+    // SAFETY: as in `modification_changed`.
+    if let Some(host) = unsafe { host.cast::<Host>().as_ref() } {
+        host.archive_may_have_changed();
+    }
     if state == kARAAnalysisProgressCompleted as ARAAnalysisProgressState {
         // SAFETY: as in `modification_changed`.
         notes_may_have_changed(unsafe { host.cast::<Host>().as_ref() }, 0);
@@ -1609,6 +1710,10 @@ unsafe extern "C" fn source_changed(
     _range: *const ARAContentTimeRange,
     flags: ARAContentUpdateFlags,
 ) {
+    // SAFETY: the host ref is the document's boxed `Host`, live while the plug-in calls back.
+    if let Some(host) = unsafe { host.cast::<Host>().as_ref() } {
+        host.archive_may_have_changed();
+    }
     // An analysis done, say: the regions of the source have notes to read.
     // SAFETY: as in `modification_changed`.
     notes_may_have_changed(unsafe { host.cast::<Host>().as_ref() }, flags);
@@ -1689,6 +1794,10 @@ unsafe extern "C" fn modification_changed(
     _range: *const ARAContentTimeRange,
     flags: ARAContentUpdateFlags,
 ) {
+    // SAFETY: the host ref is the document's boxed `Host`, live while the plug-in calls back.
+    if let Some(host) = unsafe { host.cast::<Host>().as_ref() } {
+        host.archive_may_have_changed();
+    }
     // An edit in the plug-in: the project has unsaved changes.
     // SAFETY: the host ref is the document's boxed `Host`, live while the plug-in calls back.
     let host = unsafe { host.cast::<Host>().as_ref() };
@@ -1709,6 +1818,10 @@ unsafe extern "C" fn region_changed(
 }
 
 unsafe extern "C" fn document_changed(host: ARAModelUpdateControllerHostRef) {
+    // SAFETY: the host ref is the document's boxed `Host`, live while the plug-in calls back.
+    if let Some(host) = unsafe { host.cast::<Host>().as_ref() } {
+        host.archive_may_have_changed();
+    }
     // SAFETY: as in `modification_changed`.
     if let Some(host) = unsafe { host.cast::<Host>().as_ref() } {
         host.changed.store(true, Ordering::Release);

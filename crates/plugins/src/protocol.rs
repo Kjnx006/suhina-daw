@@ -517,6 +517,13 @@ pub enum Message {
         notes: Vec<AraNote>,
         truncated: bool,
     },
+    /// How far an ARA plug-in's analysis of the instance's track has come, 0 to 1 (the least
+    /// done of its sources), or `None` once nothing is being analysed (unasked): sent when it
+    /// moves by a percent, so its clips can say so.
+    AraAnalysis {
+        instance: u32,
+        progress: Option<f32>,
+    },
     CloseEditor {
         instance: u32,
     },
@@ -560,6 +567,7 @@ impl Message {
             | Self::EditorResized { instance, .. }
             | Self::LatencyChanged { instance, .. }
             | Self::AraNotes { instance, .. }
+            | Self::AraAnalysis { instance, .. }
             | Self::CloseEditor { instance }
             | Self::EditorClosed { instance } => Some(*instance),
             Self::Error { instance, .. } => *instance,
@@ -640,6 +648,9 @@ impl Message {
                 "op": "ara_notes", "instance": instance, "region": region, "truncated": truncated,
                 "notes": notes.iter().map(|n| n.to_json()).collect::<Vec<_>>(),
             }),
+            Self::AraAnalysis { instance, progress } => {
+                json!({ "op": "ara_analysis", "instance": instance, "progress": progress })
+            }
             Self::AraSelect { instance, region } => {
                 json!({ "op": "ara_select", "instance": instance, "region": region })
             }
@@ -786,6 +797,13 @@ impl Message {
                     .map(AraNote::from_json)
                     .collect::<Option<Vec<_>>>()?,
                 truncated: value.get("truncated")?.as_bool()?,
+            },
+            "ara_analysis" => Self::AraAnalysis {
+                instance: instance()?,
+                progress: match value.get("progress") {
+                    None | Some(Value::Null) => None,
+                    Some(p) => Some((p.as_f64().filter(|p| p.is_finite())? as f32).clamp(0.0, 1.0)),
+                },
             },
             "ara_select" => Self::AraSelect {
                 instance: instance()?,

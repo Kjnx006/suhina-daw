@@ -18,8 +18,9 @@ use crate::plugin::{Delay, Plugins};
 use crate::sends::{self, SendOut};
 use crate::{MAX_LATENCY_SECONDS, track_gains};
 
-/// A send of a chain: the return chain's index, the return track and the send's gains.
-type SendTarget = (usize, TrackId, (f32, f32), bool);
+/// A send of a chain: the return chain's index, the return track, the send's gains with the
+/// level they are for, and whether it is after the fader.
+type SendTarget = (usize, TrackId, ((f32, f32), f64), bool);
 
 /// The most channels a route is followed through, so a routing cycle cannot loop forever.
 const MAX_HOPS: usize = 64;
@@ -150,7 +151,7 @@ pub(crate) fn build(
                 .iter()
                 .filter(|p| p.source == c.track)
                 .filter_map(|p| {
-                    Some((chains.iter().position(|o| o.track == p.target)?, p.target, p.gains, p.post_fader))
+                    Some((chains.iter().position(|o| o.track == p.target)?, p.target, (p.gains, p.level), p.post_fader))
                 })
                 .collect()
         })
@@ -171,6 +172,11 @@ pub(crate) fn build(
             .filter(|c| !is_bus && !c.automated(suhina_model::automation::VOLUME))
             .map(|c| c.volume)
             .filter(|v| v.is_finite() && *v > 0.0);
+        // The pan, likewise, for a track without mix lanes, not at either end.
+        chain.built_pan = automation::channel_of(project, chain.track)
+            .filter(|_| !is_bus && chain.mix.is_none())
+            .map(|c| c.pan)
+            .filter(|p| p.is_finite() && p.abs() < 0.999);
     }
     for index in 0..chains.len() {
         let fed = targets.iter().any(|t| t.is_some_and(|(target, _)| target == index))

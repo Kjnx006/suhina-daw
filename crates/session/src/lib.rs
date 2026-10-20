@@ -833,6 +833,12 @@ impl Session {
         self.plugins.clip_notes(clip)
     }
 
+    /// What an ARA plug-in on `track` is doing with its audio clips: its name, and how far its
+    /// analysis has come, or `None` while it loads. `None` when it is doing neither.
+    pub fn ara_activity(&self, track: suhina_model::TrackId) -> Option<(String, Option<f32>)> {
+        self.plugins.ara_activity(track)
+    }
+
     /// The first device on `track` that runs a plug-in bound to its audio clips (ARA), by its
     /// index in the track's chain.
     pub fn ara_device(&self, track: suhina_model::TrackId) -> Option<usize> {

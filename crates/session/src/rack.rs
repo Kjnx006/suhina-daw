@@ -669,6 +669,10 @@ struct Instance {
     state_refused: Option<String>,
     /// Whether its editor is open, as last known.
     editor_open: bool,
+    /// The track whose clips it edits, for an ARA plug-in; and how far its analysis of them has
+    /// come, 0 to 1, while it runs ([`Rack::ara_activity`]).
+    track: Option<suhina_model::TrackId>,
+    ara_progress: Option<f32>,
     /// Reads of its state still to come before a change made in its editor shows
     /// ([`PluginEdits`] counts a change once two reads agree): 2 while the editor is open, one
     /// less with each read after it closed. Only these plug-ins are read before the window asks
@@ -735,6 +739,8 @@ impl Instance {
             state_refused: None,
             editor_open: false,
             unsettled_reads: 0,
+            track: None,
+            ara_progress: None,
             editor_embedded: false,
             editor_size: None,
             placement_wanted: None,
@@ -1278,6 +1284,7 @@ impl Rack {
             let plugin = Some((matched.plugin.name.clone(), matched.plugin.vendor.clone(), matched.how.name()));
             let mut instance = Instance::new(PluginStatus::Loading, plugin, generation);
             instance.spec = spec;
+            instance.track = found.track.filter(|_| edits_clips);
             instance.info = PluginSlotInfo { instrument, latency: 0 };
             instance.ara_layout = layout;
             instance.ara_sources = ara_sources;
@@ -1479,6 +1486,8 @@ impl Rack {
                 instance.ara_layout = Some(now);
                 // The regions may be new: the editor is told the selection again.
                 instance.ara_selection_sent = None;
+                // Its archive may change with the clips (a copy's edits): read it again.
+                instance.unsettled_reads = 2;
                 updates.push((found.key, document));
                 continue;
             }
@@ -1628,6 +1637,9 @@ impl Rack {
                 shown.push(layout);
             }
             let Some(control) = instance.control.as_mut() else { continue };
+            if let Some(progress) = control.take_ara_analysis() {
+                instance.ara_progress = progress;
+            }
             for (region, notes) in control.take_ara_notes() {
                 let Some(clip) = region.strip_prefix("clip-").and_then(|n| n.parse().ok()).map(suhina_model::ClipId)
                 else {
@@ -1649,6 +1661,19 @@ impl Rack {
         };
         self.ara_notes.retain(|clip, _| has(&live, clip));
         self.ara_notes_hidden = self.ara_notes.keys().filter(|clip| !has(&shown, clip)).copied().collect();
+    }
+
+    /// What an ARA plug-in on `track` is doing with its audio clips that they should show: its
+    /// name and how far its analysis has come (`None` while it loads).
+    pub(crate) fn ara_activity(&self, track: suhina_model::TrackId) -> Option<(String, Option<f32>)> {
+        self.instances.values().filter(|i| i.track == Some(track)).find_map(|i| {
+            let name = i.plugin.as_ref().map_or_else(|| "The plug-in".to_string(), |p| p.0.clone());
+            match &i.status {
+                PluginStatus::Loading => Some((name, None)),
+                PluginStatus::Running => i.ara_progress.map(|p| (name, Some(p))),
+                _ => None,
+            }
+        })
     }
 
     /// The notes an ARA plug-in found in `clip`, if any (#720).
@@ -1678,7 +1703,14 @@ impl Rack {
             let name = instance.plugin.as_ref().map_or("A plug-in", |p| p.0.as_str());
             match control.health() {
                 Health::Running => {
-                    if save {
+                    // Nothing outside the project changes a plug-in's state but its editor (and an
+                    // ARA plug-in's clips, which mark it too): one read since then is current. An
+                    // ARA plug-in is not read while its editor is open: storing its archive held
+                    // the editor up for seconds (2.5 s for a 9 MB one), so it is read once the
+                    // editor closes, and at a save or a close as every plug-in is.
+                    let edited = instance.editor_open || instance.unsettled_reads > 0;
+                    let editing_ara = instance.editor_open && instance.ara_layout.is_some();
+                    if save && edited && !editing_ara {
                         to_save.push(*key);
                     }
                 }

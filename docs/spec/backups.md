@@ -88,9 +88,13 @@ undo or risky is added there and to this list.
 
 ## How a backup is written
 
-- The project is copied with each plug-in's state as it was last read (every 30 seconds while it
-  runs, and at each save), without asking the plug-ins again: asking waited up to a second for a
-  busy plug-in on the window's thread at every backup. A save still asks every running plug-in.
+- The project is copied with each plug-in's state as it was last read, without asking the
+  plug-ins again: asking waited up to a second for a busy plug-in on the window's thread at every
+  backup. A plug-in is read every 30 seconds while its editor is open or until its state settles
+  after it closed (nothing else changes it outside the project), and at each save. An ARA
+  plug-in (Melodyne) is not read while its editor is open, since storing its edits held the editor
+  up for seconds: its edits reach backups once the editor closes or the project is saved. A save
+  still asks every running plug-in.
 - The copy is turned into JSON and written on a background thread (`suhina-backup`), never on
   the window's thread or the audio thread. It is written to a temporary file beside the backup
   (`… .suhina.saving`) that is then renamed to the backup's name, so a crash while writing leaves

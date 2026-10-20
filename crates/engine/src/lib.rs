@@ -131,6 +131,15 @@ const LEAD_MARGIN_SECONDS: f64 = 0.003;
 /// ([`Controller::set_device_param`]): the value is the channel's new linear volume, and the
 /// playing graph takes it without a new graph where the track's chain can.
 pub const MIXER_VOLUME: usize = usize::MAX;
+/// The device index of a parameter message that turns a track's send
+/// ([`Controller::set_device_param`]): the parameter is the return track's id, the value the
+/// send's new linear level; the playing graph takes it without a new graph where the send is
+/// in it (it was heard when the graph was built).
+pub const MIXER_SEND: usize = usize::MAX - 1;
+/// The device index of a parameter message that turns a track's pan
+/// ([`Controller::set_device_param`]): the value is the channel's new pan, -1 to 1; the playing
+/// graph takes it without a new graph where the track's chain can.
+pub const MIXER_PAN: usize = usize::MAX - 2;
 
 /// What the last graph's build took, part by part, for the trace (`docs/debugging.md`): an
 /// edit to a large project held the window up for over a second there.

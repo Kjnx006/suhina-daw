@@ -290,3 +290,37 @@ fn a_send_to_an_empty_return_playing_into_main_makes_the_track_louder_on_main() 
     let expected = plain.clone();
     assert_sounds_like(&out, &expected);
 }
+
+/// Plays `project` for 10 blocks, sends `device`'s value through the controller, plays 30 more:
+/// the last block, against `expected`'s same frames.
+fn turned(project: &Project, device: usize, param: usize, value: f64, expected: &Project) -> (Vec<f32>, Vec<f32>) {
+    let mut renderer = Renderer::new(project, SR).unwrap();
+    let mut controller = renderer.controller();
+    let mut out = blocks(&mut renderer, 10, 480);
+    controller.set_device_param(TrackId(1), device, param, value).unwrap();
+    out.extend(blocks(&mut renderer, 30, 480));
+    let mut reference = Renderer::new(expected, SR).unwrap();
+    let whole = blocks(&mut reference, 40, 480);
+    let last = 39 * 480 * 2;
+    (out[last..].to_vec(), whole[last..].to_vec())
+}
+
+#[test]
+fn a_send_turned_while_playing_reaches_its_level_without_a_new_graph() {
+    // From unity to a quarter: once the smoothing has settled, as a graph built at a quarter.
+    let (live, built) = turned(&sending(1.0, false, vec![]), crate::MIXER_SEND, 2, 0.25, &sending(0.25, false, vec![]));
+    assert!(peak(&built) > 0.1);
+    assert!(max_diff(&live, &built) < 1e-3, "{}", max_diff(&live, &built));
+}
+
+#[test]
+fn a_pan_turned_while_playing_moves_the_track_and_its_post_fader_send() {
+    let mut panned = sending(1.0, false, vec![]);
+    panned.channels[0].pan = -0.5;
+    let (live, built) = turned(&sending(1.0, false, vec![]), crate::MIXER_PAN, 0, -0.5, &panned);
+    assert!(peak(&built) > 0.1);
+    assert!(max_diff(&live, &built) < 1e-3, "{}", max_diff(&live, &built));
+    // A pan to either end silences a side, which a factor cannot bring back: a new graph.
+    let mut renderer = Renderer::new(&sending(1.0, false, vec![]), SR).unwrap();
+    assert!(renderer.controller().set_device_param(TrackId(1), crate::MIXER_PAN, 0, -1.0).is_err());
+}

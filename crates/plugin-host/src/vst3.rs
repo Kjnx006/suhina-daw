@@ -984,6 +984,11 @@ impl Vst3Plugin {
         }
     }
 
+    /// How far the analysis of a bound ARA document's track has come, when it changed.
+    pub(crate) fn take_ara_analysis(&self) -> Option<Option<f32>> {
+        self.ara.as_ref().and_then(|ara| ara.take_analysis())
+    }
+
     /// The notes a bound ARA document read since the last call (#720).
     pub(crate) fn take_ara_notes(&self) -> Vec<(String, Vec<suhina_plugins::protocol::AraNote>, bool)> {
         self.ara.as_ref().map(|ara| ara.take_notes()).unwrap_or_default()
