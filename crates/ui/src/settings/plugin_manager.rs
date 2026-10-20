@@ -65,6 +65,17 @@ impl ManagerState {
     }
 }
 
+/// The plug-ins a right-click on the row of `spec` turns off or on: the picked ones the list
+/// shows (`order`), when that row is one of them, in the order they were picked; else that row
+/// alone. A picked row the search hides, or a rescan removed, is left alone.
+fn batch(picked: &[String], spec: &str, order: &[String]) -> Vec<String> {
+    if picked.iter().any(|s| s == spec) {
+        picked.iter().filter(|s| order.contains(s)).cloned().collect()
+    } else {
+        vec![spec.to_string()]
+    }
+}
+
 /// What a row stands for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Kind {
@@ -321,7 +332,7 @@ pub fn show(ui: &mut Ui, area: Rect, plugins: &mut PluginsView) -> ManagerOut {
                     if row.secondary_clicked() && !picked.contains(spec) {
                         pick = Some((spec.clone(), false, false));
                     }
-                    let these: Vec<String> = if picked.contains(spec) { picked.clone() } else { vec![spec.clone()] };
+                    let these = batch(&picked, spec, &order);
                     row.context_menu(|ui| {
                         let what =
                             if these.len() > 1 { format!("{} plug-ins", these.len()) } else { "the plug-in".into() };
@@ -419,6 +430,16 @@ mod tests {
         assert_eq!(state.picked, ["a", "b"], "Shift takes the run from the row clicked last");
         state.pick("c", false, false, &order);
         assert_eq!(state.picked, ["c"], "a plain click picks that row only");
+    }
+
+    #[test]
+    fn a_right_click_turns_the_picked_rows_in_view_on_or_off() {
+        let strings = |list: &[&str]| list.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let picked = strings(&["b", "gone", "d", "hidden"]);
+        // The search shows a to d; "hidden" is out of it, "gone" went in a rescan.
+        let order = strings(&["a", "b", "c", "d"]);
+        assert_eq!(batch(&picked, "d", &order), ["b", "d"]);
+        assert_eq!(batch(&picked, "c", &order), ["c"], "a row not picked: that one alone");
     }
     use crate::settings::settings_view::PluginRow;
 
