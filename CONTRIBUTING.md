@@ -50,8 +50,11 @@
   (`.coderabbit.yaml`) and shows a **CodeRabbit** check beside CI. Its comments are suggestions, not requirements: answer or resolve
   them, and leave DSP and real-time behaviour to the tests and renders. The check is never red and
   never required. Comment `@coderabbitai review` to run it again.
-- **Codex:** once CI has run on the pull request's head commit, comment `@codex review` to
-  request a review. After a new push, wait until CI has checked the new head commit, then use
+- **Codex:** only a maintainer or a trusted contributor named in `TRUSTED_CONTRIBUTORS` may
+  request a review. Other contributors ask a maintainer to request it. Once CI has run on the
+  pull request's head commit, comment `@codex review`. Avoid duplicate requests for the same
+  head commit; ask a maintainer before retrying a failed review. After a new push, wait until
+  CI has checked the new head commit, then use
   the same command for another pass. Do not enable automatic reviews on opening a pull request
   or marking it ready: those triggers run before CI. Codex triggers are managed in the
   Codex service settings. The reviewer runs no tests or builds and reads CI results for the
