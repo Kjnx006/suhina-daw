@@ -24,7 +24,7 @@ use std::collections::HashMap;
 use std::ffi::{OsStr, c_void};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -594,6 +594,9 @@ pub(crate) struct Vst3Plugin {
     sample_rate: f64,
     /// Its number in the process, which its audio thread serves as.
     instance: u32,
+    /// What its audio thread played since the last trace line; written by that thread, traced
+    /// from [`Vst3Plugin::tick`] (`docs/debugging.md`).
+    watch: Arc<Watch>,
     connections: Option<(ComPtr<IConnectionPoint>, ComPtr<IConnectionPoint>)>,
     controller: Option<ComPtr<IEditController>>,
     separate_controller: bool,
@@ -685,6 +688,7 @@ impl Vst3Plugin {
             _handler: handler,
             _host: host,
             loaded_at: std::time::Instant::now(),
+            watch: Arc::new(Watch::default()),
             module,
         };
         plugin.connect();
@@ -736,13 +740,13 @@ impl Vst3Plugin {
         let pending = self.pending.clone();
         let mapping = MidiMapping::of(self.controller.as_ref());
         let (buses, sample_rate, instance) = (self.buses.clone(), self.sample_rate, self.instance);
-        let bound = self.ara.is_some();
+        let watch = (self.ara.is_some() && suhina_plugins::trace::on()).then(|| self.watch.clone());
         let audio = AudioSide(processor);
         let thread = thread::Builder::new()
             .name("plug-in audio".into())
             .spawn(move || {
                 let _realtime = crate::real_time_thread();
-                serve(instance, audio, served, buses, sample_rate, (pending, mapping), (&stop, &flush), bound)
+                serve(instance, audio, served, buses, sample_rate, (pending, mapping), (&stop, &flush), watch)
             })
             .map_err(|e| e.to_string())?;
         self.audio = Some(thread);
@@ -964,7 +968,30 @@ impl Vst3Plugin {
     pub(crate) fn tick(&self) {
         if let Some(ara) = &self.ara {
             ara.tick();
+            self.trace_output();
         }
+    }
+
+    /// With a trace, once a second of audio: whether the ARA-bound plug-in plays, the song's
+    /// place it was told and the loudest sample (a silent ARA track says here whether the
+    /// plug-in played nothing or was not asked to). Written here, on the main thread, from what
+    /// the audio thread set ([`Watch`]).
+    fn trace_output(&self) {
+        let rate = self.sample_rate;
+        let watch = &self.watch;
+        if rate <= 0.0 || (watch.frames.load(Ordering::Acquire) as f64) < rate {
+            return;
+        }
+        watch.frames.store(0, Ordering::Relaxed);
+        let peak = f32::from_bits(watch.peak.swap(0, Ordering::Relaxed));
+        let playing = watch.playing.load(Ordering::Relaxed);
+        suhina_plugins::trace!(
+            "ara audio {}: {}, song at {:.2} s, peak {:.4}",
+            self.instance,
+            if playing { "playing" } else { "stopped" },
+            watch.song_samples.load(Ordering::Relaxed) as f64 / rate,
+            peak
+        );
     }
 
     /// The notes a bound ARA document read since the last call (#720).
@@ -1209,16 +1236,14 @@ fn serve(
     sample_rate: f64,
     (pending, mapping): (Pending, MidiMapping),
     (stop, flush): (&AtomicBool, &AtomicBool),
-    ara_bound: bool,
+    watch: Option<Arc<Watch>>,
 ) -> Served {
     let processor = audio.0;
     let waiting = pending.clone();
     // SAFETY: a live, active processor, on the audio thread.
     let _ = unsafe { processor.setProcessing(1) };
     let mut block = Vst3Block::new(processor, &served, buses, sample_rate, (pending, mapping));
-    if ara_bound && suhina_plugins::trace::on() {
-        block.watch = Some(Watch { instance, frames: 0, peak: 0.0 });
-    }
+    block.watch = watch;
     if let Some(mut block) = crate::audio::serve(instance, block, &mut served, stop) {
         if flush.load(Ordering::Acquire) && waiting.lock().is_ok_and(|w| !w.is_empty()) {
             block.flush();
@@ -1249,16 +1274,21 @@ struct Vst3Block {
     inputs: Vec<AudioBusBuffers>,
     outputs: Vec<AudioBusBuffers>,
     context: ProcessContext,
-    /// With a trace, an ARA-bound plug-in's output summed up once a second (`docs/debugging.md`).
-    watch: Option<Watch>,
+    /// With a trace, an ARA-bound plug-in's output summed up (`docs/debugging.md`).
+    watch: Option<Arc<Watch>>,
 }
 
-/// What an ARA-bound plug-in played since the last trace line: its instance, the frames and the
-/// loudest sample.
+/// What an ARA-bound plug-in played since the last trace line, which the audio thread sets and
+/// [`Vst3Plugin::trace_output`] reads: atomics, as the audio thread must not allocate, lock or
+/// write a file.
+#[derive(Default)]
 struct Watch {
-    instance: u32,
-    frames: u64,
-    peak: f32,
+    frames: AtomicU64,
+    /// The loudest sample, as `f32` bits.
+    peak: AtomicU32,
+    /// The song's place it was told, in samples, and whether it plays.
+    song_samples: AtomicI64,
+    playing: AtomicBool,
 }
 
 // SAFETY: the block is used by one audio thread at a time (behind its lock, `crate::audio`),
@@ -1373,29 +1403,20 @@ fn follow_song(context: &mut ProcessContext, events: &[suhina_ipc::Event]) {
 }
 
 impl Vst3Block {
-    /// Sums up an ARA-bound plug-in's `output` of `frames` frames and traces it once a second:
-    /// the song's place it was told, whether it plays, the loudest sample (a silent ARA track
-    /// says here whether the plug-in played nothing or was not asked to).
+    /// Sums up an ARA-bound plug-in's `output` of `frames` frames for the trace
+    /// ([`Vst3Plugin::trace_output`]). Never allocates or locks.
     fn watch_output(&mut self, output: &[f32], frames: usize) {
-        let rate = self.context.sampleRate;
-        let Some(watch) = self.watch.as_mut() else { return };
-        watch.peak = output.iter().fold(watch.peak, |peak, s| peak.max(s.abs()));
-        watch.frames += frames as u64;
-        if rate <= 0.0 || (watch.frames as f64) < rate {
-            return;
-        }
+        let Some(watch) = self.watch.as_ref() else { return };
+        // This thread alone raises the peak, so a load and a store lose none.
+        let peak = f32::from_bits(watch.peak.load(Ordering::Relaxed));
+        let peak = output.iter().fold(peak, |peak, s| peak.max(s.abs()));
+        watch.peak.store(peak.to_bits(), Ordering::Relaxed);
         use vst3::Steinberg::Vst::ProcessContext_::StatesAndFlags_ as Flags;
         #[allow(clippy::unnecessary_cast, reason = "the flags are signed on Windows")]
         let playing = self.context.state & (Flags::kPlaying as u32) != 0;
-        suhina_plugins::trace!(
-            "ara audio {}: {}, song at {:.2} s, peak {:.4}",
-            watch.instance,
-            if playing { "playing" } else { "stopped" },
-            self.context.projectTimeSamples as f64 / rate,
-            watch.peak
-        );
-        watch.frames = 0;
-        watch.peak = 0.0;
+        watch.playing.store(playing, Ordering::Relaxed);
+        watch.song_samples.store(self.context.projectTimeSamples, Ordering::Relaxed);
+        watch.frames.fetch_add(frames as u64, Ordering::Release);
     }
 }
 
