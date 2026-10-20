@@ -98,6 +98,7 @@ after every merge; do not edit by hand. Find a document by what you are about to
 | [Waveforms](spec/waveforms.md) | spec | current | waveform, peaks, RMS, waveform drawing, zoom, samples, stereo lanes, dB scale, clip waveform, preview waveform, sample map tooltip, frame budget | How waveforms are computed and drawn in clips, the browser's preview and the sample map's tooltips: peak levels with RMS, lanes per channel, the shape, samples close up, the dB scale, the frame budget |
 | [Window zoom](spec/window-zoom.md) | spec | current | zoom, UI zoom, window zoom, interface size, scale, Ctrl+Plus, Ctrl+Minus, Cmd+Plus, bigger text, high-DPI, zoom display | Zooming the whole window (every panel, text and control larger or smaller), its keys, limits and how it is remembered |
 | [The claim bot](claim-bot.md) | howto | current | claim, /claim, /claim @user, claim for someone else, on behalf, /unclaim, /hold, /ready, claim bot, project board, PROJECT_TOKEN, status automation, good first issue, lapsed claim, duplicate pull request, feature not agreed, project sync, board out of date, cards missing from the board, Touches, overlapping work, overlap, blocked by, blocked, dependency, Depends on, stacked pull requests, merge order, trusted contributor, TRUSTED_CONTRIBUTORS, maintainer, who may claim, claim limit, too many claims | How the claim bot moves an issue's card on the project board, holds work, refuses blocked work, lists overlapping work, and how the Depends on check orders pull requests |
+| [Debugging the running app](debugging.md) | howto | current | debugging, bug hunting, trace, SUHINA_TRACE, --trace, diagnostic log, live debugging, UI lag, slow frame, frame time, stutter, plug-in host log, ARA, Melodyne, playhead jumps, flicker, timing, latency, screen recording, video frames, contact sheet | How to find out what the running app does around a bug: the trace log (suhina --trace), adding trace points, reading the log, and reading a screen recording frame by frame |
 | [Author a data-only SDK device](device-sdk.md) | howto | current | make an effect, MIDI effect or instrument, SDK tutorial, .sd example, node discovery | Author data-only effects, MIDI effects and instruments in Rust or with AI agents |
 | [Keyboard shortcuts](guide/keyboard-shortcuts.md) | howto | current | user guide, keyboard shortcuts, what does this key do, list of keys, every shortcut explained, keybindings, hotkeys, action ids, which action a key runs, back up keys, share keymap, keymap.json, rebind a key, keys for agents | User guide to the keyboard shortcuts, one entry per action with its default key, where it works and what it does, written for users and for agents |
 | [How to check it](how-to-check.md) | howto | current | how to check it, test steps, QA steps, how to test, pull request description, manual testing, reviewer steps, check a change | How to write a pull request's "How to check it" section, steps a newcomer can follow from the test build to check a change in what Suhina does |
@@ -278,6 +279,7 @@ Change this code, and check these documents.
 | `crates/plugins/src/protocol.rs` | [0023: Collaboration and project versions: the shape](decisions/0023-collaboration-and-project-versions.md), [0028: ARA hosting](decisions/0028-ara-hosting.md), [Key inputs and plug-in buses](spec/sidechain.md) |
 | `crates/plugins/src/scan.rs` | [0028: ARA hosting](decisions/0028-ara-hosting.md), [The plug-in manager](spec/plugin-manager.md) |
 | `crates/plugins/src/scan_pool.rs` | [0028: ARA hosting](decisions/0028-ara-hosting.md) |
+| `crates/plugins/src/trace.rs` | [Debugging the running app](debugging.md) |
 | `crates/project-file` | [0010: Suhina's own project files (.suhina)](decisions/0010-project-files.md) |
 | `crates/project-file/src/lib.rs` | [0023: Collaboration and project versions: the shape](decisions/0023-collaboration-and-project-versions.md), [0024: Musical time and tempo over the song](decisions/0024-musical-time-and-tempo.md), [0025: Object identity in the model](decisions/0025-object-identity.md), [0026: The project folder, the manifest and the package](decisions/0026-project-folder-and-package.md), [0027: Merge and versions](decisions/0027-merge-and-versions.md), [Arrangement editing](spec/arrangement-editing.md), [Automation](spec/automation.md), [Device groups](spec/device-groups.md), [Suhina device graph (`.sd`)](spec/sd-device-format.md), [The .suhina project file](spec/suhina-format.md) |
 | `crates/project-file/src/tests.rs` | [The NAM Amp Modeler and NAM Cab Loader](spec/nam-amp-and-cab.md) |
@@ -365,6 +367,7 @@ Change this code, and check these documents.
 | `crates/ui/src/interaction/menus.rs` | [Arrangement editing](spec/arrangement-editing.md), [Clip launching](spec/clip-launching.md) |
 | `crates/ui/src/interaction/pick.rs` | [Components](design/components.md), [Export](spec/export.md) |
 | `crates/ui/src/kit.rs` | [Architecture](architecture.md) |
+| `crates/ui/src/kit/frame_trace.rs` | [Debugging the running app](debugging.md) |
 | `crates/ui/src/kit/logo.rs` | [Components](design/components.md) |
 | `crates/ui/src/kit/meter.rs` | [Components](design/components.md), [Level meters](spec/level-meters.md) |
 | `crates/ui/src/kit/motion.rs` | [Components](design/components.md) |
@@ -430,4 +433,5 @@ Change this code, and check these documents.
 | `scripts/stems-fixture.py` | [Stems files](spec/stems-format.md) |
 | `scripts/test-signal.py` | [Making the `.als` test corpus](spec/als-corpus.md) |
 | `scripts/test_project_sync.py` | [The claim bot](claim-bot.md) |
+| `scripts/video_frames.py` | [Debugging the running app](debugging.md) |
 | `third_party/ara-api` | [0028: ARA hosting](decisions/0028-ara-hosting.md) |
