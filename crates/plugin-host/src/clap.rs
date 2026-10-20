@@ -820,6 +820,10 @@ fn follow_song(transport: &mut TransportEvent, events: &[Event], sample_rate: f6
                 transport.loop_start_beats = BeatTime::from_float(f64::from(start));
                 transport.loop_end_beats = BeatTime::from_float(f64::from(end));
             }
+            EventKind::CycleSeconds { start, end } => {
+                transport.loop_start_seconds = SecondsTime::from_float(f64::from(start));
+                transport.loop_end_seconds = SecondsTime::from_float(f64::from(end));
+            }
             EventKind::Bar { number, start, numerator, denominator } => {
                 transport.bar_number = i32::try_from(number).unwrap_or(i32::MAX);
                 transport.bar_start = BeatTime::from_float(start);
@@ -1032,7 +1036,8 @@ fn push_event(buffer: &mut EventBuffer, event: &Event) {
         | EventKind::Tempo { .. }
         | EventKind::Beat { .. }
         | EventKind::Bar { .. }
-        | EventKind::Cycle { .. } => {}
+        | EventKind::Cycle { .. }
+        | EventKind::CycleSeconds { .. } => {}
     }
 }
 
@@ -1057,5 +1062,16 @@ mod tests {
         assert_eq!(many.channels.len(), MAX_PORTS);
         assert!(many.channels.iter().all(|c| *c == MAX_PORT_CHANNELS));
         assert_eq!(many.buffers(4).iter().flatten().count(), many.total_channels());
+    }
+    #[test]
+    fn the_loop_reaches_a_plug_in_on_both_timelines_it_is_told_of() {
+        // The transport says it has a seconds timeline, so the loop is on it too, not 0 to 0.
+        let mut transport = blank_transport();
+        let events = [Event::cycle(true, 4.0, 12.0), Event::cycle_seconds(2.0, 6.0)];
+        follow_song(&mut transport, &events, 48_000.0);
+        assert!(transport.flags.contains(TransportFlags::IS_LOOP_ACTIVE));
+        assert!(transport.flags.contains(TransportFlags::HAS_SECONDS_TIMELINE));
+        assert_eq!((transport.loop_start_beats.to_float(), transport.loop_end_beats.to_float()), (4.0, 12.0));
+        assert_eq!((transport.loop_start_seconds.to_float(), transport.loop_end_seconds.to_float()), (2.0, 6.0));
     }
 }

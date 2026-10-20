@@ -55,7 +55,8 @@ impl MidiMapping {
             | EventKind::Tempo { .. }
             | EventKind::Beat { .. }
             | EventKind::Bar { .. }
-            | EventKind::Cycle { .. } => return None,
+            | EventKind::Cycle { .. }
+            | EventKind::CycleSeconds { .. } => return None,
         };
         let id = (*self.0.get(number)?)?;
         Some((id, event.frame as i32, value.clamp(0.0, 1.0)))
@@ -168,7 +169,8 @@ fn note(event: &LinkEvent) -> Option<Event> {
         | EventKind::Tempo { .. }
         | EventKind::Beat { .. }
         | EventKind::Bar { .. }
-        | EventKind::Cycle { .. } => return None,
+        | EventKind::Cycle { .. }
+        | EventKind::CycleSeconds { .. } => return None,
     }
     Some(out)
 }

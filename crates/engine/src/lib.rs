@@ -856,6 +856,10 @@ impl Renderer {
             numerator: signature.numerator,
             denominator: signature.denominator,
             cycle: self.graph.loop_beats,
+            cycle_seconds: self.graph.loop_beats.map(|(start, end)| {
+                let seconds = |beat| self.frame_of_beat(beat) as f64 / f64::from(self.sample_rate.max(1));
+                (seconds(start), seconds(end))
+            }),
         };
         for chain in &mut self.graph.chains {
             chain.transport(&song);

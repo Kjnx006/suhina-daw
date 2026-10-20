@@ -87,6 +87,8 @@ pub struct SongPosition {
     pub denominator: u8,
     /// The arrangement loop, in beats, while it is on.
     pub cycle: Option<(f64, f64)>,
+    /// The same loop in seconds through the tempo map.
+    pub cycle_seconds: Option<(f64, f64)>,
 }
 
 impl Default for SongPosition {
@@ -101,6 +103,7 @@ impl Default for SongPosition {
             numerator: 4,
             denominator: 4,
             cycle: None,
+            cycle_seconds: None,
         }
     }
 }
