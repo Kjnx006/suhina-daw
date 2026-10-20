@@ -249,6 +249,32 @@ impl Hosted {
     }
 }
 
+/// The events of the song's place sent with every block (transport, tempo, beat, bar, the loop
+/// in beats and in seconds): room for them is kept in a block's parameter events.
+const SONG_EVENTS: usize = 6;
+
+/// Moves what earlier blocks could not send from `carried` to the start of this block, at its
+/// first frame: parameter values into `params` while `reserve` places are left for the song's
+/// place, the rest into `notes` while it has room. What does not fit stays carried for the next
+/// block. Never allocates.
+fn take_carried(carried: &mut Vec<Event>, params: &mut Vec<Event>, notes: &mut Vec<Event>, reserve: usize) {
+    let params_room = params.capacity().saturating_sub(reserve);
+    let notes_room = notes.capacity();
+    carried.retain(|event| {
+        let event = Event { frame: 0, ..*event };
+        let (to, room) = match event.kind {
+            EventKind::Param { .. } => (&mut *params, params_room),
+            _ => (&mut *notes, notes_room),
+        };
+        if to.len() < room {
+            to.push(event);
+            false
+        } else {
+            true
+        }
+    });
+}
+
 /// Keeps the releases among `events` in `carried`, and the latest value of each parameter,
 /// within its capacity. Never allocates.
 fn carry_releases(events: &[Event], carried: &mut Vec<Event>) {
@@ -335,13 +361,7 @@ impl Hosted {
         self.notes.clear();
         self.params.clear();
         // What earlier blocks could not send goes first.
-        for event in self.carried.drain(..) {
-            let event = Event { frame: 0, ..event };
-            match event.kind {
-                EventKind::Param { .. } => self.params.push(event),
-                _ => self.notes.push(event),
-            }
-        }
+        take_carried(&mut self.carried, &mut self.params, &mut self.notes, SONG_EVENTS);
         for &(frame, event) in events {
             push_event(&mut self.notes, u32::try_from(frame).unwrap_or(u32::MAX), event);
         }
@@ -2202,6 +2222,24 @@ mod tests {
         // Never past the room made for them.
         carry_releases(&events, &mut carried);
         assert_eq!(carried.len(), 2);
+    }
+
+    #[test]
+    fn carried_parameter_values_leave_room_for_the_songs_place_and_wait_for_the_next_block() {
+        // A full carry of parameter values: the block takes all but the song's places, and the
+        // rest waits; the vectors never grow past what they were made with.
+        let mut carried: Vec<Event> = (0..8).map(|id| Event::param(5, id, 0.5)).collect();
+        carried.push(Event::note_off(3, 0, 60, 0.0));
+        let (mut params, mut notes) = (Vec::with_capacity(8), Vec::with_capacity(8));
+        take_carried(&mut carried, &mut params, &mut notes, SONG_EVENTS);
+        assert_eq!(params.len(), 8 - SONG_EVENTS);
+        assert!(params.iter().all(|e| e.frame == 0));
+        assert_eq!(notes, [Event::note_off(0, 0, 60, 0.0)]);
+        assert_eq!(carried.len(), SONG_EVENTS, "the rest is kept for the next block");
+        for _ in 0..SONG_EVENTS {
+            params.push(Event::tempo(120.0));
+        }
+        assert_eq!(params.capacity(), 8);
     }
 
     #[test]
