@@ -50,15 +50,13 @@
   (`.coderabbit.yaml`) and shows a **CodeRabbit** check beside CI. Its comments are suggestions, not requirements: answer or resolve
   them, and leave DSP and real-time behaviour to the tests and renders. The check is never red and
   never required. Comment `@coderabbitai review` to run it again.
-- **Codex:** only a maintainer or a trusted contributor named in `TRUSTED_CONTRIBUTORS` may
-  request a review. Other contributors ask a maintainer to request it. Once CI has run on the
-  pull request's head commit, comment `@codex review`. Avoid duplicate requests for the same
-  head commit; ask a maintainer before retrying a failed review. After a new push, wait until
-  CI has checked the new head commit, then use
-  the same command for another pass. Do not enable automatic reviews on opening a pull request
-  or marking it ready: those triggers run before CI. Codex triggers are managed in the
-  Codex service settings. The reviewer runs no tests or builds and reads CI results for the
-  reviewed head commit. Codex follows [AGENTS.md](AGENTS.md#code-review-rules) and
+- **Codex:** runs on the maintainer's own account, so only the maintainer requests a review;
+  everyone else, trusted contributors too, asks the maintainer. Once CI has run on the pull
+  request's latest push (CI checks it merged with `main`), the maintainer comments
+  `@codex review`; once per push, and after a new push only when CI has checked it. Do not
+  enable automatic reviews on opening a pull request or marking it ready: those triggers run
+  before CI. Codex triggers are managed in the Codex service settings. The reviewer runs no tests
+  or builds and reads the CI results of the push it reviews. Codex follows [AGENTS.md](AGENTS.md#code-review-rules) and
   [`docs/code-review.md`](docs/code-review.md). Actionable inline threads must be answered or
   resolved before the merge queue takes the pull request; optional suggestions stay in the
   summary. Hosted review reporting limits are described in the guide.
