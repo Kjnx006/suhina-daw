@@ -587,4 +587,9 @@ fn a_clicked_volume_takes_a_typed_number_and_the_arrow_keys() {
     harness.key_press_modifiers(Modifiers::SHIFT, Key::ArrowDown);
     harness.run();
     assert!((db(&harness) + 11.1).abs() < 0.05, "{}", db(&harness));
+    // With Ctrl held the arrow is the window's shortcut's, not a step of the value.
+    let before = volume(&harness);
+    harness.key_press_modifiers(Modifiers::COMMAND, Key::ArrowUp);
+    harness.run();
+    assert_eq!(volume(&harness), before, "Ctrl+Up does not step the volume");
 }
