@@ -674,3 +674,25 @@ fn an_old_cache_is_analysed_again_never_misread() {
         other => panic!("{other:?}"),
     }
 }
+
+/// While a background update is worked out, the map says so, and refuses another; once taken
+/// in, it is free again.
+#[test]
+fn a_background_update_is_reported_until_it_is_taken_in() {
+    let mut map = SoundMap::new(None, 1);
+    assert!(!map.updating());
+    let (go, wait) = std::sync::mpsc::channel::<()>();
+    assert!(map.update_in_background(move || {
+        let _ = wait.recv();
+        Vec::new()
+    }));
+    assert!(map.updating());
+    assert!(!map.update_in_background(Vec::new), "one at a time");
+    go.send(()).unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while map.updating() {
+        map.poll();
+        assert!(std::time::Instant::now() < deadline, "the update did not come in");
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+}
