@@ -988,6 +988,12 @@ impl App {
         self.projects.finish_backups(std::time::Duration::from_secs(5))
     }
 
+    /// Quitting, after [`App::finish_backups`]: lets every project go at once, off the window's
+    /// thread, and waits for them up to 2 s ([`Projects::close_all`]).
+    pub fn let_go_of_projects(&mut self) -> bool {
+        self.projects.close_all(std::time::Duration::from_secs(2))
+    }
+
     /// Takes in finished backups and writes the timed ones that are due; a failed one is shown in
     /// the status bar. The window looks again when the next one will be due.
     fn tick_backups(&mut self, ctx: &egui::Context) {
