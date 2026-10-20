@@ -56,7 +56,7 @@ Suhina can have several projects open at once, each in a tab.
 
 | Key | Action | Where | What it does |
 |---|---|---|---|
-| Ctrl+Tab | `projects.next` | Anywhere | Shows the open projects while Ctrl is held: each Tab moves to the next (Shift+Tab back), letting go of Ctrl switches, Escape stays. |
+| Ctrl+Tab | `projects.next` | Anywhere | Shows the open projects while Ctrl is held: each Tab or Down moves to the next (Shift+Tab or Up back), letting go of Ctrl switches, Escape stays. |
 | Ctrl+Shift+Tab | `projects.previous` | Anywhere | Switches to the previous project tab. Before the first tab it goes to the last. |
 
 The project you leave stops playing.
@@ -113,7 +113,9 @@ Settings › Arrangement › *Ctrl+drag selects time over clips* says), Delete, 
 Ctrl+E, Ctrl+D and Ctrl+J act on what plays inside it: clips crossing its edges are split there.
 Ctrl+V puts material copied from several tracks back on its own tracks, from the play start
 marker. Ctrl+R edits a clip's name right on the clip; Enter or a click elsewhere keeps it, Escape
-leaves it.
+leaves it. With several clips selected the name goes to all of them, as one undo step (Settings ›
+Arrangement › Ctrl+R renames every selected clip, on by default); after a click on a track's
+header, in either view, Ctrl+R edits the track's name in its header.
 
 Devices picked in a mixer strip's device list or the detail area's chain (a click, Ctrl to add,
 Shift for a run) take Delete, Ctrl+C, Ctrl+X and Ctrl+V the same way; a paste goes after the
