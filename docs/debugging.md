@@ -1,6 +1,6 @@
 ---
-description: How to find out what the running app does around a bug: the trace log (suhina --trace), adding trace points, reading the log, and reading a screen recording frame by frame
-read_when: debugging, bug hunting, trace, SUHINA_TRACE, --trace, diagnostic log, live debugging, UI lag, slow frame, frame time, stutter, plug-in host log, ARA, Melodyne, playhead jumps, flicker, timing, latency, screen recording, video frames, contact sheet
+description: How to find out what the running app does around a bug: the trace log (suhina --trace), adding trace points, reading the log, reading a screen recording frame by frame, and working a bug through with a tester
+read_when: debugging, bug hunting, trace, SUHINA_TRACE, --trace, diagnostic log, live debugging, UI lag, slow frame, frame time, stutter, plug-in host log, ARA, Melodyne, playhead jumps, flicker, timing, latency, screen recording, video frames, contact sheet, tester, hang, freeze, working a bug through
 type: howto
 status: current
 last_verified: 2026-10-20
@@ -8,6 +8,7 @@ covers:
   - crates/plugins/src/trace.rs
   - crates/ui/src/kit/frame_trace.rs
   - scripts/video_frames.py
+  - .claude/skills/trace-debugging/SKILL.md
 ---
 
 # Debugging the running app
@@ -185,6 +186,49 @@ Tips:
   difference plain.
 - Run the trace log at the same time; the times of the log and the video can be matched by an
   action you can see in both (a click, a play).
+
+## 3. Working a bug through with a tester
+
+How the bugs of the October 2026 test rounds were found when one person used the app and an agent
+read what it did. The tester reports in their own words ("it lags", "it hangs", "something
+flashed"); the trace and a recording say where.
+
+1. **Every run on a trace of its own.** Start the app with `--trace` into a numbered file
+   (`trace-41.log`, then `trace-42.log`) and say which number is running, so a report and its
+   trace stay together. A test build can carry a small start script that picks the next number.
+   Restart only when the tester agrees: a running project may have changes they want.
+2. **Ask what they did and roughly when.** The last `action` lines show what the window ran; a
+   tester's "I closed it with Don't save" finds its place among them.
+3. **Read process by process.** Tell each process id apart by a line only it writes: a plug-in
+   host's start with `host up`, the window by its `frames:` lines (its first line can be another
+   one). The last line of each says where it stopped. Then look for gaps in time
+   within one process.
+4. **Ask for a recording** when the bug is something seen (a flash, a jump, a late redraw), and
+   read it as in part 2: the frames where the picture changes most, as a contact sheet.
+5. **Fix, then have the tester repeat the same steps** on a new build and a new trace, and ask
+   what they saw. The line that showed the bug is gone, or a line added for it says how long the
+   step takes now; for something seen, a new recording shows it. A missing line alone proves
+   nothing: the run may not have reached the failing step.
+
+What told the causes apart:
+
+| The tester said | The trace showed | The cause |
+|---|---|---|
+| The window hangs on quitting without saving | The window's `frames:` lines stop; the hosts unload one by one; one host prints nothing for 16 s, then a burst of `ara` lines and its `Unloaded` | The window waited on each plug-in in turn while an ARA plug-in finished an analysis on its host's main thread |
+| Turning a knob lags | A `slow engine update` (a new graph, 60 to 80 ms) for every step of the drag | The change took a new graph rather than a message to the playing engine |
+| It is sluggish while nothing moves | `frames:` at 75 or more a second at rest | A view asked for a frame on every tiny change (the meters, below hearing) |
+| The plug-in's editor stalls | The host's calls into the plug-in taking seconds, at a steady interval | The host stored the plug-in's whole state on the thread its editor runs on |
+| Something flashed | Nothing; the recording showed the start panel for two frames before the window closed | The dialog was taken down one frame before the window was gone |
+
+Lines that simply stop do not say whether a process is waiting, busy or gone: a trace records
+events, not a process's end, and a crash or an exit stops it too. While the bug is still on screen,
+look at the processes first: in PowerShell
+`Get-Process suhina* | Select-Object Id, ProcessName, CPU, Responding` (`Responding` is false for
+a window Windows sees as hung) or `ps` elsewhere, and how its processor time moves over a few
+seconds (busy, or waiting or idle). A line on the other side (`host gets Unload` with no
+`host unloaded`, or the window's frames ceasing) then points at who may wait for whom; confirm it
+in the code that sends and waits before calling it the cause. Ask the tester not to end the
+process before you have looked.
 
 ## When to take a trace point out
 

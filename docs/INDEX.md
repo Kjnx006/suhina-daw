@@ -86,6 +86,7 @@ after every merge; do not edit by hand. Find a document by what you are about to
 | [SDK node reference](spec/sdk-nodes.md) | spec | current | SDK node reference, node ports, DSP primitives, graph authoring, AI device development | Every executable SDK node, ports, defaults, formulas, state and real-time limits |
 | [Sends and returns](spec/sends-and-returns.md) | spec | draft | send, sends, return track, returns, pre-fader, post-fader, track.setSend, track.setSendMode, return.add, return.remove, return.rename, send knob, effect return, aux | How sends and return tracks behave: what a send taps (before or after the fader), what a return plays, loops, solo and mute, latency, the commands and the send knobs |
 | [Settings guide export](spec/settings-guide-export.md) | spec | current | website settings, settings.json export, settings help, web guide, documentation synchronization, settings-guide CI | Source-owned settings help, its versioned website export and the coverage gate reviewed with native changes |
+| [Website shortcut export](spec/shortcuts-guide-export.md) | spec | current | website shortcuts, shortcuts.json, keyboard guide export, shortcut documentation coverage | Source-owned version-one shortcut data for the Suhina website, its coverage boundary, key tokens and review gate |
 | [Key inputs and plug-in buses](spec/sidechain.md) | spec | planned | sidechain, key input, key source, tap point, pre FX, post FX, post fader, routing, aux input, aux output, multi-out, multiple outputs, bus, audio port, region version, protocol version, VST2 bus, device input | Planned key inputs - a device whose detector reads another channel's signal (sidechain), the tap points it can read from, and the plug-in bus model (aux audio in and out) that carries the same idea across the sandbox boundary |
 | [Stem separation](spec/stem-separation.md) | spec | planned | stem separation, separate stems, vocals drums bass other, separation crate, separation model, model manifest, inference backend, tract, ort, ONNX, overlap-add, chunking, window weighting, band splitter, test backend | How stem separation behaves: an audio clip split offline into stems by a model the user supplies, the chunking, resampling and channels around the model, the test backend, limits, and what lands in the project |
 | [Stems files](spec/stems-format.md) | spec | draft | stems, stem file, .stem.mp4, .stem.m4a, Traktor stems, NI stems, master track, mastering_dsp, MP4 boxes, edit list, AAC priming, multitrack audio file, DJ, remix, folded group | Stems files (.stem.mp4, .stem.m4a): an MP4 with the master and its stems as audio tracks, stem names, colours and mastering settings in moov/udta/stem; what Suhina reads and how it maps the mastering to its compressor and limiter |
@@ -129,7 +130,7 @@ Change this code, and check these documents.
 | `.github/workflows/project-sync.yml` | [The claim bot](claim-bot.md) |
 | `.github/workflows/ready-to-merge.yml` | [Releasing](releasing.md) |
 | `.github/workflows/release.yml` | [Releasing](releasing.md) |
-| `.github/workflows/settings-guide.yml` | [Settings guide export](spec/settings-guide-export.md) |
+| `.github/workflows/settings-guide.yml` | [Settings guide export](spec/settings-guide-export.md), [Website shortcut export](spec/shortcuts-guide-export.md) |
 | `.github/workflows/test-build-links.yml` | [Releasing](releasing.md) |
 | `.github/workflows/test-build.yml` | [Releasing](releasing.md) |
 | `AGENTS.md` | [Reviewing a pull request](code-review.md) |
@@ -421,6 +422,8 @@ Change this code, and check these documents.
 | `devices/reverb/**` | [Reverb](spec/reverb.md) |
 | `devices/sampler/**` | [Sampler](spec/sampler.md) |
 | `docs/decisions/0008-patch-devices.md` | [plugdata and the device SDK: scope comparison](research/parity-plugdata-device-sdk.md) |
+| `docs/guide-data/shortcuts-help.json` | [Website shortcut export](spec/shortcuts-guide-export.md) |
+| `docs/guide-data/shortcuts.json` | [Website shortcut export](spec/shortcuts-guide-export.md) |
 | `docs/spec/sdk-nodes.md` | [plugdata and the device SDK: scope comparison](research/parity-plugdata-device-sdk.md) |
 | `presets/**` | [0014: Presets for devices](decisions/0014-stock-presets.md) |
 | `scripts/ara_bindings.sh` | [0028: ARA hosting](decisions/0028-ara-hosting.md) |
@@ -436,9 +439,11 @@ Change this code, and check these documents.
 | `scripts/project_sync.py` | [The claim bot](claim-bot.md) |
 | `scripts/release_notes.py` | [Releasing](releasing.md) |
 | `scripts/settings_guide.py` | [Settings guide export](spec/settings-guide-export.md) |
+| `scripts/shortcuts_guide.py` | [Website shortcut export](spec/shortcuts-guide-export.md) |
 | `scripts/stems-fixture.py` | [Stems files](spec/stems-format.md) |
 | `scripts/test-signal.py` | [Making the `.als` test corpus](spec/als-corpus.md) |
 | `scripts/test_project_sync.py` | [The claim bot](claim-bot.md) |
 | `scripts/test_settings_guide.py` | [Settings guide export](spec/settings-guide-export.md) |
+| `scripts/test_shortcuts_guide.py` | [Website shortcut export](spec/shortcuts-guide-export.md) |
 | `scripts/video_frames.py` | [Debugging the running app](debugging.md) |
 | `third_party/ara-api` | [0028: ARA hosting](decisions/0028-ara-hosting.md) |
