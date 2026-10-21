@@ -446,5 +446,6 @@ Change this code, and check these documents.
 | `scripts/test_project_sync.py` | [The claim bot](claim-bot.md) |
 | `scripts/test_settings_guide.py` | [Settings guide export](spec/settings-guide-export.md) |
 | `scripts/test_shortcuts_guide.py` | [Website shortcut export](spec/shortcuts-guide-export.md) |
+| `scripts/trace-summary.py` | [Debugging the running app](debugging.md) |
 | `scripts/video_frames.py` | [Debugging the running app](debugging.md) |
 | `third_party/ara-api` | [0028: ARA hosting](decisions/0028-ara-hosting.md) |
