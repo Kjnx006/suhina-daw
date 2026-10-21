@@ -52,7 +52,8 @@
   never required. Comment `@coderabbitai review` to run it again.
 - **Codex:** the maintainer requests a review with `@codex review` once CI has run on the pull
   request's latest push; contributors ask the maintainer for one. The reviewer runs no tests or
-  builds and reads the CI results of the push it reviews. Codex follows [AGENTS.md](AGENTS.md#code-review-rules) and
+  builds and reads the CI results of the push it reviews. Codex follows
+  [AGENTS.md](AGENTS.md#code-review-rules) and
   [`docs/code-review.md`](docs/code-review.md). Actionable inline threads must be answered or
   resolved before the merge queue takes the pull request; optional suggestions stay in the
   summary. Hosted review reporting limits are described in the guide.
