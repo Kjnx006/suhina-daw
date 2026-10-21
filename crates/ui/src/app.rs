@@ -6,6 +6,7 @@
 //! Every change goes through `Session::execute` (AGENTS.md rule 6); the window only reads the
 //! project and the engine's monitor to draw them.
 
+pub mod closing_dialog;
 pub mod loading_dialog;
 pub mod missing_files;
 pub mod project_dialog;
@@ -60,6 +61,12 @@ const DEFAULT_QUANTIZATION: &str = "1 bar";
 const TABS: f32 = 22.0;
 /// How many recent projects File › Open recent lists.
 const RECENT_IN_MENU: usize = 10;
+/// The projects a closing window is letting go of: their names and threads.
+type LettingGo = Vec<(String, std::thread::JoinHandle<()>)>;
+
+/// How long a closing window waits for its projects' plug-ins to be let go of before it closes
+/// anyway ([`closing_dialog`]).
+const QUIT_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
 /// The detail area's height in a row, by default, and the splitter between it and the view.
 const DETAIL_HEIGHT: f32 = 200.0;
 /// How long the browser takes to slide in or out, with animations on (#708).
@@ -283,6 +290,11 @@ pub struct App {
     quit_confirmed: bool,
     /// Close the window on the next frame.
     quit_now: bool,
+    /// Projects whose state checks are still on control workers before the save prompt.
+    quit_checks: Option<Vec<ProjectId>>,
+    /// The window is closing: the projects being let go of and since when; it closes once they
+    /// are, or after [`QUIT_WAIT`].
+    quitting: Option<(std::time::Instant, LettingGo)>,
     /// The active project's missing audio files, their bar and panel.
     missing: crate::app::missing_files::MissingFiles,
     remember_choice: bool,
@@ -489,6 +501,8 @@ impl App {
             save_then: None,
             quit_confirmed: false,
             quit_now: false,
+            quit_checks: None,
+            quitting: None,
             missing: crate::app::missing_files::MissingFiles::default(),
             remember_choice: false,
             player_request: None,
@@ -843,25 +857,69 @@ impl App {
     /// Before the window closes: when projects have unsaved changes, keeps it open and asks about
     /// each, then closes it once every one was answered.
     fn guard_quit(&mut self, ctx: &egui::Context) {
+        if let Some((started, going)) = &self.quitting {
+            // The dialog stays until the window is gone: the frames before that would show the
+            // window without its projects (the start panel).
+            if going.iter().all(|(_, g)| g.is_finished()) || started.elapsed() >= QUIT_WAIT {
+                if !self.quit_confirmed {
+                    let gone = going.iter().all(|(_, g)| g.is_finished());
+                    suhina_plugins::trace!(
+                        "quit: projects {} {:?}",
+                        if gone { "let go in" } else { "not let go, closing anyway after" },
+                        started.elapsed()
+                    );
+                }
+                self.quit_confirmed = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            } else {
+                ctx.request_repaint_after(std::time::Duration::from_millis(50));
+            }
+            return;
+        }
         if self.quit_now {
             self.quit_now = false;
-            self.quit_confirmed = true;
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            self.start_quitting(ctx);
             return;
         }
-        if !ctx.input(|i| i.viewport().close_requested()) || self.quit_confirmed {
+        if self.quit_confirmed {
             return;
         }
+        let requested = ctx.input(|i| i.viewport().close_requested());
+        if !requested && self.quit_checks.is_none() {
+            return;
+        }
+        ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
         if !self.unsaved_prompt_open() {
-            for id in self.projects.ids() {
-                self.check_plugin_edits(id);
+            let mut pending = self.quit_checks.take().unwrap_or_else(|| self.projects.ids());
+            pending.retain(|id| self.projects.get_mut(*id).is_some_and(|s| !s.poll_plugin_edits()));
+            if !pending.is_empty() {
+                self.quit_checks = Some(pending);
+                ctx.request_repaint_after(std::time::Duration::from_millis(10));
+                return;
             }
         }
-        let Some(first) = self.unsaved_projects().first().copied() else { return };
-        ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+        let Some(first) = self.unsaved_projects().first().copied() else {
+            self.start_quitting(ctx);
+            return;
+        };
         if !self.unsaved_prompt_open() {
             self.unsaved_prompt = Some(Leaving { project: first, then: AfterLeaving::Quit(Vec::new()) });
         }
+    }
+
+    /// Every project was answered for: their backups are written, and they are let go of while
+    /// the window says so ([`closing_dialog`]); it closes once they are, or after [`QUIT_WAIT`].
+    fn start_quitting(&mut self, ctx: &egui::Context) {
+        let _finished_in_time = self.finish_backups();
+        // Embedded plug-in editors are windows of their own and would cover the dialog.
+        self.place_editors(&[]);
+        self.quitting = Some((std::time::Instant::now(), self.projects.let_go_all()));
+        ctx.request_repaint();
+    }
+
+    /// Whether the window is closing ([`App::start_quitting`]).
+    pub fn quitting(&self) -> bool {
+        self.quitting.is_some()
     }
 
     /// Saves the project being left, then leaves it; asks for a name first when it has no file
@@ -986,6 +1044,12 @@ impl App {
     /// be written. Returns whether they were.
     pub fn finish_backups(&mut self) -> bool {
         self.projects.finish_backups(std::time::Duration::from_secs(5))
+    }
+
+    /// Quitting, after [`App::finish_backups`]: lets go of the projects still open (the window
+    /// let go of them already when it was closed from itself), and waits up to [`QUIT_WAIT`].
+    pub fn let_go_of_projects(&mut self) -> bool {
+        self.projects.close_all(QUIT_WAIT)
     }
 
     /// Takes in finished backups and writes the timed ones that are due; a failed one is shown in
@@ -2173,6 +2237,16 @@ impl App {
     /// Draws the window into `ui` and runs what the user asked for.
     pub fn ui(&mut self, ui: &mut Ui) {
         self.frame_trace.start();
+        self.frame_trace.causes(ui.ctx());
+        // Closing: the dialog alone, so nothing of the window without its projects shows behind.
+        if let Some((_, going)) = &self.quitting {
+            let waiting: Vec<String> =
+                going.iter().filter(|(_, g)| !g.is_finished()).map(|(name, _)| name.clone()).collect();
+            closing_dialog::show(ui, ui.max_rect(), &waiting);
+            self.guard_quit(ui.ctx());
+            self.frame_trace.finish();
+            return;
+        }
         if self.projects.active().is_some() {
             // The start panel reads its lists again when it next appears.
             self.start_lists = false;
@@ -2422,7 +2496,7 @@ impl App {
             // blocks that can be longer than a frame. An engine that stopped rendering leaves
             // the window at rest.
             let now = ui.input(|i| i.time);
-            if meters != self.view.meters {
+            if !meters.shows_same(&self.view.meters) {
                 self.meters_moved_at = now;
                 ui.ctx().request_repaint();
             } else if meters.moving() && now - self.meters_moved_at < METERS_SETTLE_SECONDS {
@@ -2586,6 +2660,16 @@ impl App {
                                 .filter(|c| c.audio)
                                 .filter_map(|c| Some((c.id, session.clip_notes(c.id)?.clone())))
                                 .collect();
+                            timeline.ara_activity = timeline
+                                .lanes
+                                .iter()
+                                .filter(|l| l.clips.iter().any(|c| c.audio))
+                                .filter_map(|l| Some((l.track, session.ara_activity(l.track)?)))
+                                .collect();
+                            if !timeline.ara_activity.is_empty() {
+                                // Its progress moves without input.
+                                ui.ctx().request_repaint_after(std::time::Duration::from_millis(250));
+                            }
                             timeline.input_channels = session
                                 .player()
                                 .and_then(suhina_session::Player::output_info)
@@ -2775,6 +2859,8 @@ impl App {
         self.frame_trace.mark("commands");
         self.frame_trace.note(|| format!("{ran} commands"));
         self.guard_quit(ui.ctx());
+        // Reading the plug-ins' states before asking whether to save, when the window is closed.
+        self.frame_trace.mark("quit check");
         // The views drew before the actions and drops of this frame ran: when the project changed,
         // ask for a frame at once, so what the user just did (a moved clip, a file that landed)
         // is on screen without waiting for another click or pointer move.
@@ -6607,6 +6693,21 @@ fn bar_menu<R>(ui: &mut Ui, title: &str, content: impl FnOnce(&mut Ui) -> R) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_pending_quit_check_continues_after_the_close_event_is_gone() {
+        let mut app = App::new();
+        app.set_session(Session::new(crate::demo::demo_project()), &[]);
+        let id = app.projects.active().unwrap();
+        app.projects.get_mut(id).unwrap().execute("track.delete", &json!({ "track": 1 })).unwrap();
+        app.quit_checks = Some(vec![id]);
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| app.guard_quit(ui.ctx()));
+        output.textures_delta.clear();
+        assert!(app.quit_checks.is_none());
+        assert!(matches!(app.unsaved_prompt, Some(Leaving { then: AfterLeaving::Quit(_), .. })));
+        assert!(app.quitting.is_none(), "the save prompt must precede releasing the project");
+    }
 
     /// One frame with the main window's content at `main` on the desktop; returns where a drag
     /// is in the main window.

@@ -86,6 +86,16 @@ fn closing_the_active_project_activates_a_neighbour() {
 }
 
 #[test]
+fn quitting_lets_every_project_go_and_leaves_none_open() {
+    let mut projects = Projects::new();
+    untitled(&mut projects);
+    untitled(&mut projects);
+    assert!(projects.close_all(std::time::Duration::from_secs(5)));
+    assert!(projects.is_empty());
+    assert_eq!(projects.active(), None);
+}
+
+#[test]
 fn ids_are_not_reused_after_a_close() {
     let mut projects = Projects::new();
     let a = untitled(&mut projects);

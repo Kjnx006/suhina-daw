@@ -221,10 +221,9 @@ pub struct Hosted {
     /// plug-ins before it waits for this one's answer (#151), so the round trip is timed from
     /// here, not from the wait.
     sent_at: Option<std::time::Instant>,
-    /// Whether the plug-in is told where the song is with every block (an ARA renderer,
-    /// ADR 0028), and what it is told for the next one.
-    follows_song: bool,
-    transport: (bool, u64, f64),
+    /// Where the song is, as the plug-in is told with the next block: its tempo-synced parts
+    /// and an ARA renderer (ADR 0028) follow it.
+    song: suhina_engine::SongPosition,
 }
 
 impl Hosted {
@@ -240,22 +239,40 @@ impl Hosted {
             carried: Vec::with_capacity(MAX_EVENTS),
             counts: Arc::new(BlockCounts::default()),
             sent_at: None,
-            follows_song: false,
-            transport: (false, 0, 120.0),
+            song: suhina_engine::SongPosition::default(),
         }
-    }
-
-    /// Tells the plug-in where the song is with every block it is given
-    /// ([`PluginProcessor::transport`]), as an ARA renderer needs (ADR 0028).
-    pub fn following_song(mut self) -> Self {
-        self.follows_song = true;
-        self
     }
 
     /// The counts this keeps while the engine runs it.
     pub fn counts(&self) -> Arc<BlockCounts> {
         Arc::clone(&self.counts)
     }
+}
+
+/// The events of the song's place sent with every block (transport, tempo, beat, bar, the loop
+/// in beats and in seconds): room for them is kept in a block's parameter events.
+const SONG_EVENTS: usize = 6;
+
+/// Moves what earlier blocks could not send from `carried` to the start of this block, at its
+/// first frame: parameter values into `params` while `reserve` places are left for the song's
+/// place, the rest into `notes` while it has room. What does not fit stays carried for the next
+/// block. Never allocates.
+fn take_carried(carried: &mut Vec<Event>, params: &mut Vec<Event>, notes: &mut Vec<Event>, reserve: usize) {
+    let params_room = params.capacity().saturating_sub(reserve);
+    let notes_room = notes.capacity();
+    carried.retain(|event| {
+        let event = Event { frame: 0, ..*event };
+        let (to, room) = match event.kind {
+            EventKind::Param { .. } => (&mut *params, params_room),
+            _ => (&mut *notes, notes_room),
+        };
+        if to.len() < room {
+            to.push(event);
+            false
+        } else {
+            true
+        }
+    });
 }
 
 /// Keeps the releases among `events` in `carried`, and the latest value of each parameter,
@@ -344,22 +361,22 @@ impl Hosted {
         self.notes.clear();
         self.params.clear();
         // What earlier blocks could not send goes first.
-        for event in self.carried.drain(..) {
-            let event = Event { frame: 0, ..event };
-            match event.kind {
-                EventKind::Param { .. } => self.params.push(event),
-                _ => self.notes.push(event),
-            }
-        }
+        take_carried(&mut self.carried, &mut self.params, &mut self.notes, SONG_EVENTS);
         for &(frame, event) in events {
             push_event(&mut self.notes, u32::try_from(frame).unwrap_or(u32::MAX), event);
         }
-        if self.follows_song {
-            let (playing, position, tempo) = self.transport;
-            let tempo = if tempo.is_finite() { tempo.clamp(1.0, 999.0) as f32 } else { 120.0 };
-            self.params.push(Event::transport(playing, position));
-            self.params.push(Event::tempo(tempo));
-        }
+        // Where the song is, with every block: tempo-synced effects and instruments lock to it,
+        // an ARA renderer plays by it.
+        let song = self.song;
+        let tempo = if song.tempo.is_finite() { song.tempo.clamp(1.0, 999.0) as f32 } else { 120.0 };
+        self.params.push(Event::transport(song.playing, song.position));
+        self.params.push(Event::tempo(tempo));
+        self.params.push(Event::beat(song.beat));
+        self.params.push(Event::bar(song.bar, song.bar_start, song.numerator, song.denominator));
+        let (start, end) = song.cycle.unwrap_or((0.0, 0.0));
+        self.params.push(Event::cycle(song.cycle.is_some(), start as f32, end as f32));
+        let (start, end) = song.cycle_seconds.unwrap_or((0.0, 0.0));
+        self.params.push(Event::cycle_seconds(start as f32, end as f32));
         let room = self.params.capacity().saturating_sub(self.params.len());
         let automated = self.automated.len().min(room);
         self.params.extend(self.automated.drain(..automated));
@@ -493,8 +510,8 @@ impl PluginProcessor for Hosted {
         }
     }
 
-    fn transport(&mut self, playing: bool, position: u64, tempo: f64) {
-        self.transport = (playing, position, tempo);
+    fn transport(&mut self, song: &suhina_engine::SongPosition) {
+        self.song = *song;
     }
 
     fn automate(&mut self, params: &[ParamEvent]) {
@@ -515,6 +532,13 @@ impl PluginProcessor for Hosted {
 
 /// The installed plug-in for `device` and whether it is an instrument; `None` when nothing
 /// installed stands for it (or it is not a plug-in).
+/// A key for a rack's shared ARA documents, unique in this process
+/// ([`suhina_plugins::protocol::AraDocument::document`]).
+fn next_ara_document() -> String {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    format!("{}-{}", std::process::id(), NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+}
+
 fn find<'a>(catalog: &'a Catalog, device: &Device) -> Option<(suhina_plugins::matching::Match<'a>, bool)> {
     let (found, _) = crate::plugins::device_plugin(catalog, device)?;
     let instrument = is_instrument(found.plugin);
@@ -663,10 +687,16 @@ struct Instance {
     info: PluginSlotInfo,
     /// `None` while it starts, or while a thread of its own talks to it.
     control: Option<Plugin>,
+    /// Last completed state read, retained while the control half is on a worker.
+    last_state: Option<SavedState>,
     generation: u64,
     state_refused: Option<String>,
     /// Whether its editor is open, as last known.
     editor_open: bool,
+    /// The track whose clips it edits, for an ARA plug-in; and how far its analysis of them has
+    /// come, 0 to 1, while it runs ([`Rack::ara_activity`]).
+    track: Option<suhina_model::TrackId>,
+    ara_progress: Option<f32>,
     /// How the editor was opened: embedded in the session's window, or in a window of its
     /// own. Set when it is asked to open, so a placement that comes while it opens is kept.
     editor_embedded: bool,
@@ -723,9 +753,12 @@ impl Instance {
             info: PluginSlotInfo::default(),
             ranges: None,
             control: None,
+            last_state: None,
             generation,
             state_refused: None,
             editor_open: false,
+            track: None,
+            ara_progress: None,
             editor_embedded: false,
             editor_size: None,
             placement_wanted: None,
@@ -803,6 +836,8 @@ pub struct Rack {
     receiver: Receiver<Started>,
     next_generation: u64,
     checked: Instant,
+    /// Deadline and read rounds left for a nonblocking quit check.
+    edit_check: Option<(Instant, u8)>,
     saved: Instant,
     /// The window editors open over (owned by it), when the session runs in one.
     owner: Option<u64>,
@@ -823,6 +858,9 @@ pub struct Rack {
     /// not say so (a scan that missed it): they are loaded again with their track's clips, and
     /// from then on as plug-ins that edit clips.
     ara_found: std::collections::HashSet<u64>,
+    /// The key of the ARA documents this rack's plug-ins share in their host processes: one a
+    /// plug-in per project, each track a region sequence of it ([`AraDocument::document`]).
+    ara_document: String,
     /// The plug-ins (by spec) found that way: the next device of one starts with its clips at
     /// once, rather than loading twice. Taken by [`Rack::take_ara_learned`] for the catalog.
     ara_plugins: std::collections::HashSet<String>,
@@ -856,6 +894,7 @@ impl Default for Rack {
             receiver,
             next_generation: 0,
             checked: Instant::now(),
+            edit_check: None,
             saved: Instant::now(),
             owner: None,
             embed: false,
@@ -866,6 +905,7 @@ impl Default for Rack {
             ara_notes: HashMap::new(),
             ara_notes_hidden: std::collections::HashSet::new(),
             ara_found: std::collections::HashSet::new(),
+            ara_document: next_ara_document(),
             ara_plugins: std::collections::HashSet::new(),
             ara_learned: Vec::new(),
             carries: Vec::new(),
@@ -910,7 +950,8 @@ impl Rack {
     pub(crate) fn known_states(&self) -> HashMap<u64, SavedState> {
         let mut states = self.kept.clone();
         for (key, instance) in &self.instances {
-            if let Some(state) = instance.control.as_ref().and_then(Plugin::last_state) {
+            if let Some(state) = instance.control.as_ref().and_then(Plugin::last_state).or(instance.last_state.as_ref())
+            {
                 states.insert(*key, state.clone());
             }
         }
@@ -921,7 +962,11 @@ impl Rack {
     /// answers: at most [`SAVE_WAIT`] in all, with the time it takes a plug-in lent out for
     /// something else (a read just after it started) to come back first.
     fn read_states(&mut self) {
-        let deadline = Instant::now() + SAVE_WAIT;
+        self.read_states_until(Instant::now() + SAVE_WAIT);
+    }
+
+    /// Concurrent reads share a deadline, including control halves already lent out.
+    fn read_states_until(&mut self, deadline: Instant) {
         let mut notices = Vec::new();
         let lent = |rack: &Self, keys: Option<&[u64]>| {
             rack.instances.iter().any(|(key, i)| {
@@ -941,12 +986,40 @@ impl Rack {
         self.notices.extend(notices);
     }
 
-    /// Reads the running plug-ins' states twice in a row, so a change made in an editor since
-    /// the last read counts now, not after the next two reads ([`SAVE_EVERY`] apart): before
-    /// the window asks whether to save. Waits at most [`SAVE_WAIT`] for each read.
+    /// Reads every running plug-in twice before asking whether to save: processing and MIDI
+    /// can change state without an editor or a host dirty notification. Both rounds share one
+    /// deadline, so a busy host cannot add a second wait to leaving the project. Reads run on
+    /// control workers concurrently; stopped plug-ins keep their last state.
     pub(crate) fn check_edits(&mut self) {
-        self.read_states();
-        self.read_states();
+        while !self.poll_edits() {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+
+    /// Advances the quit check without waiting for any host. The caller pumps frames until
+    /// true; every project can make progress together under its own one-second deadline.
+    pub(crate) fn poll_edits(&mut self) -> bool {
+        let mut notices = Vec::new();
+        self.take_returned(&mut notices);
+        self.notices.extend(notices);
+        let (deadline, rounds) = *self.edit_check.get_or_insert((Instant::now() + SAVE_WAIT, 2));
+        if Instant::now() >= deadline {
+            self.edit_check = None;
+            return true;
+        }
+        if self.instances.values().any(|i| i.status == PluginStatus::Running && i.control.is_none()) {
+            return false;
+        }
+        if rounds == 0 || self.instances.is_empty() {
+            self.edit_check = None;
+            return true;
+        }
+        let keys: Vec<u64> = self.instances.iter().filter(|(_, i)| i.control.is_some()).map(|(k, _)| *k).collect();
+        for key in keys {
+            let _busy = self.lend(key, read_state);
+        }
+        self.edit_check = Some((deadline, rounds - 1));
+        false
     }
 
     /// Whether a plug-in's state changed since the project was last saved or opened, without
@@ -1004,9 +1077,6 @@ impl Rack {
     fn take_returned(&mut self, notices: &mut Vec<String>) {
         while let Ok(returned) = self.returned.try_recv() {
             let Returned { key, generation, control, done } = returned;
-            if let Done::Saved(Some(state)) = &done {
-                self.edits.read(key, state);
-            }
             if let Done::Stopped(state) = done {
                 // A plug-in loaded again with new clips starts with this state.
                 self.rebinding.remove(&key);
@@ -1059,7 +1129,11 @@ impl Rack {
                             ));
                             instance.ara_failed = true;
                         }
-                        Done::Saved(_) | Done::Stopped(_) => {}
+                        Done::Saved(Some(state)) => {
+                            self.edits.read(key, &state);
+                            instance.last_state = Some(state);
+                        }
+                        Done::Saved(None) | Done::Stopped(_) => {}
                     }
                     instance.control = Some(control);
                 }
@@ -1225,7 +1299,10 @@ impl Rack {
             let edits_clips =
                 matched.plugin.ara || self.ara_found.contains(&found.key) || self.ara_plugins.contains(&spec);
             let layout = found.track.filter(|_| edits_clips).map(|t| crate::ara::Layout::of(project, audio, t));
-            let ara = layout.as_ref().and_then(|l| l.document(audio));
+            let ara = layout.as_ref().and_then(|l| l.document(audio)).map(|(mut document, sources)| {
+                document.document.clone_from(&self.ara_document);
+                (document, sources)
+            });
             let (ara, ara_sources) = ara.map_or((None, Vec::new()), |(document, sources)| (Some(document), sources));
             let launch = Launch {
                 host: env.host.clone(),
@@ -1242,6 +1319,7 @@ impl Rack {
             let plugin = Some((matched.plugin.name.clone(), matched.plugin.vendor.clone(), matched.how.name()));
             let mut instance = Instance::new(PluginStatus::Loading, plugin, generation);
             instance.spec = spec;
+            instance.track = found.track.filter(|_| edits_clips);
             instance.info = PluginSlotInfo { instrument, latency: 0 };
             instance.ara_layout = layout;
             instance.ara_sources = ara_sources;
@@ -1435,6 +1513,7 @@ impl Rack {
             if !instance.ara_sources.is_empty()
                 && let Some(mut document) = now.document_with(audio, &mut instance.ara_sources)
             {
+                document.document.clone_from(&self.ara_document);
                 // A clip that got its own content starts with the edits of the one it copies.
                 for (region, origin) in document.regions.iter_mut().zip(now.clone_origins(layout)) {
                     region.clone_of = origin;
@@ -1483,8 +1562,9 @@ impl Rack {
             if instance.generation != started.generation {
                 continue;
             }
-            if let Some(state) = &started.first_state {
-                self.edits.read(started.key, state);
+            if let Some(state) = started.first_state {
+                self.edits.read(started.key, &state);
+                instance.last_state = Some(state);
             }
             let name = instance.plugin.as_ref().map_or_else(String::new, |p| p.0.clone());
             match started.result {
@@ -1500,7 +1580,6 @@ impl Rack {
                     instance.state_refused = refused;
                     // A plug-in with an ARA document plays its regions at the song's position.
                     let hosted = Hosted::new(audio);
-                    let hosted = if instance.ara_sources.is_empty() { hosted } else { hosted.following_song() };
                     instance.counts = Some(hosted.counts());
                     match player.send_plugin(started.key, Box::new(hosted)) {
                         Ok(()) => instance.status = PluginStatus::Running,
@@ -1592,6 +1671,9 @@ impl Rack {
                 shown.push(layout);
             }
             let Some(control) = instance.control.as_mut() else { continue };
+            if let Some(progress) = control.take_ara_analysis() {
+                instance.ara_progress = progress;
+            }
             for (region, notes) in control.take_ara_notes() {
                 let Some(clip) = region.strip_prefix("clip-").and_then(|n| n.parse().ok()).map(suhina_model::ClipId)
                 else {
@@ -1613,6 +1695,19 @@ impl Rack {
         };
         self.ara_notes.retain(|clip, _| has(&live, clip));
         self.ara_notes_hidden = self.ara_notes.keys().filter(|clip| !has(&shown, clip)).copied().collect();
+    }
+
+    /// What an ARA plug-in on `track` is doing with its audio clips that they should show: its
+    /// name and how far its analysis has come (`None` while it loads).
+    pub(crate) fn ara_activity(&self, track: suhina_model::TrackId) -> Option<(String, Option<f32>)> {
+        self.instances.values().filter(|i| i.track == Some(track)).find_map(|i| {
+            let name = i.plugin.as_ref().map_or_else(|| "The plug-in".to_string(), |p| p.0.clone());
+            match &i.status {
+                PluginStatus::Loading => Some((name, None)),
+                PluginStatus::Running => i.ara_progress.map(|p| (name, Some(p))),
+                _ => None,
+            }
+        })
     }
 
     /// The notes an ARA plug-in found in `clip`, if any (#720).
@@ -1642,7 +1737,11 @@ impl Rack {
             let name = instance.plugin.as_ref().map_or("A plug-in", |p| p.0.as_str());
             match control.health() {
                 Health::Running => {
-                    if save {
+                    // Processing and MIDI can change state even without an editor, and not
+                    // every format/plug-in sends dirty notifications. Refresh all states for
+                    // backups. Defer an open ARA editor's expensive archive until it closes.
+                    let editing_ara = instance.editor_open && instance.ara_layout.is_some();
+                    if save && !editing_ara {
                         to_save.push(*key);
                     }
                 }
@@ -2024,6 +2123,9 @@ impl OfflinePlugins {
 pub fn start_offline(project: &Project, audio: &AudioPool, env: &PluginEnv, sample_rate: u32) -> OfflinePlugins {
     let mut offline = OfflinePlugins::none();
     let mut missing = Vec::new();
+    // The render's ARA plug-ins share documents as the playing ones do, so it sounds as heard;
+    // a key of its own keeps them apart from the playing ones in the same host process.
+    let ara_document = next_ara_document();
     for found in plugin_devices(project) {
         let Some(device) = project
             .channels
@@ -2041,9 +2143,9 @@ pub fn start_offline(project: &Project, audio: &AudioPool, env: &PluginEnv, samp
             .track
             .filter(|_| matched.plugin.ara)
             .and_then(|t| crate::ara::Layout::of(project, audio, t).document(audio));
-        let follows_song = ara.is_some();
-        let ara = ara.map(|(document, sources)| {
+        let ara = ara.map(|(mut document, sources)| {
             offline._ara_sources.extend(sources);
+            document.document.clone_from(&ara_document);
             document
         });
         let launch = Launch {
@@ -2062,7 +2164,7 @@ pub fn start_offline(project: &Project, audio: &AudioPool, env: &PluginEnv, samp
                     offline.notices.push(format!("{} did not take its saved settings ({why})", device.name));
                 }
                 let info = PluginSlotInfo { instrument, latency: control.latency() };
-                let hosted = if follows_song { Hosted::new(audio).following_song() } else { Hosted::new(audio) };
+                let hosted = Hosted::new(audio);
                 offline.plugins.insert(found.key, info, Box::new(hosted));
                 offline.controls.push(control);
             }
@@ -2086,6 +2188,42 @@ pub fn device_kind(plugin: &PluginInfo) -> DeviceKind {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_backup_keeps_the_last_completed_state_while_a_worker_has_the_control_half() {
+        let mut rack = Rack::default();
+        let mut instance = Instance::new(PluginStatus::Running, None, 0);
+        let state = SavedState::from(vec![3, 2, 1]);
+        instance.last_state = Some(state.clone());
+        rack.instances.insert(1, instance);
+        assert_eq!(rack.known_states().get(&1), Some(&state));
+    }
+
+    #[test]
+    fn polling_a_busy_host_returns_without_waiting_and_finishes_at_the_deadline() {
+        let mut rack = Rack::default();
+        rack.instances.insert(1, Instance::new(PluginStatus::Running, None, 0));
+        let started = Instant::now();
+        assert!(!rack.poll_edits());
+        assert!(started.elapsed() < Duration::from_millis(100));
+        rack.edit_check = Some((Instant::now(), 2));
+        assert!(rack.poll_edits());
+        assert!(rack.edit_check.is_none());
+        assert!(!rack.poll_edits(), "the next quit starts a fresh check");
+    }
+
+    #[test]
+    fn checking_a_busy_host_has_one_shared_deadline() {
+        let mut rack = Rack::default();
+        // The control half is on a worker that never returns. This must not cost a wait
+        // per read, per plug-in, or per host when the window is leaving the project.
+        for key in 1..=8 {
+            rack.instances.insert(key, Instance::new(PluginStatus::Running, None, 0));
+        }
+        let started = Instant::now();
+        rack.check_edits();
+        assert!(started.elapsed() < SAVE_WAIT + Duration::from_millis(800));
+    }
 
     #[test]
     fn progress_counts_each_state() {
@@ -2129,6 +2267,24 @@ mod tests {
         // Never past the room made for them.
         carry_releases(&events, &mut carried);
         assert_eq!(carried.len(), 2);
+    }
+
+    #[test]
+    fn carried_parameter_values_leave_room_for_the_songs_place_and_wait_for_the_next_block() {
+        // A full carry of parameter values: the block takes all but the song's places, and the
+        // rest waits; the vectors never grow past what they were made with.
+        let mut carried: Vec<Event> = (0..8).map(|id| Event::param(5, id, 0.5)).collect();
+        carried.push(Event::note_off(3, 0, 60, 0.0));
+        let (mut params, mut notes) = (Vec::with_capacity(8), Vec::with_capacity(8));
+        take_carried(&mut carried, &mut params, &mut notes, SONG_EVENTS);
+        assert_eq!(params.len(), 8 - SONG_EVENTS);
+        assert!(params.iter().all(|e| e.frame == 0));
+        assert_eq!(notes, [Event::note_off(0, 0, 60, 0.0)]);
+        assert_eq!(carried.len(), SONG_EVENTS, "the rest is kept for the next block");
+        for _ in 0..SONG_EVENTS {
+            params.push(Event::tempo(120.0));
+        }
+        assert_eq!(params.capacity(), 8);
     }
 
     #[test]

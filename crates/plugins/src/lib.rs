@@ -403,6 +403,8 @@ struct Group {
     /// The notes ARA plug-ins found in their regions (the latest per instance and region), not
     /// yet taken in (#720).
     ara_notes: Vec<(u32, String, Vec<protocol::AraNote>)>,
+    /// How far each ARA instance's analysis has come, as last said, not yet taken in.
+    ara_analysis: Vec<(u32, Option<f32>)>,
     /// The process's resident memory, in bytes, the host last reported; gone once the
     /// process ends, so a dead host is never counted.
     ram: Option<u64>,
@@ -418,6 +420,7 @@ impl Group {
             resized_editors: Vec::new(),
             latencies: Vec::new(),
             ara_notes: Vec::new(),
+            ara_analysis: Vec::new(),
             ram: None,
             next_ping: 0,
         }
@@ -486,6 +489,12 @@ impl Group {
                     self.ara_notes.push((*instance, region.clone(), notes.clone()));
                 }
             }
+            Message::AraAnalysis { instance, progress } => {
+                self.ara_analysis.retain(|(i, _)| i != instance);
+                if self.ara_analysis.len() < MAX_CLOSED_EDITORS {
+                    self.ara_analysis.push((*instance, *progress));
+                }
+            }
             Message::TransportKey | Message::AraPlayback(_) => take_in_transport(message),
             Message::Memory { bytes } => {
                 // Only a process that is still there reports; the host sends it once a second,
@@ -520,6 +529,12 @@ impl Group {
     fn take_resized(&mut self, instance: u32) -> Option<(u32, u32)> {
         let at = self.resized_editors.iter().position(|(i, _)| *i == instance)?;
         Some(self.resized_editors.swap_remove(at).1)
+    }
+
+    /// How far `instance`'s analysis has come, when the host said so since the last call.
+    fn take_ara_analysis(&mut self, instance: u32) -> Option<Option<f32>> {
+        let at = self.ara_analysis.iter().position(|(i, _)| *i == instance)?;
+        Some(self.ara_analysis.swap_remove(at).1)
     }
 
     /// The notes the host sent for `instance`'s regions since the last call (and forgets them).
@@ -741,6 +756,15 @@ impl Plugin {
     /// The notes the ARA plug-in found in its regions since the last call, by region id
     /// (`clip-<id>`): each the region's notes as they are now, empty when it has none (#720).
     /// Never waits: while the process is busy with another request, nothing yet.
+    pub fn take_ara_analysis(&mut self) -> Option<Option<f32>> {
+        let mut group = try_lock(&self.group)?;
+        if group.generation != self.generation {
+            return None;
+        }
+        group.drain();
+        group.take_ara_analysis(self.instance)
+    }
+
     pub fn take_ara_notes(&mut self) -> Vec<(String, Vec<protocol::AraNote>)> {
         let Some(mut group) = try_lock(&self.group) else { return Vec::new() };
         if group.generation != self.generation {
@@ -1305,6 +1329,7 @@ pub fn read_lines(stream: Stream) -> Receiver<Message> {
                             Message::TransportKey
                                 | Message::AraPlayback(_)
                                 | Message::AraNotes { .. }
+                                | Message::AraAnalysis { .. }
                                 | Message::EditorClosed { .. }
                         );
                         if matches!(message, Message::TransportKey | Message::AraPlayback(_)) {

@@ -1,13 +1,15 @@
 ---
-description: How to find out what the running app does around a bug: the trace log (suhina --trace), adding trace points, reading the log, and reading a screen recording frame by frame
-read_when: debugging, bug hunting, trace, SUHINA_TRACE, --trace, diagnostic log, live debugging, UI lag, slow frame, frame time, stutter, plug-in host log, ARA, Melodyne, playhead jumps, flicker, timing, latency, screen recording, video frames, contact sheet
+description: How to find out what the running app does around a bug: the trace log (suhina --trace), adding trace points, reading the log, reading a screen recording frame by frame, and working a bug through with a tester
+read_when: debugging, bug hunting, trace, SUHINA_TRACE, --trace, diagnostic log, live debugging, UI lag, slow frame, frame time, stutter, plug-in host log, ARA, Melodyne, playhead jumps, flicker, timing, latency, screen recording, video frames, contact sheet, tester, hang, freeze, working a bug through
 type: howto
 status: current
-last_verified: 2026-10-20
+last_verified: 2026-10-21
 covers:
   - crates/plugins/src/trace.rs
   - crates/ui/src/kit/frame_trace.rs
   - scripts/video_frames.py
+  - scripts/trace-summary.py
+  - .claude/skills/trace-debugging/SKILL.md
 ---
 
 # Debugging the running app
@@ -68,12 +70,15 @@ host process have their own id, so `grep "\[12345\]"` shows one process. To foll
 | `host unloads N` / `host unloaded N in …` | host | an instance let go of, and how long it took |
 | `vst3 unload: …` / `vst3 drop: …` / `vst3 audio: …` | host (`vst3.rs`) | each step of a VST3 plug-in's teardown, to find the call that hangs |
 | `ara region …` | host (`ara.rs`) | an ARA playback region described to the plug-in: start, duration, offset |
+| `ara document "<key>" shared with another track` | host (`ara.rs`) | a track's plug-in joining the ARA document another track's made (one a plug-in and project) |
+| `ara audio N: playing/stopped, song at S s, peak P` | host (`vst3.rs`) | once a second for an ARA-bound instance N: the song position it was told and its loudest sample, so a silent ARA track says whether the plug-in played nothing |
 | `ara analysis progress …`, `ara content changed …`, `ara notes …` | host | the plug-in's analysis and content notifications, and the notes read |
 | `ara plug-in asks transport …` | host | the plug-in's play, stop and position requests |
 | `ara musical context changed` | host | the tempo map or time signatures sent to the plug-in again |
 | `slow frame N ms: part ms, …; what was shown` | app (`kit/frame_trace.rs`) | a frame whose drawing took 25 ms or more, part by part (› UI time) |
 | `frames: N in 1.0 s …` | app | once a second while the window draws: frames, drawing time on average and the longest, the longest wait between frames |
-| `audio: device underruns N (+n), stretched frames late N (+n), engine load …` | app | once a second, when sound went missing since the last look or the engine's load is 70 % or more (› Audio dropouts) |
+| `audio: device underruns N (+n), stretched frames late N (+n), … plug-in blocks late N (+n, most <plug-in on track>: n), engine load …` | app | once a second, when sound went missing since the last look or the engine's load is 70 % or more (› Audio dropouts) |
+| `slow engine update: N ms (graph …)` | app (`session/src/lib.rs`) | a project change whose new engine graph took 25 ms or more to make, part by part |
 | `slow <work>: N ms` | app | library listings, browser rows, the sample map and its cache, a drop, adding to a track: anything that took 5 ms or more |
 
 ### UI time
@@ -91,7 +96,16 @@ The parts, in the order the frame draws them: `input` (keys, polls, the sample m
 `detail` (the detail area: clip column, devices, piano roll), `view setup`, `timeline` (the
 Arrangement's lanes and clips, rebuilt only after the project changed: `timeline rebuilt`),
 `arrangement view` or `session view` (drawing it), `views`, `drags`, `dialogs`, `commands`
-(running what the frame asked for) and `rest`. The part that stands out is where to look.
+(running what the frame asked for), `quit check` (advancing all projects' nonblocking plug-in state checks
+before asking whether to save on quit) and `rest`. The part that stands
+out is where to look.
+
+A closed project's plug-ins are unloaded on a thread of their own, so the window goes on drawing
+meanwhile: `closed project let go in …` says how long it took. Quitting lets every project go at
+once and shows "Closing Suhina" for up to 2 s: `quit: projects let go in …`, or
+`quit: projects not let go, closing anyway after 2s` when a plug-in was still busy (an ARA plug-in
+finishing an analysis can hold its host for many seconds); its host process then ends on its own
+once the plug-in is done.
 
 Once a second a `frames:` line sums up: how many frames, their drawing time on average and the
 longest, and the longest wait between two frames. A long wait with short drawing means the time
@@ -109,9 +123,18 @@ happens. Two counters tell the causes apart:
 - **stretched frames late:** a warped (stretched) clip's audio, made ahead on a thread of its
   own, was not ready when the engine reached it, so that clip alone played silence. A Live Set
   with many warped clips leans on this.
+- **plug-in blocks late:** a plug-in's block was not back from its host process by the time the
+  engine had to hand the device its buffer, so that block passed the sound through unprocessed (a
+  crackle on that track). The line names the plug-in late most often and its track. A return's
+  plug-ins run after every track that sends to them, so they have the least time left.
 
 Lines come only when a counter grew or the load is high, so a session that plays cleanly writes
 none.
+
+What is normal: a few late plug-in blocks in the first second of playback (every plug-in wakes at
+once), and a few thousand stretched frames late right after a jump of the play position (the
+stretched clips there are made from the new place first). Late blocks that keep coming while it
+plays, or underruns at all, are the bug.
 
 ### Adding a trace point
 
@@ -134,6 +157,19 @@ trace point that helped find a bug in the code: the next bug in the same place n
 points on the audio thread must not allocate: there, set an atomic and trace from another thread.
 
 ### Reading it
+
+Start with the summary, which sums up what was heard and seen and says when:
+
+```bash
+python scripts/trace-summary.py trace.log            # the whole session
+python scripts/trace-summary.py trace.log --since 120  # its last two minutes
+python scripts/trace-summary.py trace.log --follow     # live, only the lines worth acting on
+```
+
+It lists the processes and the plug-ins each host runs, the audio counters with their times and
+the plug-in most often late, the slowest frames by the part that took the time, the slow engine
+updates, plug-ins loaded twice, failed, slow to let go or never let go, the ARA documents and
+notes, and the last actions. Then read the log around the times it names.
 
 - **Order and gaps:** the timestamps show what came before what, and how long each step took. A
   plug-in that stayed "Loading" showed as `host unloads 1` with no `host unloaded 1` after it, for
@@ -187,6 +223,49 @@ Tips:
   difference plain.
 - Run the trace log at the same time; the times of the log and the video can be matched by an
   action you can see in both (a click, a play).
+
+## 3. Working a bug through with a tester
+
+How the bugs of the October 2026 test rounds were found when one person used the app and an agent
+read what it did. The tester reports in their own words ("it lags", "it hangs", "something
+flashed"); the trace and a recording say where.
+
+1. **Every run on a trace of its own.** Start the app with `--trace` into a numbered file
+   (`trace-41.log`, then `trace-42.log`) and say which number is running, so a report and its
+   trace stay together. A test build can carry a small start script that picks the next number.
+   Restart only when the tester agrees: a running project may have changes they want.
+2. **Ask what they did and roughly when.** The last `action` lines show what the window ran; a
+   tester's "I closed it with Don't save" finds its place among them.
+3. **Read process by process.** Tell each process id apart by a line only it writes: a plug-in
+   host's start with `host up`, the window by its `frames:` lines (its first line can be another
+   one). The last line of each says where it stopped. Then look for gaps in time
+   within one process.
+4. **Ask for a recording** when the bug is something seen (a flash, a jump, a late redraw), and
+   read it as in part 2: the frames where the picture changes most, as a contact sheet.
+5. **Fix, then have the tester repeat the same steps** on a new build and a new trace, and ask
+   what they saw. The line that showed the bug is gone, or a line added for it says how long the
+   step takes now; for something seen, a new recording shows it. A missing line alone proves
+   nothing: the run may not have reached the failing step.
+
+What told the causes apart:
+
+| The tester said | The trace showed | The cause |
+|---|---|---|
+| The window hangs on quitting without saving | The window's `frames:` lines stop; the hosts unload one by one; one host prints nothing for 16 s, then a burst of `ara` lines and its `Unloaded` | The window waited on each plug-in in turn while an ARA plug-in finished an analysis on its host's main thread |
+| Turning a knob lags | A `slow engine update` (a new graph, 60 to 80 ms) for every step of the drag | The change took a new graph rather than a message to the playing engine |
+| It is sluggish while nothing moves | `frames:` at 75 or more a second at rest | A view asked for a frame on every tiny change (the meters, below hearing) |
+| The plug-in's editor stalls | The host's calls into the plug-in taking seconds, at a steady interval | The host stored the plug-in's whole state on the thread its editor runs on |
+| Something flashed | Nothing; the recording showed the start panel for two frames before the window closed | The dialog was taken down one frame before the window was gone |
+
+Lines that simply stop do not say whether a process is waiting, busy or gone: a trace records
+events, not a process's end, and a crash or an exit stops it too. While the bug is still on screen,
+look at the processes first: in PowerShell
+`Get-Process suhina* | Select-Object Id, ProcessName, CPU, Responding` (`Responding` is false for
+a window Windows sees as hung) or `ps` elsewhere, and how its processor time moves over a few
+seconds (busy, or waiting or idle). A line on the other side (`host gets Unload` with no
+`host unloaded`, or the window's frames ceasing) then points at who may wait for whom; confirm it
+in the code that sends and waits before calling it the cause. Ask the tester not to end the
+process before you have looked.
 
 ## When to take a trace point out
 

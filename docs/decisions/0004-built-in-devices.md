@@ -3,7 +3,7 @@ description: The interface of built-in effects and instruments (Device trait, pa
 read_when: device, built-in effect or instrument, effect, instrument, dsp, filter, parameter, automation, utility, device-api, conformance
 type: decision
 status: current
-last_verified: 2026-10-19
+last_verified: 2026-10-21
 covers:
   - crates/dsp/**
   - crates/device-api/**
@@ -49,7 +49,8 @@ decision 9.
 2. **A device describes itself statically.** `DeviceInfo` gives a stable id (the id stored in the
    model as `DeviceKind::Builtin`), a display name and the parameters in a fixed order. Each
    `ParamInfo` has a stable id, a name, a kind (continuous with a linear or logarithmic scale,
-   toggle, or choice), a range, a default and a unit.
+   toggle, or choice), a range, a default and a unit, and may name a group, the part of the
+   device it belongs to ("Op 1", "LFO"), which lists of many parameters gather it under.
 3. **Parameter values are plain values in their unit** (decibels, hertz, a fraction for a
    percentage, an option index for a choice), not 0..1. A stored value keeps its meaning when a
    range changes, and import mappings convert units directly. `ParamInfo` converts to and from

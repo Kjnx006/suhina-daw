@@ -404,6 +404,7 @@ impl eframe::App for Window {
     /// left to offer next time.
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         let _finished_in_time = self.app.finish_backups();
+        let _let_go_in_time = self.app.let_go_of_projects();
         // Restart now, after an update: the new build starts as this one closes.
         if self.app.restart_wanted()
             && let Err(e) = suhina_update::relaunch()

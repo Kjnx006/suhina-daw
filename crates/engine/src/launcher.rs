@@ -818,6 +818,22 @@ impl Launcher {
         self.follows_map = false;
     }
 
+    /// The bar the clock is in: its number from 0, the beat it starts at and its time
+    /// signature, the map's or the one a scene set. Never allocates.
+    pub(crate) fn bar(&self) -> (u32, f64, TimeSignature) {
+        let beat = if self.beat.is_finite() { self.beat.max(0.0) } else { 0.0 };
+        if self.follows_map {
+            let here = self.meter.position(beat + 1e-9);
+            return (here.bar, here.bar_start, here.time_signature);
+        }
+        // Signed: a jump back before where the scene set the bars (a locate) is in a bar before
+        // it, which starts before the playhead, not at `bar_origin` after it.
+        let into = beat - self.bar_origin;
+        let bars = if self.bar_beats > 0.0 && into.is_finite() { (into / self.bar_beats + 1e-9).floor() } else { 0.0 };
+        let number = (self.bars_before + bars).clamp(0.0, f64::from(u32::MAX)) as u32;
+        (number, (self.bar_origin + bars * self.bar_beats).max(0.0), self.time_signature)
+    }
+
     /// Whether the clock follows the tempo map (no scene has taken it off).
     pub(crate) fn follows_map(&self) -> bool {
         self.follows_map
@@ -2456,6 +2472,25 @@ mod tests {
         assert_eq!(monitor.column(0).unwrap().playing, Some(0));
         assert_eq!(monitor.column(1).unwrap().playing, Some(1));
         assert_eq!(monitor.column(2), None);
+    }
+
+    #[test]
+    fn a_bar_before_where_a_scene_set_the_bars_starts_before_the_playhead() {
+        // Off the map (a scene's time signature), bars count from beat 8; a locate back to beat
+        // 5 is in the bar from beat 4, not at beat 8 after the playhead.
+        let p = project(Vec::new(), vec![Vec::new()]);
+        let map = Arc::new(p.transport.tempo_map(f64::from(SR)));
+        let mut launcher = super::Launcher::new(&p, &AudioPool::new(), SR, &[], map);
+        launcher.follows_map = false;
+        launcher.bar_beats = 4.0;
+        launcher.bar_origin = 8.0;
+        launcher.bars_before = 2.0;
+        launcher.beat = 5.0;
+        let (bar, start, _) = launcher.bar();
+        assert_eq!((bar, start), (1, 4.0));
+        launcher.beat = 9.0;
+        assert_eq!(launcher.bar().0, 2);
+        assert_eq!(launcher.bar().1, 8.0);
     }
 
     #[test]

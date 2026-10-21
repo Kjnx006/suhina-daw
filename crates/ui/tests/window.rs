@@ -3058,6 +3058,18 @@ fn closing_or_quitting_with_unsaved_changes_asks_first() {
     assert!(saved.is_file(), "{:?}", harness.state().status());
     assert!(!unsaved(&harness));
     assert!(!harness.state().unsaved_prompt_open());
+    // The window lets go of the projects off its own thread, then closes.
+    let mut closed = false;
+    for _ in 0..300 {
+        if asked_to_close(&harness) {
+            closed = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        harness.step();
+    }
+    assert!(closed, "the window closes once its projects are let go of");
+    assert!(harness.state().projects().ids().is_empty());
     let _clean = std::fs::remove_dir_all(&dir);
 }
 

@@ -3,7 +3,7 @@ description: Suhina's own project file (.suhina): versioned JSON of the model, w
 read_when: project file, save, open, backup, autosave, recovery, .suhina, .locr, file extension, native format, project.save, templates, new project, blank project, unsaved changes, recent projects
 type: decision
 status: current
-last_verified: 2026-10-19
+last_verified: 2026-10-21
 covers:
   - crates/project-file
   - crates/session/src/lib.rs
@@ -90,7 +90,10 @@ Suhina (October 2026) the extension followed: files are `.suhina` from 2026-10-1
    dialog (#319): the window only asks for one, and the desktop app shows it with `rfd` (MIT;
    on Linux through the desktop portal, with no GTK), so the window and its tests need none. Closing a project,
    opening another in its place or quitting while a project has unsaved changes asks first (it
-   reads the running plug-ins' states first, so a change made a moment ago in an editor counts):
+   reads every running plug-in's state twice, including changes made by processing or MIDI
+   without an editor or dirty notification. The reads run on control workers and share one
+   one-second deadline across both rounds; the window advances these checks each frame for
+   all projects together, and a busy host gives its last known state):
    Save, Don't save or Cancel; quitting asks about each such project in turn, and Save on one
    that has no file yet asks for a name before the app closes.
 10. **`.suhina`, and `.locr` still read** (2026-10-13; superseded by decision 12). New projects,
@@ -106,9 +109,10 @@ Suhina (October 2026) the extension followed: files are `.suhina` from 2026-10-1
     every 1, 5 (the default), 10, 15, 30 or 60 minutes, every 4 hours, or never; a timed backup is
     written only when the project changed since the last one. Backups go to `.backup/` beside the
     project file, one file each named with the project's name and the local date and time; a
-    project never saved backs up to the settings folder until it is saved. They are taken as
-    `project.save` takes the project (the one-second wait for plug-ins of decision 7) and written
-    on a background thread to a temporary file that is then renamed. A clean-up setting (on by
+    project never saved backs up to the settings folder until it is saved. A backup takes the
+    project with the last completed plug-in states without asking or waiting for hosts; confirmed
+    plug-in changes can require a new backup independently of project commands. The copy is
+    written on a background thread to a temporary file that is then renamed. A clean-up setting (on by
     default) keeps the newest 20 backups of each project. A journal in the settings folder names
     each open project's newest backup; on start, a backup it still lists that is newer than its
     project file is offered: open it as an unsaved project tied to the original file, show the

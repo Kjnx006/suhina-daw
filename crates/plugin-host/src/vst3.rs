@@ -736,7 +736,8 @@ impl Vst3Plugin {
         let pending = self.pending.clone();
         let mapping = MidiMapping::of(self.controller.as_ref());
         let (buses, sample_rate, instance) = (self.buses.clone(), self.sample_rate, self.instance);
-        let bound = self.ara.is_some();
+        // An ARA-bound instance's output is traced with its track's name.
+        let bound = self.ara.as_ref().map(|ara| ara.track().to_string());
         let audio = AudioSide(processor);
         let thread = thread::Builder::new()
             .name("plug-in audio".into())
@@ -868,6 +869,22 @@ impl Vst3Plugin {
         (in_channels, out_channels)
     }
 
+    /// Leaves its ARA document now, with its processing stopped: an instance released later
+    /// (`Loaded::unload`) must not keep its track's regions in the document the other tracks
+    /// share, where the instance loaded in its place puts them again.
+    pub(crate) fn leave_document(&mut self) {
+        if self.ara.is_none() {
+            return;
+        }
+        self.stop.store(true, Ordering::Release);
+        if let Some(audio) = self.audio.take() {
+            let _ = audio.join();
+        }
+        // SAFETY: a live component; processing has stopped.
+        let _ = unsafe { self.component.setActive(0) };
+        self.ara = None;
+    }
+
     /// How long ago it was loaded.
     pub(crate) fn age(&self) -> std::time::Duration {
         self.loaded_at.elapsed()
@@ -965,6 +982,11 @@ impl Vst3Plugin {
         if let Some(ara) = &self.ara {
             ara.tick();
         }
+    }
+
+    /// How far the analysis of a bound ARA document's track has come, when it changed.
+    pub(crate) fn take_ara_analysis(&self) -> Option<Option<f32>> {
+        self.ara.as_ref().and_then(|ara| ara.take_analysis())
     }
 
     /// The notes a bound ARA document read since the last call (#720).
@@ -1209,15 +1231,15 @@ fn serve(
     sample_rate: f64,
     (pending, mapping): (Pending, MidiMapping),
     (stop, flush): (&AtomicBool, &AtomicBool),
-    ara_bound: bool,
+    ara_track: Option<String>,
 ) -> Served {
     let processor = audio.0;
     let waiting = pending.clone();
     // SAFETY: a live, active processor, on the audio thread.
     let _ = unsafe { processor.setProcessing(1) };
     let mut block = Vst3Block::new(processor, &served, buses, sample_rate, (pending, mapping));
-    if ara_bound && suhina_plugins::trace::on() {
-        block.watch = Some(Watch { instance, frames: 0, peak: 0.0 });
+    if let Some(track) = ara_track.filter(|_| suhina_plugins::trace::on()) {
+        block.watch = Some(Watch { instance, track, frames: 0, peak: 0.0 });
     }
     if let Some(mut block) = crate::audio::serve(instance, block, &mut served, stop) {
         if flush.load(Ordering::Acquire) && waiting.lock().is_ok_and(|w| !w.is_empty()) {
@@ -1257,6 +1279,8 @@ struct Vst3Block {
 /// loudest sample.
 struct Watch {
     instance: u32,
+    /// The track it plays, by name.
+    track: String,
     frames: u64,
     peak: f32,
 }
@@ -1343,14 +1367,16 @@ impl Vst3Block {
     }
 }
 
-/// Puts the song's place the engine sent with the block (ADR 0028) into the plug-in's process
-/// context: playing or stopped, the arrangement position in samples and as beats, the tempo.
-/// A block without it leaves the context as it was, counting on from the last block.
+/// Puts the song's place the engine sent with the block into the plug-in's process context:
+/// playing or stopped, the arrangement position in samples and in beats, the tempo, the bar, the
+/// time signature and the loop. A block without it leaves the context as it was, counting on from the
+/// last block.
 fn follow_song(context: &mut ProcessContext, events: &[suhina_ipc::Event]) {
     use suhina_ipc::EventKind;
     use vst3::Steinberg::Vst::ProcessContext_::{StatesAndFlags, StatesAndFlags_ as Flags};
     #[allow(clippy::unnecessary_cast, reason = "the flags are signed on Windows")]
     let bits = |flag: StatesAndFlags| flag as u32;
+    let mut told_beat = false;
     for event in events {
         match event.kind {
             EventKind::Transport { playing, position } => {
@@ -1363,10 +1389,29 @@ fn follow_song(context: &mut ProcessContext, events: &[suhina_ipc::Event]) {
                 context.tempo = f64::from(bpm);
                 context.state |= bits(Flags::kTempoValid);
             }
+            EventKind::Beat { beat } => {
+                context.projectTimeMusic = beat;
+                context.state |= bits(Flags::kProjectTimeMusicValid);
+                told_beat = true;
+            }
+            EventKind::Cycle { on, start, end } => {
+                context.cycleStartMusic = f64::from(start);
+                context.cycleEndMusic = f64::from(end);
+                let cycle = bits(Flags::kCycleActive);
+                context.state = if on { context.state | cycle } else { context.state & !cycle };
+                context.state |= bits(Flags::kCycleValid);
+            }
+            EventKind::Bar { start, numerator, denominator, .. } => {
+                context.barPositionMusic = start;
+                context.timeSigNumerator = i32::from(numerator);
+                context.timeSigDenominator = i32::from(denominator);
+                context.state |= bits(Flags::kBarPositionValid) | bits(Flags::kTimeSigValid);
+            }
             _ => {}
         }
     }
-    if context.sampleRate > 0.0 && context.tempo > 0.0 {
+    // An older engine sends no beat: worked out from the samples at an even tempo.
+    if !told_beat && context.sampleRate > 0.0 && context.tempo > 0.0 {
         context.projectTimeMusic = context.projectTimeSamples as f64 / context.sampleRate * context.tempo / 60.0;
         context.state |= bits(Flags::kProjectTimeMusicValid);
     }
@@ -1388,8 +1433,9 @@ impl Vst3Block {
         #[allow(clippy::unnecessary_cast, reason = "the flags are signed on Windows")]
         let playing = self.context.state & (Flags::kPlaying as u32) != 0;
         suhina_plugins::trace!(
-            "ara audio {}: {}, song at {:.2} s, peak {:.4}",
+            "ara audio {} ({}): {}, song at {:.2} s, peak {:.4}",
             watch.instance,
+            watch.track,
             if playing { "playing" } else { "stopped" },
             self.context.projectTimeSamples as f64 / rate,
             watch.peak
