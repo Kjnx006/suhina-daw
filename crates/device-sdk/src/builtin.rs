@@ -175,6 +175,7 @@ mod tests {
         ParamInfo {
             id: "gain",
             name: "Gain",
+            group: "",
             kind: ParamKind::Continuous(Scale::Linear),
             min: -24.0,
             max: 24.0,
@@ -184,6 +185,7 @@ mod tests {
         ParamInfo {
             id: "freq",
             name: "Frequency",
+            group: "",
             kind: ParamKind::Continuous(Scale::Logarithmic),
             min: 20.0,
             max: 20000.0,
@@ -193,6 +195,7 @@ mod tests {
         ParamInfo {
             id: "mode",
             name: "Mode",
+            group: "",
             kind: ParamKind::Choice(&["Soft", "Hard"]),
             min: 0.0,
             max: 1.0,
