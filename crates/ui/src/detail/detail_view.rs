@@ -2223,18 +2223,24 @@ fn clip_edit_row(
     // Dragged: shown from a draft while the drag lasts. The loop's ends keep a quarter beat
     // apart and move by quarter beats, the transpose by semitones, the gain by tenths of a dB.
     let (start, end) = info.loop_range.unwrap_or((0.0, 4.0));
+    let (min, max) = loop_bounds(edit, start, end);
     let (stored, per_point, min, max, reset) = match edit {
-        ClipEdit::LoopStart => (start, 0.0625, 0.0, end - 0.25, None),
-        ClipEdit::LoopEnd => (end, 0.0625, start + 0.25, 120_000.0, None),
+        ClipEdit::LoopStart => (start, 0.0625, min, max, None),
+        ClipEdit::LoopEnd => (end, 0.0625, min, max, None),
         ClipEdit::Gain => {
             (info.gain_db.filter(|db| db.is_finite()).unwrap_or(-70.0).max(-70.0), 0.1, -70.0, 24.0, Some(0.0))
         }
         _ => (info.transpose, 0.1, -48.0, 48.0, Some(0.0)),
     };
-    let snap = |v: f64| match edit {
-        ClipEdit::LoopStart | ClipEdit::LoopEnd => (v * 4.0).round() / 4.0,
-        ClipEdit::Transpose => v.round(),
-        _ => (v * 10.0).round() / 10.0,
+    // Rounding can step past a bound (a start of 3.85 rounds to 4.0 below an end of 4.1): kept
+    // inside after it too.
+    let snap = |v: f64| {
+        match edit {
+            ClipEdit::LoopStart | ClipEdit::LoopEnd => (v * 4.0).round() / 4.0,
+            ClipEdit::Transpose => v.round(),
+            _ => (v * 10.0).round() / 10.0,
+        }
+        .clamp(min, max)
     };
     let draft = ui.data(|d| d.get_temp::<f64>(id));
     let text = match draft.map(snap) {
@@ -2433,6 +2439,19 @@ fn branch_value(ui: &Ui, id: Id, stored: f64, dragged: &Dragged, min: f64, max: 
         return (value, (value != stored).then_some(value));
     }
     (draft.unwrap_or(stored), None)
+}
+
+/// Where a loop's start or end may be dragged: the start from 0 to a quarter beat before the end,
+/// the end from a quarter beat after the start. Never crossed (`max` at least `min`), so a loop
+/// shorter than that (from a command or an import) does not make `f64::clamp` panic.
+fn loop_bounds(edit: ClipEdit, start: f64, end: f64) -> (f64, f64) {
+    let (min, max) = match edit {
+        ClipEdit::LoopStart => (0.0, (end - 0.25).min(120_000.0)),
+        // Never past the longest loop, even for a start within a quarter beat of it.
+        _ => ((start + 0.25).min(120_000.0), 120_000.0),
+    };
+    let min = if min.is_finite() { min } else { 0.0 };
+    (min, if max.is_finite() { max.max(min) } else { min })
 }
 
 fn pan_text(pan: f64) -> String {
@@ -2713,6 +2732,23 @@ fn inside_group_mark(painter: &egui::Painter, rect: Rect, at: &DeviceAt) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_loop_shorter_than_a_quarter_beat_gives_bounds_that_do_not_cross() {
+        use super::{ClipEdit, loop_bounds};
+        // A loop ending at beat 0.1 (from `clip.setLoop` or an import): the start's bounds were
+        // 0 to -0.15, and the first drag panicked in `f64::clamp`.
+        let (min, max) = loop_bounds(ClipEdit::LoopStart, 0.0, 0.1);
+        assert!(min <= max, "{min} > {max}");
+        assert_eq!(0.3f64.clamp(min, max), 0.0);
+        let (min, max) = loop_bounds(ClipEdit::LoopEnd, 119_999.9, 120_000.0);
+        assert!(min <= max, "{min} > {max}");
+        assert!(max <= 120_000.0 && min <= 120_000.0, "never past the longest loop: {min} to {max}");
+        // A loop ending past the limit (an import) gives a start no further than it either.
+        assert_eq!(loop_bounds(ClipEdit::LoopStart, 0.0, 130_000.0), (0.0, 120_000.0));
+        assert_eq!(loop_bounds(ClipEdit::LoopStart, 0.0, 4.0), (0.0, 3.75));
+        assert_eq!(loop_bounds(ClipEdit::LoopEnd, 1.0, 4.0), (1.25, 120_000.0));
+    }
+
     #[test]
     fn sample_name_is_in_header_once() {
         let mut device =

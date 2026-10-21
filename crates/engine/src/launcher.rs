@@ -1100,7 +1100,12 @@ fn plan_clip(
                 let stretch = (region.warped && region.stretch != suhina_model::StretchMode::Repitch)
                     .then(|| {
                         let stretched = suhina_model::Clip { length: stretch_beats, ..placed.clone() };
-                        StretchVoice::new(&stretched, region, data.clone(), tempo, sample_rate)
+                        StretchVoice::new(&stretched, region, data.clone(), tempo, sample_rate).map(|mut voice| {
+                            // A launched clip's voice is seeked and rendered on the audio thread:
+                            // its stretcher is built here, with the plan, off that thread.
+                            voice.prepare();
+                            voice
+                        })
                     })
                     .flatten();
                 let region_gain = if region.gain.is_finite() { region.gain.max(0.0) as f32 } else { 0.0 };
@@ -2530,6 +2535,41 @@ mod tests {
         // After half a beat the loop wraps to its start.
         assert!((left(BEAT / 2 + BEAT / 4) - 0.125).abs() < 0.01, "{}", left(BEAT / 2 + BEAT / 4));
         assert!((left(BEAT + BEAT / 2 + BEAT / 4) - 0.125).abs() < 0.01);
+    }
+
+    #[test]
+    fn a_launched_clip_s_stretcher_is_built_with_the_plan_not_on_the_audio_thread() {
+        // Stretched to 1.5 times its length, so it needs a stretcher. The audio thread seeks and
+        // renders a launched voice itself: it must not build the stretcher there.
+        let samples = (0..SR).map(|i| (i as f32 * 0.05).sin() * 0.5).collect();
+        let mut audio = AudioPool::new();
+        audio.files.insert("sine.wav".into(), Arc::new(AudioData { sample_rate: SR, channels: 1, samples }));
+        let region = AudioRegion {
+            file: "sine.wav".into(),
+            absolute_file: None,
+            sample_rate: Some(SR),
+            channels: Some(1),
+            duration_seconds: Some(1.0),
+            warped: true,
+            stretch: StretchMode::Smooth,
+            warp_markers: vec![WarpMarker { time: 0.0, audio_time: 0.0 }, WarpMarker { time: 3.0, audio_time: 1.0 }],
+            gain: 1.0,
+            transpose: 0.0,
+            stream: None,
+        };
+        let content = ClipContent {
+            id: ContentId(1),
+            name: "sine".into(),
+            length: 3.0,
+            lanes: vec![ContentLane { target: None, data: LaneData::Audio(region) }],
+            extensions: Extensions::default(),
+            scale: None,
+        };
+        let c = clip(1, 3.0, true);
+        let p = project(vec![content], vec![vec![with(c.clone())]]);
+        let Some(plan) = plan_clip(&p, &audio, &[], &c, p.tracks[0].id, BEAT as f64, SR) else { panic!("no plan") };
+        let Some(voice) = plan.audio.first().and_then(|a| a.stretch.as_ref()) else { panic!("no stretch voice") };
+        assert!(voice.is_prepared());
     }
 
     #[test]

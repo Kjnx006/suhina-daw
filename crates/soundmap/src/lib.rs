@@ -323,12 +323,20 @@ impl SoundMap {
     /// came in.
     fn take_diff(&mut self, wait: bool) -> bool {
         let Some(from) = &self.diffing else { return false };
-        let diff = if wait { from.recv().ok() } else { from.try_recv().ok() };
-        let gone_thread = !wait && matches!(from.try_recv(), Err(std::sync::mpsc::TryRecvError::Disconnected));
-        let Some(diff) = diff else {
-            if gone_thread || wait {
-                self.diffing = None;
+        // The channel is read once: a second read could take the diff that came in between and
+        // drop it, leaving the map's update undone until the library changes again.
+        let diff = if wait {
+            from.recv().ok()
+        } else {
+            match from.try_recv() {
+                Ok(diff) => Some(diff),
+                Err(std::sync::mpsc::TryRecvError::Empty) => return false,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => None,
             }
+        };
+        let Some(diff) = diff else {
+            // The thread is gone without a diff (or `recv` found it gone).
+            self.diffing = None;
             return false;
         };
         self.diffing = None;
