@@ -33,6 +33,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/github-script@v9
+        env:
+          # As in claim.yml, which accepts `/claim @login` only from them.
+          MAINTAINERS: juhamikael
         with:
           script: |
             const pr = context.payload.pull_request;
@@ -89,7 +92,7 @@ jobs:
                      pullRequests(states: OPEN, first: 100, orderBy: { field: UPDATED_AT, direction: DESC }) {
                        nodes {
                          number title headRefName baseRefName headRepository { nameWithOwner }
-                         files(first: 100) { nodes { path } }
+                         files(first: 100) { totalCount nodes { path } }
                        }
                      }
                    }
@@ -101,7 +104,8 @@ jobs:
               // GitHub links `Closes #N` only from a pull request into the default branch, so a
               // stacked one's closing words are read from its description too (as claim.yml does).
               // Closing words inside an HTML comment (the template's example) do not count.
-              const said = String(pr.body || "").replace(/<!--[\s\S]*?-->/g, "");
+              // An HTML comment left open runs to the end of the body, as GitHub renders it.
+              const said = String(pr.body || "").replace(/<!--[\s\S]*?(?:-->|$)/g, "");
               for (const match of said.matchAll(/\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s+#(\d+)\b/gi)) {
                 const number = Number(match[1]);
                 if (!closes.includes(number)) closes.push(number);
@@ -126,7 +130,16 @@ jobs:
               }
               for (const other of pulls) {
                 if (other.number === pr.number || stack.has(other.number)) continue;
-                const theirs = ((other.files && other.files.nodes) || []).map((file) => file.path);
+                let theirs = ((other.files && other.files.nodes) || []).map((file) => file.path);
+                // A large pull request's files past the first hundred are read page by page.
+                if (other.files && other.files.totalCount > theirs.length) {
+                  const all = await github.paginate(github.rest.pulls.listFiles, {
+                    ...context.repo,
+                    pull_number: other.number,
+                    per_page: 100,
+                  });
+                  theirs = all.flatMap((file) => [file.filename, file.previous_filename].filter(Boolean));
+                }
                 const hit = mine.filter((file) => theirs.includes(file));
                 if (hit.length > 0) found.push({ name: `#${other.number}`, title: other.title, hit });
               }
@@ -138,15 +151,14 @@ jobs:
               // open issues with someone assigned are the claims; the paths are those of the newest
               // `/claim` by an assignee or naming one (`/claim @login`), so a refused command by
               // anyone else changes nothing.
-              const result = await github.rest.issues.listForRepo({
+              const assigned = await github.paginate(github.rest.issues.listForRepo, {
                 ...context.repo,
                 state: "open",
                 assignee: "*",
-                sort: "updated",
-                direction: "desc",
-                per_page: 50,
+                per_page: 100,
               });
-              for (const issue of result.data || []) {
+              const maintainers = String(process.env.MAINTAINERS || "").toLowerCase().split(/[\s,]+/).filter(Boolean);
+              for (const issue of assigned) {
                 if (issue.pull_request || closes.includes(issue.number)) continue;
                 const comments = await github.paginate(github.rest.issues.listComments, {
                   ...context.repo,
@@ -159,7 +171,9 @@ jobs:
                   if (!/^\/claim\b/i.test(text)) return false;
                   const by = ((entry.user && entry.user.login) || "").toLowerCase();
                   const named = (text.match(/^\/claim\s+@([A-Za-z0-9-]+)/i) || [])[1];
-                  return assignees.includes(by) || (named !== undefined && assignees.includes(named.toLowerCase()));
+                  // `/claim @login` counts only from a maintainer, as the claim bot accepts it.
+                  if (named !== undefined) return maintainers.includes(by) && assignees.includes(named.toLowerCase());
+                  return assignees.includes(by);
                 });
                 const newest = claims.pop();
                 if (!newest) continue;
