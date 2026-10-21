@@ -205,13 +205,14 @@ CHAPTERS = [
      "layered on the same notes, plug-ins inside, latency compensated, groups nested four deep, "
      "moved and duplicated by command. No macros, key/velocity/chain zones, drum pads or group "
      "presets."),
-    (26, "Automation and Editing Envelopes", 22, 0.46, "partial",
+    (26, "Automation and Editing Envelopes", 22, 0.48, "partial",
      "Envelopes for track volume, pan and mute, built-in, .sd and plug-in device parameters: breakpoints "
      "with curved segments and jumps, saved, played in playback and renders (64-frame steps, ramped "
      "mixer gains), a manual change turning a lane off until re-enabled. Lanes under each track in "
      "the Arrangement: a parameter chooser with a search, the automated parameters first, devices and "
      "parameter groups folded under headings, points added, moved on the grid, selected and moved or "
-     "deleted together, curves bent by dragging, re-enabled from the lane. Missing recording, "
+     "deleted together, curves bent by dragging, re-enabled from the lane, a click near the line adding "
+     "a point on it, a faint line at the value of a lane without points. Missing recording, "
      "drawing with a pencil, plug-in lanes in the view, send, master and tempo automation, "
      "locking, simplifying envelopes."),
     (27, "Clip Envelopes", 13, 0.00, "absent", "No clip envelopes."),
