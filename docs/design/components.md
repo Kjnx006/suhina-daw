@@ -681,3 +681,10 @@ The rest of this table is planned.
 | Note | Track colour; opacity 0.4 + 0.6 × velocity / 127; name in 9 px when ≥ 2 beats wide; 1 px gap to neighbours; selected = 1 px `text.primary` inset |
 | Velocity lane | 72 px default (resizable); 36 px scale column (127, 64, 1); one 1 px stem per note with a 5 × 2 head, chord notes 4 px apart; selected stem `text.primary` |
 | Velocity tools | 18 px: Randomize, Ramp, Deviation as small value fields |
+
+A note-playing Arrangement header has a neutral Auto / On / Off chip after record arm.
+It is 24 px wide on a compact row and 32 px on an expanded row. The popup explains
+what input monitoring means, offers Auto, Always on and Off, and shows a contextual
+footer for the current or hovered choice. MIDI monitoring is independent of record
+arm and headphone cue. Only record arm uses red; the MIDI input menu has the same
+choices. Header layout reserves this chip's width before names and level controls.

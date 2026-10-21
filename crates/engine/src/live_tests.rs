@@ -35,6 +35,50 @@ fn peak(out: &[f32]) -> f32 {
 }
 
 #[test]
+fn midi_monitoring_and_record_arm_are_independent() {
+    for (armed, monitoring) in [(false, true), (true, false), (true, true), (false, false)] {
+        let mut renderer = stopped(&synth());
+        let mut controller = renderer.controller();
+        let mut live = controller.take_live_input().unwrap();
+        let mut recorder = controller.take_recorder().unwrap();
+        controller
+            .send(LaunchCommand::SetMidiInput { track: TrackId(1), armed, monitoring, input: Default::default() })
+            .unwrap();
+        controller.send(LaunchCommand::Play).unwrap();
+        controller.send(LaunchCommand::SetRecording { on: true }).unwrap();
+        blocks(&mut renderer, 2, 256);
+        live.send(LiveEvent::NoteOn { key: 60, velocity: 1.0 });
+        let heard = peak(&blocks(&mut renderer, 4, 256));
+        assert_eq!(heard > 0.0, monitoring, "armed={armed}, monitoring={monitoring}");
+        assert_eq!(recorder.next_note().is_some(), armed, "only arm permits recording");
+        assert_eq!(renderer.live_armed(), armed || monitoring, "monitoring keeps live latency low");
+    }
+}
+
+#[test]
+fn changing_midi_monitoring_releases_notes_without_retriggering_held_keys() {
+    let mut renderer = stopped(&synth());
+    let mut controller = renderer.controller();
+    let mut live = controller.take_live_input().unwrap();
+    let input = |monitoring| LaunchCommand::SetMidiInput {
+        track: TrackId(1),
+        armed: false,
+        monitoring,
+        input: Default::default(),
+    };
+    controller.send(input(true)).unwrap();
+    live.send(LiveEvent::NoteOn { key: 60, velocity: 1.0 });
+    assert!(peak(&blocks(&mut renderer, 20, 256)) > 0.0);
+    controller.send(input(false)).unwrap();
+    blocks(&mut renderer, 400, 256);
+    assert!(peak(&blocks(&mut renderer, 2, 256)) < 1e-5);
+    controller.send(input(true)).unwrap();
+    assert!(peak(&blocks(&mut renderer, 2, 256)) < 1e-5, "held notes do not restart");
+    live.send(LiveEvent::NoteOn { key: 64, velocity: 1.0 });
+    assert!(peak(&blocks(&mut renderer, 4, 256)) > 0.0);
+}
+
+#[test]
 fn an_armed_tracks_instrument_plays_live_notes_with_the_transport_stopped() {
     let mut renderer = stopped(&synth());
     let mut controller = renderer.controller();

@@ -159,6 +159,13 @@ pub enum LaunchCommand {
         armed: bool,
         input: crate::live::LiveFilter,
     },
+    /// Atomically sets independent recording arm and live MIDI monitoring (ADR 0017).
+    SetMidiInput {
+        track: suhina_model::TrackId,
+        armed: bool,
+        monitoring: bool,
+        input: crate::live::LiveFilter,
+    },
     /// Turns recording on or off: while on and the transport runs, what the armed tracks play
     /// goes out through the recording rings ([`Controller::take_recorder`],
     /// `docs/spec/recording.md`).
@@ -1205,6 +1212,10 @@ impl Renderer {
             LaunchCommand::SetArmed { track, armed, input } => {
                 let frame = self.block_frame;
                 self.live.set_armed(&mut self.graph.chains, track, armed, input, frame);
+            }
+            LaunchCommand::SetMidiInput { track, armed, monitoring, input } => {
+                let frame = self.block_frame;
+                self.live.set_input(&mut self.graph.chains, track, armed, monitoring, input, frame);
             }
             LaunchCommand::SetMetronome { on, gain } => {
                 self.metronome.set(on, gain);

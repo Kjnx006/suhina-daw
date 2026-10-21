@@ -163,7 +163,7 @@ pub fn headphones(painter: &Painter, rect: Rect, color: Color32) {
 /// A track's arm button (components › Arm): a ring off, a filled red dot on its dark red
 /// background when armed. Returns the command a click asks for: a click arms the track alone;
 /// with Ctrl (Cmd) held it is added to the tracks armed already. Arming a track that plays
-/// notes lets a MIDI controller play it; one that plays audio hears its audio input.
+/// notes enables recording and, in Auto monitoring, hears its MIDI input.
 #[allow(clippy::too_many_arguments)]
 pub fn arm_button(
     ui: &Ui,
@@ -175,12 +175,12 @@ pub fn arm_button(
     armed: bool,
     notes: bool,
 ) -> Option<Action> {
-    let label = match (armed, notes) {
-        (true, _) => format!("Disarm {name}"),
-        (false, true) => format!("Arm {name} to play it from a MIDI controller"),
-        (false, false) => format!("Arm {name} to hear its audio input"),
-    };
-    let response = button_area(ui, rect, id, label);
+    let label = if armed { format!("Disarm {name}") } else { format!("Arm {name} for recording") };
+    let response = button_area(ui, rect, id, label).on_hover_text(if notes {
+        "Play this track. Recording starts separately."
+    } else {
+        "Make this track ready to record. Recording starts separately. With Automatic input monitoring, you hear the audio input while this button is on."
+    });
     let lit = motion::toward(ui.ctx(), response.id.with("on"), armed, motion::VALUE);
     let off = motion::mix(theme::control_background(), theme::control_hover(), hover(ui, &response));
     painter.rect_filled(rect, 0.0, motion::mix(off, theme::recording_background(), lit));
