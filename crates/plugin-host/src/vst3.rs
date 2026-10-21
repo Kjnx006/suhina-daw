@@ -982,8 +982,8 @@ impl Vst3Plugin {
         if rate <= 0.0 || (watch.frames.load(Ordering::Acquire) as f64) < rate {
             return;
         }
-        watch.frames.store(0, Ordering::Relaxed);
-        let peak = f32::from_bits(watch.peak.swap(0, Ordering::Relaxed));
+        watch.take_frames();
+        let peak = watch.take_peak();
         let playing = watch.playing.load(Ordering::Relaxed);
         suhina_plugins::trace!(
             "ara audio {}: {}, song at {:.2} s, peak {:.4}",
@@ -1291,6 +1291,28 @@ struct Watch {
     playing: AtomicBool,
 }
 
+impl Watch {
+    /// Raises the peak to the loudest sample of `output`. The block's peak starts from zero and
+    /// is merged with `fetch_max`, so a [`Watch::take_peak`] between two blocks never has an old
+    /// peak written back. The bits of a non-negative `f32` order like the numbers, and a NaN
+    /// sample is passed over by `f32::max`.
+    fn merge_peak(&self, output: &[f32]) {
+        let peak = output.iter().fold(0.0_f32, |peak, s| peak.max(s.abs()));
+        self.peak.fetch_max(peak.to_bits(), Ordering::Relaxed);
+    }
+
+    /// The loudest sample since the last call, which starts the next interval from silence.
+    fn take_peak(&self) -> f32 {
+        f32::from_bits(self.peak.swap(0, Ordering::Relaxed))
+    }
+
+    /// The frames played since the last call. A swap, so frames the audio thread adds meanwhile
+    /// count for the next interval rather than being erased.
+    fn take_frames(&self) -> u64 {
+        self.frames.swap(0, Ordering::AcqRel)
+    }
+}
+
 // SAFETY: the block is used by one audio thread at a time (behind its lock, `crate::audio`),
 // which the VST3 threading model allows for `process`: hosts run processors on whichever of
 // their audio threads is free. Its raw pointers point into buffers it owns, whose heap memory
@@ -1407,10 +1429,7 @@ impl Vst3Block {
     /// ([`Vst3Plugin::trace_output`]). Never allocates or locks.
     fn watch_output(&mut self, output: &[f32], frames: usize) {
         let Some(watch) = self.watch.as_ref() else { return };
-        // This thread alone raises the peak, so a load and a store lose none.
-        let peak = f32::from_bits(watch.peak.load(Ordering::Relaxed));
-        let peak = output.iter().fold(peak, |peak, s| peak.max(s.abs()));
-        watch.peak.store(peak.to_bits(), Ordering::Relaxed);
+        watch.merge_peak(output);
         use vst3::Steinberg::Vst::ProcessContext_::StatesAndFlags_ as Flags;
         #[allow(clippy::unnecessary_cast, reason = "the flags are signed on Windows")]
         let playing = self.context.state & (Flags::kPlaying as u32) != 0;
@@ -1480,6 +1499,52 @@ impl crate::audio::Block for Vst3Block {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_trace_watch_merges_peaks_and_starts_each_interval_from_silence() {
+        let watch = Watch::default();
+        watch.merge_peak(&[0.25, -0.75, 0.5]);
+        watch.merge_peak(&[0.5, f32::NAN]);
+        watch.merge_peak(&[]);
+        assert_eq!(watch.take_peak(), 0.75);
+        assert_eq!(watch.take_peak(), 0.0);
+        watch.merge_peak(&[-0.125]);
+        assert_eq!(watch.take_peak(), 0.125);
+    }
+
+    /// The main thread resets the counters while the audio thread keeps adding to them: no
+    /// frame is lost, and a peak that was taken never comes back.
+    #[test]
+    fn resetting_the_trace_watch_loses_no_frames_and_repeats_no_peak() {
+        const BLOCKS: u32 = 200_000;
+        let watch = Arc::new(Watch::default());
+        let audio = {
+            let watch = watch.clone();
+            std::thread::spawn(move || {
+                for block in 1..=BLOCKS {
+                    watch.merge_peak(&[block as f32]);
+                    watch.frames.fetch_add(1, Ordering::Release);
+                }
+            })
+        };
+        let (mut frames, mut peaks) = (0_u64, Vec::new());
+        while !audio.is_finished() {
+            frames += watch.take_frames();
+            let peak = watch.take_peak();
+            if peak > 0.0 {
+                peaks.push(peak);
+            }
+        }
+        audio.join().unwrap();
+        frames += watch.take_frames();
+        let peak = watch.take_peak();
+        if peak > 0.0 {
+            peaks.push(peak);
+        }
+        assert_eq!(frames, u64::from(BLOCKS), "frames were erased by a reset");
+        assert_eq!(peaks.last().copied(), Some(BLOCKS as f32));
+        assert!(peaks.windows(2).all(|pair| pair[0] < pair[1]), "an old peak was written back");
+    }
 
     #[test]
     fn a_module_is_loaded_once_and_kept() {
