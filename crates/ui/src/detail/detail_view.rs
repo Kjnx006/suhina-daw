@@ -2183,7 +2183,7 @@ fn branch_value(ui: &Ui, id: Id, stored: f64, dragged: &Dragged, min: f64, max: 
 /// shorter than that (from a command or an import) does not make `f64::clamp` panic.
 fn loop_bounds(edit: ClipEdit, start: f64, end: f64) -> (f64, f64) {
     let (min, max) = match edit {
-        ClipEdit::LoopStart => (0.0, end - 0.25),
+        ClipEdit::LoopStart => (0.0, (end - 0.25).min(120_000.0)),
         // Never past the longest loop, even for a start within a quarter beat of it.
         _ => ((start + 0.25).min(120_000.0), 120_000.0),
     };
@@ -2480,6 +2480,8 @@ mod tests {
         let (min, max) = loop_bounds(ClipEdit::LoopEnd, 119_999.9, 120_000.0);
         assert!(min <= max, "{min} > {max}");
         assert!(max <= 120_000.0 && min <= 120_000.0, "never past the longest loop: {min} to {max}");
+        // A loop ending past the limit (an import) gives a start no further than it either.
+        assert_eq!(loop_bounds(ClipEdit::LoopStart, 0.0, 130_000.0), (0.0, 120_000.0));
         assert_eq!(loop_bounds(ClipEdit::LoopStart, 0.0, 4.0), (0.0, 3.75));
         assert_eq!(loop_bounds(ClipEdit::LoopEnd, 1.0, 4.0), (1.25, 120_000.0));
     }
