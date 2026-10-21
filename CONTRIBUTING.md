@@ -122,8 +122,8 @@ larger, elsewhere, or in code someone else is changing gets a pull request or an
 
 The claim bot ([`docs/claim-bot.md`](docs/claim-bot.md)) moves the card to `In progress` and
 assigns you, and refuses the claim when the work is not free or another issue it is *Blocked by*
-is still open. The `Touches:` line names the paths you will change; it is optional, and with it the
-bot's answer lists the open pull requests and other claims that touch the same code. Without the bot, a plain comment
+is still open. The `Touches:` line names the paths you will change: give it, because the
+bot's answer and the *Overlap* notice on other people's pull requests find your claim by those paths. Without the bot, a plain comment
 ("I'd like to take this. Plan: …") is the claim, and the first one wins: a bot that is down never
 means the issue is free. Hold at most five claims without a pull request at a time; the bot refuses
 the sixth until a draft pull request or an `/unclaim` frees one.

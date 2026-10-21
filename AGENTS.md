@@ -189,8 +189,8 @@ lists those files and what else is left out (`third_party/`, fixtures, generated
 Work is tracked in the GitHub project **Suhina**
 (<https://github.com/orgs/suhina-daw/projects/1>), and nowhere else. New work, bugs found while
 testing and follow-ups a change leaves open go there as items, written in English, with a
-Status, a Priority (P0 to P2) and a Phase (the ROADMAP milestone). A feature, a piece of an epic
-and anything larger gets an issue, so the pull request can say `Closes #N`; a bug fixed at once
+Status, a Priority (P0 to P2) and a Phase (the ROADMAP milestone). A feature or a piece of an epic
+gets an issue, so the pull request can say `Closes #N`; a bug fixed at once
 or a small change goes straight to a pull request that says what it fixes. An issue gets a type label and
 area labels (`CONTRIBUTING.md` › Issues lists them); a larger piece split into issues is an
 `epic`, and repository, build and release work is a `chore`. Items imported from the earlier

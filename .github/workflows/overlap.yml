@@ -16,7 +16,8 @@ name: Overlap
 # too; it never checks out or runs the pull request's code, it only reads lists through the API.
 on:
   pull_request_target:
-    types: [opened, reopened, synchronize, ready_for_review]
+    # `edited`: a new description or base branch changes which claims and stack are left out.
+    types: [opened, reopened, synchronize, ready_for_review, edited]
 
 permissions:
   contents: read
@@ -69,7 +70,10 @@ jobs:
                 pull_number: pr.number,
                 per_page: 100,
               });
-              mine = files.map((file) => file.filename).filter((path) => !common(path));
+              // A renamed file counts under both names: work on the old one meets it too.
+              mine = [...new Set(files.flatMap((file) => [file.filename, file.previous_filename].filter(Boolean)))].filter(
+                (path) => !common(path),
+              );
             } catch (error) {
               core.warning(`Could not read this pull request's files: ${error.message}`);
               return;
@@ -84,7 +88,7 @@ jobs:
                      pullRequest(number: $number) { closingIssuesReferences(first: 10) { nodes { number } } }
                      pullRequests(states: OPEN, first: 100, orderBy: { field: UPDATED_AT, direction: DESC }) {
                        nodes {
-                         number title headRefName baseRefName
+                         number title headRefName baseRefName headRepository { nameWithOwner }
                          files(first: 100) { nodes { path } }
                        }
                      }
@@ -96,23 +100,28 @@ jobs:
               closes = ((repo.pullRequest && repo.pullRequest.closingIssuesReferences.nodes) || []).map((n) => n.number);
               // GitHub links `Closes #N` only from a pull request into the default branch, so a
               // stacked one's closing words are read from its description too (as claim.yml does).
-              for (const match of String(pr.body || "").matchAll(/\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s+#(\d+)\b/gi)) {
+              // Closing words inside an HTML comment (the template's example) do not count.
+              const said = String(pr.body || "").replace(/<!--[\s\S]*?-->/g, "");
+              for (const match of said.matchAll(/\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s+#(\d+)\b/gi)) {
                 const number = Number(match[1]);
                 if (!closes.includes(number)) closes.push(number);
               }
               const pulls = (repo.pullRequests && repo.pullRequests.nodes) || [];
               // The whole stack this pull request is in: the branches below it down to main, and
-              // every pull request built on its branch or on one built on it.
+              // every pull request built on its branch or on one built on it. Only branches of this
+              // repository stack (a base is always here); a fork's branch of the same name does not.
+              const here = `${context.repo.owner}/${context.repo.repo}`;
+              const local = (p) => Boolean(p.headRepository) && p.headRepository.nameWithOwner === here;
               const stack = new Set();
-              for (let base = pr.base.ref, below; (below = pulls.find((p) => p.headRefName === base && !stack.has(p.number))); base = below.baseRefName) {
+              for (let base = pr.base.ref, below; (below = pulls.find((p) => local(p) && p.headRefName === base && !stack.has(p.number))); base = below.baseRefName) {
                 stack.add(below.number);
               }
-              const heads = [pr.head.ref];
+              const heads = pr.head.repo && pr.head.repo.full_name === here ? [pr.head.ref] : [];
               while (heads.length > 0) {
                 const head = heads.pop();
                 for (const above of pulls.filter((p) => p.baseRefName === head && !stack.has(p.number))) {
                   stack.add(above.number);
-                  heads.push(above.headRefName);
+                  if (local(above)) heads.push(above.headRefName);
                 }
               }
               for (const other of pulls) {
@@ -125,7 +134,10 @@ jobs:
               core.warning(`Could not read the open pull requests: ${error.message}`);
             }
             try {
-              // A claim assigns the claimer: the open issues with someone assigned are the claims.
+              // A claim assigns the claimer and an accepted `/unclaim` takes the assignee off, so the
+              // open issues with someone assigned are the claims; the paths are those of the newest
+              // `/claim` by an assignee or naming one (`/claim @login`), so a refused command by
+              // anyone else changes nothing.
               const result = await github.rest.issues.listForRepo({
                 ...context.repo,
                 state: "open",
@@ -141,9 +153,16 @@ jobs:
                   issue_number: issue.number,
                   per_page: 100,
                 });
-                const commands = comments.filter((entry) => /^\/(un)?claim\b/i.test((entry.body || "").trim()));
-                const newest = commands.pop();
-                if (!newest || /^\/unclaim\b/i.test(newest.body.trim())) continue;
+                const assignees = (issue.assignees || []).map((who) => who.login.toLowerCase());
+                const claims = comments.filter((entry) => {
+                  const text = (entry.body || "").trim();
+                  if (!/^\/claim\b/i.test(text)) return false;
+                  const by = ((entry.user && entry.user.login) || "").toLowerCase();
+                  const named = (text.match(/^\/claim\s+@([A-Za-z0-9-]+)/i) || [])[1];
+                  return assignees.includes(by) || (named !== undefined && assignees.includes(named.toLowerCase()));
+                });
+                const newest = claims.pop();
+                if (!newest) continue;
                 const paths = touchedPaths(newest.body);
                 const hit = mine.filter((file) => paths.some((path) => covers(path, file)));
                 if (hit.length > 0) found.push({ name: `#${issue.number}`, title: issue.title, hit, claim: true });
