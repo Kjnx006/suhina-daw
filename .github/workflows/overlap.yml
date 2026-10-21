@@ -85,21 +85,30 @@ jobs:
             const found = [];
             let closes = [];
             try {
-              const open = await github.graphql(
-                `query ($owner: String!, $name: String!, $number: Int!) {
-                   repository(owner: $owner, name: $name) {
-                     pullRequest(number: $number) { closingIssuesReferences(first: 10) { nodes { number } } }
-                     pullRequests(states: OPEN, first: 100, orderBy: { field: UPDATED_AT, direction: DESC }) {
-                       nodes {
-                         number title headRefName baseRefName headRepository { nameWithOwner }
-                         files(first: 100) { totalCount nodes { path changeType } }
+              const pulls = [];
+              let cursor = null;
+              let repo;
+              do {
+                const open = await github.graphql(
+                  `query ($owner: String!, $name: String!, $number: Int!, $cursor: String) {
+                     repository(owner: $owner, name: $name) {
+                       pullRequest(number: $number) { closingIssuesReferences(first: 10) { nodes { number } } }
+                       pullRequests(states: OPEN, first: 100, after: $cursor, orderBy: { field: UPDATED_AT, direction: DESC }) {
+                         pageInfo { hasNextPage endCursor }
+                         nodes {
+                           number title headRefName baseRefName headRepository { nameWithOwner }
+                           files(first: 100) { totalCount nodes { path changeType } }
+                         }
                        }
                      }
-                   }
-                 }`,
-                { owner: context.repo.owner, name: context.repo.repo, number: pr.number },
-              );
-              const repo = open.repository || {};
+                   }`,
+                  { owner: context.repo.owner, name: context.repo.repo, number: pr.number, cursor },
+                );
+                repo = open.repository || {};
+                const page = repo.pullRequests || {};
+                pulls.push(...(page.nodes || []));
+                cursor = page.pageInfo && page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
+              } while (cursor);
               closes = ((repo.pullRequest && repo.pullRequest.closingIssuesReferences.nodes) || []).map((n) => n.number);
               // GitHub links `Closes #N` only from a pull request into the default branch, so a
               // stacked one's closing words are read from its description too (as claim.yml does).
@@ -110,7 +119,6 @@ jobs:
                 const number = Number(match[1]);
                 if (!closes.includes(number)) closes.push(number);
               }
-              const pulls = (repo.pullRequests && repo.pullRequests.nodes) || [];
               // The whole stack this pull request is in: the branches below it down to main, and
               // every pull request built on its branch or on one built on it. Only branches of this
               // repository stack (a base is always here); a fork's branch of the same name does not.

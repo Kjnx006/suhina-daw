@@ -121,9 +121,14 @@ const github = {
       createComment: async args => state.comments.push(args.body),
     },
   },
-  graphql: async query => ({ repository: {
+  graphql: async (query, variables) => ({ repository: {
     pullRequest: { closingIssuesReferences: { nodes: [] } },
-    pullRequests: { nodes: input.pulls.map(p => ({
+    pullRequests: {
+      pageInfo: {
+        hasNextPage: Number(variables.cursor || 0) + 100 < input.pulls.length,
+        endCursor: String(Number(variables.cursor || 0) + 100),
+      },
+      nodes: input.pulls.slice(Number(variables.cursor || 0), Number(variables.cursor || 0) + 100).map(p => ({
       number: p.number, title: "Work", headRefName: `feature/${p.number}`,
       baseRefName: "main", headRepository: { nameWithOwner: repo },
       files: { totalCount: p.totalCount || 1, nodes: [{
@@ -167,6 +172,15 @@ class OverlapTests(unittest.TestCase):
         )])
         self.assertIn("#1 Work", state["comments"][0])
         self.assertEqual(state["fetched"], [1])
+
+    def test_overlap_on_later_open_pr_pages_is_reported(self):
+        pulls = [dict(number=n, path="unrelated.rs") for n in range(1, 202)]
+        pulls[100]["path"] = "a.rs"
+        pulls[200]["path"] = "a.rs"
+        state = self.run_notice(pulls)
+        self.assertIn("#101 Work", state["comments"][0])
+        self.assertIn("#201 Work", state["comments"][0])
+        self.assertEqual(state["warnings"], [])
 
     def test_failed_pagination_keeps_known_files_and_checks_later_prs(self):
         state = self.run_notice([
