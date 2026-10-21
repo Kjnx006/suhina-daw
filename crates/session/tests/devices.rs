@@ -923,6 +923,11 @@ fn an_instrument_group_moved_to_another_track_takes_its_instrument_s_place() {
     assert_eq!(moved.len(), lead.len(), "{moved:?}");
     assert_eq!(moved.first().map(String::as_str), Some("Layer"));
     assert_eq!(moved.last(), lead.last(), "the effect stays after it");
+    // The group is the track's instrument for an effect added after it too: none goes before it.
+    let before = run(&mut session, "device.add", json!({ "track": "Lead", "id": "utility", "position": 0 }));
+    assert!(before.is_err(), "{before:?}");
+    run(&mut session, "device.add", json!({ "track": "Lead", "id": "utility", "position": 1 })).unwrap();
+    assert_eq!(chain(&session, "Lead").first().map(String::as_str), Some("Layer"));
 }
 
 /// A track plays one instrument: one added to a track that has one takes its place, with the

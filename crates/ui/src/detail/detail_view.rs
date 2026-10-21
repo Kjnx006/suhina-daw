@@ -2184,7 +2184,8 @@ fn branch_value(ui: &Ui, id: Id, stored: f64, dragged: &Dragged, min: f64, max: 
 fn loop_bounds(edit: ClipEdit, start: f64, end: f64) -> (f64, f64) {
     let (min, max) = match edit {
         ClipEdit::LoopStart => (0.0, end - 0.25),
-        _ => (start + 0.25, 120_000.0),
+        // Never past the longest loop, even for a start within a quarter beat of it.
+        _ => ((start + 0.25).min(120_000.0), 120_000.0),
     };
     let min = if min.is_finite() { min } else { 0.0 };
     (min, if max.is_finite() { max.max(min) } else { min })
@@ -2478,6 +2479,7 @@ mod tests {
         assert_eq!(0.3f64.clamp(min, max), 0.0);
         let (min, max) = loop_bounds(ClipEdit::LoopEnd, 119_999.9, 120_000.0);
         assert!(min <= max, "{min} > {max}");
+        assert!(max <= 120_000.0 && min <= 120_000.0, "never past the longest loop: {min} to {max}");
         assert_eq!(loop_bounds(ClipEdit::LoopStart, 0.0, 4.0), (0.0, 3.75));
         assert_eq!(loop_bounds(ClipEdit::LoopEnd, 1.0, 4.0), (1.25, 120_000.0));
     }
