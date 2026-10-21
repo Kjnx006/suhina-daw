@@ -8,6 +8,7 @@ covers:
   - .github/workflows/claim.yml
   - scripts/claim_bot_test.py
   - .github/workflows/depends-on.yml
+  - .github/workflows/overlap.yml
   - scripts/depends_on_test.py
   - .github/workflows/project-sync.yml
   - scripts/project_sync.py
@@ -113,6 +114,16 @@ It lists at most ten, each with the paths that overlap, and points at `AGENTS.md
 do about them. It never refuses a claim for an overlap: two pieces of work on the same crate are
 often fine, and only the people doing them can tell. A claim without the line is answered with a
 sentence saying what the line does. A lookup that fails leaves its part out of the answer.
+
+A bug fix or a small change needs no claim, so the same lookup also runs on pull requests: the
+[Overlap](../.github/workflows/overlap.yml) workflow compares a pull request's changed files with
+the other open pull requests' files and with the claims' `Touches:` lines, read as above. When
+something overlaps it comments on the pull request, and it updates that one comment with every push
+(to say nothing overlaps any more, when that is so). It leaves out the pull requests in the same
+stack, the claims of the issues the pull request closes, and the files every pull request may meet
+(`Cargo.lock` and the generated documents). It never fails. It runs as `pull_request_target`, as on
+`main`, so a fork's pull request gets the comment too, and it never checks out the pull request's
+code.
 
 ## The Depends on check
 

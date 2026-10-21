@@ -108,7 +108,14 @@ claim. A trusted contributor, named in the repository variable `TRUSTED_CONTRIBU
 feature in `Backlog` without waiting, or move it to `Ready` with `/ready` so others can claim it ([`docs/claim-bot.md`](docs/claim-bot.md) › Who is who). A bug in `Backlog` is free. `Do not start yet` means the order is deliberate: the issue and
 its comments say what the work waits for, so ask there instead of starting.
 
-**Claim it** in a comment on the issue before you write code:
+**Bugs and small changes need no issue and no claim.** Open a pull request that says what it
+fixes. The *Overlap* notice ([`.github/workflows/overlap.yml`](.github/workflows/overlap.yml))
+comments on it when another open pull request or a claim changes the same files, and keeps the
+comment up to date with each push; it never fails. A fix you find along the way that is small and
+in the same code goes in the same pull request, under *Also fixed* in its description; one that is
+larger, elsewhere, or in code someone else is changing gets a pull request or an issue of its own.
+
+**Claim a feature or a piece of an epic** in a comment on the issue before you write code:
 
 > /claim Plan: … When: …
 > Touches: crates/ui/src/detail, crates/session

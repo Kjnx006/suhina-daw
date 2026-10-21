@@ -189,14 +189,22 @@ lists those files and what else is left out (`third_party/`, fixtures, generated
 Work is tracked in the GitHub project **Suhina**
 (<https://github.com/orgs/suhina-daw/projects/1>), and nowhere else. New work, bugs found while
 testing and follow-ups a change leaves open go there as items, written in English, with a
-Status, a Priority (P0 to P2) and a Phase (the ROADMAP milestone). Work that a pull request will
-close gets an issue, so the pull request can say `Closes #N`. An issue gets a type label and
+Status, a Priority (P0 to P2) and a Phase (the ROADMAP milestone). A feature, a piece of an epic
+and anything larger gets an issue, so the pull request can say `Closes #N`; a bug fixed at once
+or a small change goes straight to a pull request that says what it fixes. An issue gets a type label and
 area labels (`CONTRIBUTING.md` › Issues lists them); a larger piece split into issues is an
 `epic`, and repository, build and release work is a `chore`. Items imported from the earlier
 board keep their old key in the title (`(LOOP-27)`); a pull request for one names that key.
-Before starting, claim the item the way [`CONTRIBUTING.md`](CONTRIBUTING.md) › *Working on an issue*
+Before starting a feature or a piece of an epic, claim it the way [`CONTRIBUTING.md`](CONTRIBUTING.md) › *Working on an issue*
 describes, for a person and for an agent alike: no assignee and no open pull request for it,
 `Backlog` or `Ready` on the board (`Ready` for a feature, unless you are a trusted contributor), and a `/claim` comment with the plan.
+A bug or a small change needs no claim: the [Overlap](.github/workflows/overlap.yml) notice on the
+pull request lists other open work on the same files.
+
+**What belongs in one pull request.** A fix found while working that is small and in the same code
+goes in the same pull request, under *Also fixed* in its description. Make it a pull request of its
+own, or an issue, when it is larger, in other code, or in code another open pull request or claim
+is changing.
 
 Several agents often run at once, so an agent never starts work that exists already:
 
@@ -246,7 +254,7 @@ Several agents often run at once, so an agent never starts work that exists alre
   This posting rule applies to agents a person runs. Installed reviewers such as Codex and
   CodeRabbit post through their own apps and follow [Code Review Rules](#code-review-rules).
 
-- **Before writing code**, comment `/claim` with the plan and a `Touches:` line naming the paths
+- **Before writing code for a feature or a piece of an epic**, comment `/claim` with the plan and a `Touches:` line naming the paths
   you will change (`Touches: crates/ui/src/detail, crates/session`), and read the bot's answer.
   When it says the work is taken, that it is blocked by another issue, or that it is already yours
   and names a pull request, do not start a second one: continue in that pull request, take the
@@ -269,7 +277,8 @@ the same issue is opened only when the user asks for one, and its description sa
 
 **Overlapping work across issues.** Two issues often need the same code: a helper, a command, a
 model field. The claim bot lists the open pull requests and other claims that touch the paths in
-your `Touches:` line; without one, list them yourself before writing code
+your `Touches:` line, and the Overlap notice lists them again on the pull request as its files
+change; without a claim, list them yourself before writing code
 (`gh pr list --state open --json number,title,files`), and read every one that touches the crates,
 views or commands you will change. Then:
 
