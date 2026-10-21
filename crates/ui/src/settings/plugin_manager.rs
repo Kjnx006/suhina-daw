@@ -70,7 +70,8 @@ impl ManagerState {
 /// alone. A picked row the search hides, or a rescan removed, is left alone.
 fn batch(picked: &[String], spec: &str, order: &[String]) -> Vec<String> {
     if picked.iter().any(|s| s == spec) {
-        picked.iter().filter(|s| order.contains(s)).cloned().collect()
+        let shown: std::collections::HashSet<&str> = order.iter().map(String::as_str).collect();
+        picked.iter().filter(|s| shown.contains(s.as_str())).cloned().collect()
     } else {
         vec![spec.to_string()]
     }
@@ -332,8 +333,9 @@ pub fn show(ui: &mut Ui, area: Rect, plugins: &mut PluginsView) -> ManagerOut {
                     if row.secondary_clicked() && !picked.contains(spec) {
                         pick = Some((spec.clone(), false, false));
                     }
-                    let these = batch(&picked, spec, &order);
+                    // Worked out only while the menu is open, not for every row every frame.
                     row.context_menu(|ui| {
+                        let these = batch(&picked, spec, &order);
                         let what =
                             if these.len() > 1 { format!("{} plug-ins", these.len()) } else { "the plug-in".into() };
                         if ui.add_enabled(!scanning, egui::Button::new(format!("Turn off {what}"))).clicked() {

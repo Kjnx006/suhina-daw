@@ -689,10 +689,6 @@ fn a_background_update_is_reported_until_it_is_taken_in() {
     assert!(map.updating());
     assert!(!map.update_in_background(Vec::new), "one at a time");
     go.send(()).unwrap();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while map.updating() {
-        map.poll();
-        assert!(std::time::Instant::now() < deadline, "the update did not come in");
-        std::thread::sleep(std::time::Duration::from_millis(1));
-    }
+    map.wait();
+    assert!(!map.updating());
 }

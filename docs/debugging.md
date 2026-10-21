@@ -175,7 +175,7 @@ DAW never went back.
 
 ```text
   23.04s frame   50  lines=[7.05]  pointer=7.09
-  23.09s frame   51  lines=[7.57]  pointer=7.09
+  23.08s frame   51  lines=[7.57]  pointer=7.09
   23.21s frame   54  lines=[7.05]  pointer=7.09
 ```
 
