@@ -4448,19 +4448,24 @@ impl App {
         }
     }
 
-    /// Runs the actions whose keys were pressed (the keymap), unless a text field has the
-    /// keyboard or Settings is waiting for a key to bind.
-    fn shortcuts(&mut self, ui: &Ui, actions: &mut Vec<Action>) {
-        // A prompt waiting on a stored edit (the ARA one) included: a key that changed the
-        // project meanwhile would leave that edit naming what is gone.
-        let dialog = self.project_dialog.is_some()
+    /// A dialog or prompt that holds the keyboard: the keymap's actions wait until it is closed.
+    fn key_dialog_open(&self) -> bool {
+        self.project_dialog.is_some()
             || self.save_prompt.is_some()
             || self.unsaved_prompt.is_some()
             || self.ara_prompt.is_some()
             || self.missing.open
             || self.about_open
             || !self.agent_asks.is_empty()
-            || self.updates.open;
+            || self.updates.open
+    }
+
+    /// Runs the actions whose keys were pressed (the keymap), unless a text field has the
+    /// keyboard or Settings is waiting for a key to bind.
+    fn shortcuts(&mut self, ui: &Ui, actions: &mut Vec<Action>) {
+        // A prompt waiting on a stored edit (the ARA one) included: a key that changed the
+        // project meanwhile would leave that edit naming what is gone.
+        let dialog = self.key_dialog_open();
         if ui.ctx().egui_wants_keyboard_input()
             || dialog
             || (self.settings_open && self.page.capture.is_some())
@@ -5471,8 +5476,11 @@ impl App {
             self.close_map_window();
             return;
         }
-        for action in &frame.keys {
-            self.do_action(action, actions);
+        // The map window's keys wait behind the same dialogs as the main window's.
+        if !self.key_dialog_open() {
+            for action in &frame.keys {
+                self.do_action(action, actions);
+            }
         }
         if !self.sample_map.view.window {
             return;
