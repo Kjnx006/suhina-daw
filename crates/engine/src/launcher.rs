@@ -21,6 +21,7 @@ use crate::stretch::StretchVoice;
 use crate::{AUDIO_HEADROOM, NoteStart, Renderer, bus_chain, note_velocity, route, start_note};
 
 mod modes;
+mod prepare;
 use modes::SlotLaunch;
 
 /// Commands that can wait in the queue between two audio blocks.
