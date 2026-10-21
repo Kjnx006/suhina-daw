@@ -940,6 +940,50 @@ fn pasting_devices_keeps_the_chains_rules() {
     assert!(run(&mut session, "device.paste", json!({ "track": "Keys", "position": "4/0/0" })).is_err());
 }
 
+/// Fills the Keys track's chain with effects up to the most devices a track holds.
+fn keys_with_a_full_chain() -> Session {
+    let mut session = keys_with_the_whole_chain();
+    while chain_names(&session).len() < suhina_model::MAX_DEVICES {
+        let added = run(&mut session, "device.add", json!({ "track": "Keys", "id": "utility" }));
+        assert!(added.is_ok(), "{added:?}");
+    }
+    session
+}
+
+#[test]
+fn duplicating_and_pasting_devices_stay_within_the_device_limit() {
+    let mut session = keys_with_a_full_chain();
+    let before = session.project().clone();
+    let error = run(&mut session, "device.duplicateMany", json!({ "track": "Keys", "devices": [3] })).unwrap_err();
+    assert!(error.contains("at most"), "{error}");
+    assert_eq!(session.project(), &before, "a refused duplicate changes nothing");
+    run(&mut session, "device.copy", json!({ "track": "Keys", "devices": [3] })).unwrap();
+    let error = run(&mut session, "device.paste", json!({ "track": "Keys" })).unwrap_err();
+    assert!(error.contains("at most"), "{error}");
+    assert_eq!(session.project(), &before, "a refused paste changes nothing");
+    // One place free: the same copy goes in.
+    run(&mut session, "device.remove", json!({ "track": "Keys", "device": 3 })).unwrap();
+    run(&mut session, "device.paste", json!({ "track": "Keys" })).unwrap();
+    assert_eq!(chain_names(&session).len(), suhina_model::MAX_DEVICES);
+}
+
+#[test]
+fn pasting_devices_stays_within_the_group_depth_limit() {
+    let mut session = keys_with_the_whole_chain();
+    // Group the utility four times over: a group nested to the deepest level.
+    for _ in 0..suhina_model::MAX_DEVICE_GROUP_DEPTH {
+        run(&mut session, "device.group", json!({ "track": "Keys", "device": 2 })).unwrap();
+    }
+    let before = session.project().clone();
+    // A copy of the outer group, put in its innermost branch, would nest one level deeper.
+    run(&mut session, "device.copy", json!({ "track": "Keys", "devices": [2] })).unwrap();
+    let error = run(&mut session, "device.paste", json!({ "track": "Keys", "position": "2/0/0/0/0/0/0/0/0" }));
+    assert!(error.as_ref().is_err_and(|e| e.contains("nest")), "{error:?}");
+    assert_eq!(session.project(), &before, "a refused paste changes nothing");
+    // Duplicating copies a device beside itself, which never nests deeper than it already is.
+    run(&mut session, "device.duplicateMany", json!({ "track": "Keys", "devices": ["2/0/0/0/0/0/0/0/0"] })).unwrap();
+}
+
 #[test]
 fn a_device_moves_or_copies_to_another_track_in_one_step() {
     let mut session = Session::new(project());
