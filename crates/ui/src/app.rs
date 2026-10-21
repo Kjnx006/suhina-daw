@@ -1583,7 +1583,12 @@ impl App {
                 None => self.save_prompt = Some(prompt),
             }
         }
-        let other_dialog = self.unsaved_prompt.is_some() || self.save_prompt.is_some() || self.project_dialog.is_some();
+        // A recovery offer, and the agent prompt after it, wait for the dialogs that ask about
+        // a project, the question about a clip's plug-in edits among them.
+        let other_dialog = self.unsaved_prompt.is_some()
+            || self.save_prompt.is_some()
+            || self.project_dialog.is_some()
+            || self.ara_prompt.is_some();
         if !other_dialog && let Some(offer) = self.recovery.first().cloned() {
             let written = suhina_session::backup::date_time(offer.written);
             let written = written.get(..16).unwrap_or(&written);
@@ -6791,6 +6796,23 @@ mod tests {
         harness.state_mut().queue_action("view.toggle");
         harness.run();
         assert_eq!(harness.state().shown, View::Arrangement);
+    }
+
+    #[test]
+    fn an_agent_asking_to_connect_waits_for_the_question_about_a_clips_edits() {
+        use egui_kittest::kittest::Queryable;
+        let mut app = App::new();
+        app.set_session(suhina_session::Session::new(crate::demo::demo_project()), &[]);
+        app.ara_prompt = Some((Action::new("clip.moveMany", serde_json::json!({})), "Plug-in".into()));
+        app.ask_agent(1, "Helper".into());
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(Vec2::new(1280.0, 800.0))
+            .build_ui_state(|ui, app: &mut App| app.ui(ui), app);
+        harness.run();
+        assert!(harness.query_by_label("Allow Helper").is_none(), "one dialog at a time");
+        harness.state_mut().ara_prompt = None;
+        harness.run();
+        assert!(harness.query_by_label("Allow Helper").is_some());
     }
 
     #[test]
