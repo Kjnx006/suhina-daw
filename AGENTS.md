@@ -295,6 +295,8 @@ request green and mergeable and tells the user it is ready; the maintainer adds 
 
 ## 4. Before you finish a task
 
+When the task changed code (a review changes none and runs nothing: [Code Review Rules](#code-review-rules)):
+
 ```sh
 cargo fmt --all
 cargo clippy --workspace --all-targets -- -D warnings
@@ -412,7 +414,8 @@ it describes, so `impact` can point the next change to it.
 ## Code Review Rules
 
 Before reviewing a pull request, read [`docs/code-review.md`](docs/code-review.md). Follow its
-procedure, the rules in this file and any more specific instructions for the changed paths.
+procedure, the rules in this file and any more specific instructions for the changed paths. A
+review runs no tests or builds: it reads the CI results of the push it reviews.
 
 Trace changed behaviour through callers, shared code and side effects. Check the agreed scope
 against relevant issues and documents, previous fixes and existing review feedback. Equivalent
