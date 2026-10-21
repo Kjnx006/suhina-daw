@@ -2282,8 +2282,12 @@ impl App {
         let dropped = self.dropped_files(ui);
         keys_for_shortcuts(ui.ctx());
         self.launch_keys(ui, &mut actions);
-        for id in std::mem::take(&mut self.queued) {
-            self.do_action(&id, &mut actions);
+        // A menu bar item chosen while a dialog asks something is passed over, as its key is.
+        let queued = std::mem::take(&mut self.queued);
+        if !self.dialog_holds_actions() {
+            for id in queued {
+                self.do_action(&id, &mut actions);
+            }
         }
         self.shortcuts(ui, &mut actions);
         self.apply_zoom(ui.ctx());
@@ -4446,18 +4450,23 @@ impl App {
         }
     }
 
-    /// Runs the actions whose keys were pressed (the keymap), unless a text field has the
-    /// keyboard or Settings is waiting for a key to bind.
-    fn shortcuts(&mut self, ui: &Ui, actions: &mut Vec<Action>) {
-        let dialog = self.project_dialog.is_some()
+    /// Whether a dialog is open that the keymap's actions wait for: their keys, in either
+    /// window, and the menu bar's items do nothing meanwhile.
+    fn dialog_holds_actions(&self) -> bool {
+        self.project_dialog.is_some()
             || self.save_prompt.is_some()
             || self.unsaved_prompt.is_some()
             || self.ara_prompt.is_some()
             || self.about_open
             || !self.agent_asks.is_empty()
-            || self.updates.open;
+            || self.updates.open
+    }
+
+    /// Runs the actions whose keys were pressed (the keymap), unless a text field has the
+    /// keyboard or Settings is waiting for a key to bind.
+    fn shortcuts(&mut self, ui: &Ui, actions: &mut Vec<Action>) {
         if ui.ctx().egui_wants_keyboard_input()
-            || dialog
+            || self.dialog_holds_actions()
             || (self.settings_open && self.page.capture.is_some())
             || widgets::value_active(ui.ctx())
         {
@@ -5408,6 +5417,7 @@ impl App {
         };
         let revision = self.revision;
         let had_drag = self.browser.drag.is_some();
+        let held = self.dialog_holds_actions();
         let mut settings = self.settings.clone();
         let (panel, browser, projects, keymap) =
             (&mut self.sample_map, &mut self.browser, &mut self.projects, &self.keymap);
@@ -5424,8 +5434,9 @@ impl App {
             ui.painter().rect_filled(rect, 0.0, theme::window_background());
             let changed = panel.show(ui, rect, browser, projects, &mut settings, revision);
             // The window has its own keyboard: its keys run the same actions as the main window's,
-            // unless a field in it is being typed in. Embedded, the main window reads them.
-            let keys = if embedded || ui.ctx().egui_wants_keyboard_input() {
+            // unless a field in it is being typed in or a dialog in the main window asks
+            // something. Embedded, the main window reads them.
+            let keys = if held || embedded || ui.ctx().egui_wants_keyboard_input() {
                 Vec::new()
             } else {
                 ui.input_mut(|i| keymap.pressed(i, |id| !crate::settings::keymap::piano_roll_only(id)))
@@ -6757,6 +6768,29 @@ mod tests {
         assert!(!app.over_the_window());
         app.ara_prompt = Some((Action::new("clip.moveMany", serde_json::json!({})), "Plug-in".into()));
         assert!(app.over_the_window());
+    }
+
+    #[test]
+    fn a_menu_bar_item_chosen_while_the_question_about_a_clips_edits_is_open_does_nothing() {
+        let mut app = App::new();
+        app.set_session(suhina_session::Session::new(crate::demo::demo_project()), &[]);
+        app.shown = View::Session;
+        app.ara_prompt = Some((Action::new("clip.moveMany", serde_json::json!({})), "Plug-in".into()));
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(Vec2::new(1280.0, 800.0))
+            .build_ui_state(|ui, app: &mut App| app.ui(ui), app);
+        harness.run();
+        harness.state_mut().queue_action("view.toggle");
+        harness.run();
+        assert_eq!(harness.state().shown, View::Session);
+        assert!(harness.state().ara_prompt.is_some(), "the question is still asked");
+        // Answered, the menu bar works again; the item chosen meanwhile is not run late.
+        harness.state_mut().ara_prompt = None;
+        harness.run();
+        assert_eq!(harness.state().shown, View::Session);
+        harness.state_mut().queue_action("view.toggle");
+        harness.run();
+        assert_eq!(harness.state().shown, View::Arrangement);
     }
 
     #[test]
