@@ -271,6 +271,19 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+/// `mutex`, waiting for it until `deadline` and giving up after that.
+fn lock_until<T>(mutex: &Mutex<T>, deadline: Instant) -> Option<MutexGuard<'_, T>> {
+    loop {
+        if let Some(guard) = try_lock(mutex) {
+            return Some(guard);
+        }
+        if Instant::now() >= deadline {
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
 /// `mutex` if nobody holds it now.
 fn try_lock<T>(mutex: &Mutex<T>) -> Option<MutexGuard<'_, T>> {
     match mutex.try_lock() {
@@ -788,10 +801,11 @@ impl Plugin {
         what: &'static str,
         wanted: impl Fn(&Message) -> bool,
     ) -> Result<Message, PluginError> {
-        self.request_within(self.launch.timeout, message, what, wanted)
+        self.request_in(None, message, what, wanted)
     }
 
-    /// [`Plugin::request`], waiting at most `timeout` for the reply.
+    /// [`Plugin::request`], waiting at most `timeout` for the group's lock and the reply together,
+    /// so a sibling in the same host process that is busy cannot hold the caller longer.
     fn request_within(
         &mut self,
         timeout: Duration,
@@ -799,7 +813,26 @@ impl Plugin {
         what: &'static str,
         wanted: impl Fn(&Message) -> bool,
     ) -> Result<Message, PluginError> {
-        let mut group = lock(&self.group);
+        self.request_in(Some(timeout), message, what, wanted)
+    }
+
+    /// The request itself: `within` bounds the wait for the lock and the reply, `None` waits for
+    /// the lock as long as it takes and for the reply as long as the launch's timeout.
+    fn request_in(
+        &mut self,
+        within: Option<Duration>,
+        message: &Message,
+        what: &'static str,
+        wanted: impl Fn(&Message) -> bool,
+    ) -> Result<Message, PluginError> {
+        let (mut group, timeout) = match within {
+            None => (lock(&self.group), self.launch.timeout),
+            Some(within) => {
+                let deadline = Instant::now() + within;
+                let group = lock_until(&self.group, deadline).ok_or(PluginError::Timeout(what))?;
+                (group, deadline.saturating_duration_since(Instant::now()))
+            }
+        };
         if group.generation != self.generation {
             return Err(PluginError::Protocol("the host process was replaced; restart the plug-in".into()));
         }
@@ -1357,6 +1390,21 @@ mod tests {
     #![allow(clippy::panic, clippy::unwrap_used)] // test helpers outside #[test] functions
     use super::*;
     use std::sync::mpsc::Sender;
+
+    #[test]
+    fn a_lock_waited_for_until_a_deadline_gives_up_after_it() {
+        let mutex = Mutex::new(1);
+        // Free: taken whatever the deadline.
+        assert!(lock_until(&mutex, Instant::now()).is_some());
+        // Held: a deadline already passed gives up at once, a later one is waited for.
+        let held = lock(&mutex);
+        assert!(lock_until(&mutex, Instant::now()).is_none());
+        thread::scope(|scope| {
+            let waiting = scope.spawn(|| lock_until(&mutex, Instant::now() + Duration::from_secs(60)).is_some());
+            drop(held);
+            assert!(waiting.join().unwrap());
+        });
+    }
 
     /// A host process that is alive but runs nothing: a real child and a control socket, with
     /// what the test `feed`s a group, so `host_memory` can be tried without the executable.
