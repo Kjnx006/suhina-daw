@@ -3,7 +3,7 @@ description: The MCP server for agents: tools, file roots, errors and how to run
 read_when: MCP, agents, attach, mcp --attach, agents in the app, live agent edits, allow agent, audio output, MIDI input, arm, record, recording, count-in, audio device, buffer size, ASIO, project_open, command_run, file roots, rmcp, suhina-cli mcp, several projects, project id, plug-in commands, device commands, library commands, add samples, track.add, clip.addFiles, preview, preview.noteOn, preview.noteOff, note.split, mute a note, note.setMuted, note.humanize, note.fitToScale, note.invert, note.reverse, note.legato, note.stretch, note.randomizeVelocity, note.rampVelocity, MIDI tools
 type: system
 status: current
-last_verified: 2026-10-19
+last_verified: 2026-10-20
 covers:
   - crates/automation/src/server.rs
   - crates/automation/src/workspace.rs
@@ -76,6 +76,9 @@ suhina-cli mcp --read-root ./projects --write-root ./renders [--audio]
   `continue: true` after the first ([ADR 0002](decisions/0002-commands.md)). Only the active project plays: switching
   closes the previous project's output and starts the new one (its result has `audio_output`),
   so transport commands aimed at another project fail.
+- **Plug-ins between commands.** The server takes in the plug-ins that started every 50 ms, as
+  the window does every frame, so a project plays with them while the agent sends nothing or only
+  `projects.*` commands.
 - **Choosing the output.** `audio.devices` lists the audio hosts (WASAPI, and ASIO in a build
   with the `asio` feature; ALSA, JACK or CoreAudio elsewhere) and each one's output devices with
   `sample_rates`, `buffer_sizes` (what the driver allows), `buffer_range` and whether WASAPI

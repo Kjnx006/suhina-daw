@@ -14,7 +14,7 @@ use suhina_model::*;
 
 use crate::chain_tests::{BEAT, SR, blocks, device, left, max_diff, note, peak, project};
 use crate::{
-    AudioPool, OFFLINE_TIMEOUT, PluginProcessor, PluginSlotInfo, Plugins, Renderer, Sent, plugin_devices,
+    AudioPool, OFFLINE_TIMEOUT, PluginProcessor, PluginSlotInfo, Plugins, Renderer, Sent, SongPosition, plugin_devices,
     render_offline, render_offline_with_plugins,
 };
 
@@ -42,6 +42,8 @@ struct Stand {
     /// Set false to make it stop answering.
     answering: Arc<AtomicBool>,
     dropped: Arc<AtomicUsize>,
+    /// The song's place it was told of with each block.
+    songs: Arc<std::sync::Mutex<Vec<SongPosition>>>,
 }
 
 impl Stand {
@@ -54,6 +56,7 @@ impl Stand {
             frames: 0,
             answering: Arc::new(AtomicBool::new(true)),
             dropped: Arc::default(),
+            songs: Arc::default(),
         }
     }
 }
@@ -65,6 +68,12 @@ impl Drop for Stand {
 }
 
 impl PluginProcessor for Stand {
+    fn transport(&mut self, song: &SongPosition) {
+        if let Ok(mut songs) = self.songs.lock() {
+            songs.push(*song);
+        }
+    }
+
     fn process(&mut self, buffer: &mut [f32], events: &[(usize, NoteEvent)], _timeout: Duration) -> bool {
         if !self.answering.load(Ordering::SeqCst) {
             return false;
@@ -158,6 +167,22 @@ fn a_plug_in_effect_processes_the_tracks_sound() {
     .unwrap();
     let quarter: Vec<f32> = dry.iter().map(|s| s * 0.25).collect();
     assert!(max_diff(&both, &quarter) < 1e-4, "{}", max_diff(&both, &quarter));
+}
+
+#[test]
+fn a_plug_in_is_told_the_loop_in_beats_and_in_seconds_through_the_tempo_map() {
+    // 120 BPM to beat 4, then 60: the loop from beat 2 to 8 is 1 s to 2 s + 4 s.
+    let mut p = project(vec![note(0.0, 1.0, 60)], 8.0, vec![plug(vst3())]);
+    p.transport.tempo_changes = vec![TempoPoint { beat: 4.0, bpm: 60.0, ramp: false }];
+    p.transport.loop_range = Some(LoopRange { start: 2.0, end: 8.0 });
+    p.transport.loop_enabled = true;
+    let stand = Stand::new(Behaviour::Gain(1.0));
+    let songs = Arc::clone(&stand.songs);
+    render_offline_with_plugins(&p, &AudioPool::new(), SR, 512, plugins(&p, vec![(stand, EFFECT)])).unwrap();
+    let song = *songs.lock().unwrap().first().expect("told of the song");
+    assert_eq!(song.cycle, Some((2.0, 8.0)));
+    let (start, end) = song.cycle_seconds.expect("in seconds too");
+    assert!((start - 1.0).abs() < 1e-3 && (end - 6.0).abs() < 1e-3, "{start} to {end}");
 }
 
 #[test]

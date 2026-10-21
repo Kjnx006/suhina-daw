@@ -50,9 +50,10 @@
   (`.coderabbit.yaml`) and shows a **CodeRabbit** check beside CI. Its comments are suggestions, not requirements: answer or resolve
   them, and leave DSP and real-time behaviour to the tests and renders. The check is never red and
   never required. Comment `@coderabbitai review` to run it again.
-- **Codex:** comment `@codex review` on a pull request to request a review or another pass.
-  Automatic Codex review triggers are managed in the
-  Codex service settings. Codex follows [AGENTS.md](AGENTS.md#code-review-rules) and
+- **Codex:** the maintainer requests a review with `@codex review` once the `ci` check has
+  finished on the pull request's latest push; contributors ask the maintainer for one. The
+  reviewer runs no tests or builds and reads the CI results of the push it reviews. Codex follows
+  [AGENTS.md](AGENTS.md#code-review-rules) and
   [`docs/code-review.md`](docs/code-review.md). Actionable inline threads must be answered or
   resolved before the merge queue takes the pull request; optional suggestions stay in the
   summary. Hosted review reporting limits are described in the guide.
@@ -195,8 +196,8 @@ says how the queue is set up and what runs in it.
 adds it, and [`ready-to-merge.yml`](.github/workflows/ready-to-merge.yml) approves the commit it was
 added on and turns on *Merge when ready* for that commit: the queue takes the pull request once
 `ci` is green and every review thread is resolved (CodeRabbit's too), and a red check stops it. A
-contributor's pull request also needs `test-build`, so its build was tried first; Dependabot's Cargo
-updates do not, since the queue's build and tests check them (its updates of the Actions do). A push by anyone
+contributor's pull request also needs a maintainer's approving review of the same head commit, or
+`test-build` so its build was tried first; Dependabot's Cargo updates need neither, since the queue's build and tests check them (its updates of the Actions do). A push by anyone
 but a maintainer takes the label off, so new commits are never merged unread; taking the label off
 by hand stops the merge. Only a maintainer adds it: an agent never adds `ready to merge`, also not
 when asked to finish a pull request.

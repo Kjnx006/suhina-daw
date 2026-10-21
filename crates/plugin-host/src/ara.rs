@@ -1,7 +1,8 @@
 // Copyright (C) 2026 The Suhina contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The host side of ARA ([ADR 0028]): a document controller for one VST3 instance, built from
+//! The host side of ARA ([ADR 0028]): a document controller per plug-in and project, which the
+//! VST3 instances on the project's tracks share, each its track as a region sequence, built from
 //! the [`AraDocument`] the engine sends with `load`, with the host's interfaces the plug-in calls
 //! back (audio access, archiving, content access, model updates, playback control).
 //!
@@ -16,6 +17,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::ffi::{CString, c_void};
+use std::rc::{Rc, Weak};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -198,9 +200,17 @@ struct Host {
     sources: Vec<Box<Source>>,
     /// The plug-in said its document data changed (ARA 2.3), so the project has unsaved edits.
     changed: AtomicBool,
-    /// The plug-in said a region's, modification's or source's notes may have changed, or the
-    /// host changed the regions: the notes are read again after the next model update (#720).
-    notes_changed: AtomicBool,
+    /// Counts what can change an archive: the plug-in's edits and analyses, and the host's own
+    /// edits and restores. A track's archive stored at the same count is given again rather than
+    /// stored anew (storing a large one held the plug-in's editor up for seconds).
+    archive_changes: AtomicU64,
+    /// Counts the times the plug-in said a region's, modification's or source's notes may have
+    /// changed, or the host changed the regions: each track's notes are read again after the
+    /// next model update when it moved on (#720).
+    notes_changed: AtomicU64,
+    /// The sources being analysed (by their host ref, the boxed `Source`) and how far each has
+    /// come, 0 to 1; one is taken out when its analysis completes.
+    analysis: Mutex<Vec<(usize, f32)>>,
     /// The song's tempo map and time signatures, which the plug-in reads through the musical
     /// context's content readers, so its timeline counts bars as the song does. Changed only
     /// inside an edit, on the model thread, so what a reader handed out stays put.
@@ -250,6 +260,15 @@ impl Host {
         *self.bars.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = bars;
         true
     }
+
+    fn notes_may_have_changed(&self) {
+        self.notes_changed.fetch_add(1, Ordering::AcqRel);
+    }
+
+    /// Something an archive holds may have changed.
+    fn archive_may_have_changed(&self) {
+        self.archive_changes.fetch_add(1, Ordering::AcqRel);
+    }
 }
 
 /// How often the host lets the plug-in send the model changes it has queued, when it is not
@@ -261,43 +280,38 @@ const MODEL_UPDATES_EVERY: Duration = Duration::from_millis(250);
 /// finish its analysis without saying the content changed.
 const NOTES_AGAIN_EVERY: Duration = Duration::from_secs(1);
 
-/// An ARA document controller and the objects made in it, bound to one plug-in instance.
-pub(crate) struct Document {
+thread_local! {
+    /// The documents this process holds, by the plug-in's factory and the engine's document
+    /// key ([`AraDocument::document`]): the instances of one plug-in in one project share one
+    /// (ADR 0028 decision 2), each track a region sequence of it, so the plug-in sees every
+    /// track. Weak: a document goes with the last instance bound to it.
+    static SHARED: RefCell<Vec<Weak<RefCell<Shared>>>> = const { RefCell::new(Vec::new()) };
+}
+
+/// An ARA document controller and the objects made in it that the tracks share: the musical
+/// context, the audio sources and their modifications. Each instance bound to it adds a region
+/// sequence of its own ([`Document`]).
+struct Shared {
+    /// The plug-in's factory (by address) and the engine's document key; an empty key is a
+    /// document of one instance, never shared.
+    key: (usize, String),
     controller: *const ARADocumentControllerInstance,
     /// When `notifyModelUpdates` was last called.
     last_model_update: Cell<Instant>,
-    /// When the regions' notes were last read.
-    last_notes_read: Cell<Instant>,
     host: Box<Host>,
     context: ARAMusicalContextRef,
-    sequence: ARARegionSequenceRef,
     sources: Vec<ARAAudioSourceRef>,
     /// The persistent id of each source, in the same order (its audio pool key).
     source_ids: Vec<String>,
     modifications: Vec<ARAAudioModificationRef>,
     /// The persistent id of each modification, in the same order (`content-<id>`).
     modification_ids: Vec<String>,
-    regions: Vec<ARAPlaybackRegionRef>,
-    /// Each region as it was last described, in the same order (its id is `clip-<id>`, its
-    /// `source` an index into `sources`).
-    region_described: Vec<AraRegion>,
-    /// The plug-in's extension instance, whose renderers play and show the regions.
-    extension: *const ARAPlugInExtensionInstance,
-    /// The plug-in's editor view, told which region the host has selected; `None` when the
-    /// plug-in has none.
-    editor_view: Option<(ARAEditorViewRef, *const ARAEditorViewInterface)>,
     /// The plug-in's factory, valid while its module is loaded.
     factory: *const ARAFactory,
-    /// The notes last sent for each region (its id and a digest of them), so only a change is
-    /// sent again.
-    notes_sent: RefCell<Vec<(String, u64)>>,
-    /// Regions' notes read and not yet taken by the main loop: id, notes, whether cut.
-    notes_out: RefCell<Vec<(String, Vec<AraNote>, bool)>>,
     /// The sources whose notes the host asked the plug-in to find (once each).
     analysis_asked: RefCell<Vec<ARAAudioSourceRef>>,
     /// The texts handed to the plug-in, kept for as long as the document.
-    _texts: Vec<CString>,
-    _entry: Interface,
+    texts: Vec<CString>,
 }
 
 /// The document controller's interface and reference. The interface is a copy of the
@@ -308,37 +322,30 @@ struct Controller {
     reference: ARADocumentControllerRef,
 }
 
-impl Document {
-    /// Binds `component` (a VST3 plug-in's component, initialised, not yet active) to a new
-    /// document built from `document`, in every role: playback renderer, editor renderer and
-    /// editor view. Fails when the plug-in does not support ARA 2, or an object cannot be made.
-    pub(crate) fn bind(component: &ComPtr<IComponent>, document: &AraDocument) -> Result<Self, String> {
-        let entry = Interface::query(component, &ENTRY_POINT_IID).ok_or("the plug-in does not support ARA")?;
-        // SAFETY: the table of the object queried as the entry point.
-        let entry_vtbl = unsafe { &*entry.vtbl::<EntryPointVtbl>() };
-        // SAFETY: the entry point's own table, called on the object it belongs to.
-        let factory = unsafe { (entry_vtbl.get_factory)(entry.object) };
-        // SAFETY: the plug-in hands its factory, valid while its module is loaded, or null.
-        let factory = unsafe { factory.as_ref() }.ok_or("the plug-in has no ARA factory")?;
-        let wanted = kARAAPIGeneration_2_0_Final as ARAAPIGeneration;
-        if factory.lowestSupportedApiGeneration > wanted || factory.highestSupportedApiGeneration < wanted {
-            return Err("the plug-in does not support ARA 2".into());
+impl Shared {
+    /// The document of `factory` that `document` names, made (with its musical context) when
+    /// this process has none yet.
+    fn get_or_make(factory: &ARAFactory, document: &AraDocument) -> Result<Rc<RefCell<Self>>, String> {
+        let key = (std::ptr::from_ref(factory) as usize, document.document.clone());
+        if !key.1.is_empty() {
+            let found = SHARED.with(|all| {
+                let mut all = all.borrow_mut();
+                all.retain(|weak| weak.strong_count() > 0);
+                all.iter().filter_map(Weak::upgrade).find(|shared| shared.borrow().key == key)
+            });
+            if let Some(shared) = found {
+                suhina_plugins::trace!("ara document {:?} shared with another track", key.1);
+                return Ok(shared);
+            }
         }
-        initialise(factory)?;
+        let shared = Rc::new(RefCell::new(Self::make(factory, document, key)?));
+        if !shared.borrow().key.1.is_empty() {
+            SHARED.with(|all| all.borrow_mut().push(Rc::downgrade(&shared)));
+        }
+        Ok(shared)
+    }
 
-        let mut texts = Vec::new();
-        let mut text = |value: &str| {
-            let owned = CString::new(value.replace('\0', " ")).unwrap_or_default();
-            let pointer = owned.as_ptr();
-            texts.push(owned);
-            pointer
-        };
-        let sources = document
-            .sources
-            .iter()
-            .map(|s| AudioSource::open(&s.address).map(|audio| Box::new(Source { audio })))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| format!("an audio source could not be opened: {e}"))?;
+    fn make(factory: &ARAFactory, document: &AraDocument, key: (usize, String)) -> Result<Self, String> {
         let mut host = Box::new(Host {
             instance: ARADocumentControllerHostInstance {
                 structSize: size_of::<ARADocumentControllerHostInstance>(),
@@ -353,10 +360,11 @@ impl Document {
                 playbackControllerHostRef: std::ptr::null_mut(),
                 playbackControllerInterface: &PLAYBACK,
             },
-            sources,
+            sources: Vec::new(),
             changed: AtomicBool::new(false),
-            // Read once the document is built.
-            notes_changed: AtomicBool::new(true),
+            archive_changes: AtomicU64::new(0),
+            notes_changed: AtomicU64::new(0),
+            analysis: Mutex::new(Vec::new()),
             tempo: Mutex::new(Vec::new()),
             bars: Mutex::new(Vec::new()),
         });
@@ -367,350 +375,43 @@ impl Document {
         host.instance.contentAccessControllerHostRef = host_ref.cast();
         host.instance.modelUpdateControllerHostRef = host_ref.cast();
         host.instance.playbackControllerHostRef = host_ref.cast();
-
-        let properties =
-            ARADocumentProperties { structSize: size_of::<ARADocumentProperties>(), name: text(&document.name) };
-        let create = factory.createDocumentControllerWithDocument.ok_or("the ARA factory makes no documents")?;
-        // SAFETY: the host instance and its tables outlive the document controller (both are
-        // owned by the `Document` this returns); the properties live for the call.
-        let controller = unsafe { create(&host.instance, &properties) };
         let mut made = Self {
-            controller,
+            key,
+            controller: std::ptr::null(),
             last_model_update: Cell::new(Instant::now()),
-            last_notes_read: Cell::new(Instant::now()),
             host,
             context: std::ptr::null_mut(),
-            sequence: std::ptr::null_mut(),
             sources: Vec::new(),
             source_ids: Vec::new(),
             modifications: Vec::new(),
             modification_ids: Vec::new(),
-            regions: Vec::new(),
-            region_described: Vec::new(),
-            extension: std::ptr::null(),
-            editor_view: None,
             factory,
-            notes_sent: RefCell::new(Vec::new()),
-            notes_out: RefCell::new(Vec::new()),
             analysis_asked: RefCell::new(Vec::new()),
-            _texts: Vec::new(),
-            _entry: entry,
+            texts: Vec::new(),
         };
+        let properties =
+            ARADocumentProperties { structSize: size_of::<ARADocumentProperties>(), name: made.text(&document.name) };
+        let create = factory.createDocumentControllerWithDocument.ok_or("the ARA factory makes no documents")?;
+        // SAFETY: the host instance and its tables outlive the document controller (both are
+        // owned by the `Shared` this returns); the properties live for the call.
+        made.controller = unsafe { create(&made.host.instance, &properties) };
         let dc = made.controller().ok_or("the plug-in made no document controller")?;
-        let (Some(begin), Some(end)) = (dc.interface.beginEditing, dc.interface.endEditing) else {
-            return Err("the document controller cannot be edited".into());
+        let make_context =
+            dc.interface.createMusicalContext.ok_or("the document controller cannot make a musical context")?;
+        let context = ARAMusicalContextProperties {
+            structSize: size_of::<ARAMusicalContextProperties>(),
+            name: made.text(&document.name),
+            orderIndex: 0,
+            color: std::ptr::null(),
         };
-        // SAFETY: a live document controller, on its model thread (this one).
-        unsafe { begin(dc.reference) };
-        let built = made.build(&dc, document);
-        // SAFETY: as above, closing the edit `begin` opened.
-        unsafe { end(dc.reference) };
-        built?;
-        made._texts.extend(texts);
-
-        // Every role, through the newer entry point when the plug-in has it.
-        let roles =
-            (kARAPlaybackRendererRole | kARAEditorRendererRole | kARAEditorViewRole) as ARAPlugInInstanceRoleFlags;
-        let extension = match Interface::query(component, &ENTRY_POINT2_IID) {
-            Some(entry2) => {
-                // SAFETY: the table of the object queried as the second entry point.
-                let vtbl = unsafe { &*entry2.vtbl::<EntryPoint2Vtbl>() };
-                // SAFETY: the second entry point's own table, on its object; the reference is
-                // the live document controller's.
-                unsafe { (vtbl.bind_to_document_controller_with_roles)(entry2.object, dc.reference, roles, roles) }
-            }
-            // SAFETY: as above, through the first entry point (ARA 1's binding, every role).
-            None => unsafe { (entry_vtbl.bind_to_document_controller)(made._entry.object, dc.reference) },
-        };
-        // SAFETY: the plug-in hands its extension instance, valid while it lives, or null.
-        let extension = unsafe { extension.as_ref() }.ok_or("the plug-in did not bind to the document")?;
-        made.editor_view = (!extension.editorViewRef.is_null() && !extension.editorViewInterface.is_null())
-            .then_some((extension.editorViewRef, extension.editorViewInterface));
-        made.extension = extension;
-        let all = Edited { added: made.regions.clone(), removed: Vec::new() };
-        made.renderers(&all);
+        let host_ref: *mut c_void = std::ptr::from_mut::<Host>(&mut made.host).cast();
+        made.edit_with(&dc, |_| {
+            // SAFETY: a live controller inside an edit, on its model thread; the properties live
+            // for the call, the host ref for the document.
+            unsafe { make_context(dc.reference, host_ref.cast(), &context) }
+        })
+        .map(|context| made.context = context)?;
         Ok(made)
-    }
-
-    /// Tells the plug-in's editor view which region the host has selected (`clip-<id>`), so its
-    /// editor shows it; `None`, or an id the document does not hold, selects nothing. Returns
-    /// whether the plug-in was told.
-    pub(crate) fn select(&self, region: Option<&str>) -> bool {
-        let Some((view, interface)) = self.editor_view else { return false };
-        // SAFETY: the plug-in's editor view table, valid with its extension instance.
-        let interface = unsafe { &*interface };
-        let Some(notify) = interface.notifySelection else { return false };
-        let selected: Vec<ARAPlaybackRegionRef> = region
-            .and_then(|id| self.region_described.iter().position(|r| r.id == id))
-            .and_then(|index| self.regions.get(index).copied())
-            .into_iter()
-            .collect();
-        let sequences = if selected.is_empty() { Vec::new() } else { vec![self.sequence] };
-        let selection = ARAViewSelection {
-            structSize: size_of::<ARAViewSelection>(),
-            playbackRegionRefsCount: selected.len(),
-            playbackRegionRefs: selected.as_ptr(),
-            regionSequenceRefsCount: sequences.len(),
-            regionSequenceRefs: sequences.as_ptr(),
-            timeRange: std::ptr::null(),
-        };
-        // SAFETY: the plug-in's editor view, on the model thread; the selection and the lists it
-        // points to live for the call.
-        unsafe { notify(view, &selection) };
-        true
-    }
-
-    /// Whether the plug-in said its edits changed since this was last asked (ARA 2.3).
-    #[allow(dead_code, reason = "read once the project shows unsaved edits made in the plug-in (#593)")]
-    pub(crate) fn take_changed(&self) -> bool {
-        self.host.changed.swap(false, Ordering::AcqRel)
-    }
-
-    /// Lets the plug-in send the model changes it has queued (`notifyModelUpdates`): what it
-    /// worked out after an edit (its analysis, the regions it changed) reaches its editor now
-    /// rather than on its own timer. Called outside an edit, on the model thread.
-    pub(crate) fn notify_model_updates(&self) {
-        self.last_model_update.set(Instant::now());
-        let Some(dc) = self.controller() else { return };
-        let Some(notify) = dc.interface.notifyModelUpdates else { return };
-        // SAFETY: a live document controller, not being edited, on its model thread.
-        unsafe { notify(dc.reference) };
-    }
-
-    /// Calls [`Document::notify_model_updates`] when [`MODEL_UPDATES_EVERY`] has passed since
-    /// the last call. The host's main loop calls it between messages.
-    pub(crate) fn tick(&self) {
-        if self.last_model_update.get().elapsed() >= MODEL_UPDATES_EVERY {
-            self.notify_model_updates();
-            // What the plug-in said changed reached the host inside that call; the notes are
-            // read now, outside it, as the API asks.
-            // While a region still has no notes (its analysis running, or a plug-in that says
-            // nothing when it ends) they are looked for again now and then.
-            let waiting = self.notes_sent.borrow().len() < self.region_described.len();
-            let again = waiting && self.last_notes_read.get().elapsed() >= NOTES_AGAIN_EVERY;
-            if self.host.notes_changed.swap(false, Ordering::AcqRel) || again {
-                self.last_notes_read.set(Instant::now());
-                self.read_notes();
-            }
-        }
-    }
-
-    /// Reads every region's notes and keeps for [`Document::take_notes`] those that differ from
-    /// what was sent; a region gone is forgotten, so its notes are sent again if it comes back.
-    fn read_notes(&self) {
-        let Some(dc) = self.controller() else { return };
-        self.ask_for_notes(&dc);
-        let mut sent = self.notes_sent.borrow_mut();
-        sent.retain(|(id, _)| self.region_described.iter().any(|r| r.id == *id));
-        let mut out = self.notes_out.borrow_mut();
-        for (region, described) in self.regions.iter().zip(&self.region_described) {
-            let Some((notes, truncated)) = region_notes(&dc, *region, described.start) else {
-                suhina_plugins::trace!("ara notes {}: cannot be read", described.id);
-                continue;
-            };
-            suhina_plugins::trace!(
-                "ara notes {}: {} notes, first at {:?}s, last ends {:?}s (from region start)",
-                described.id,
-                notes.len(),
-                notes.first().map(|n| n.start),
-                notes.iter().map(|n| n.start + n.length).reduce(f64::max)
-            );
-            let digest = notes_digest(&notes, truncated);
-            match sent.iter_mut().find(|(id, _)| *id == described.id) {
-                Some((_, last)) if *last == digest => continue,
-                Some((_, last)) => *last = digest,
-                // A region with no notes is not sent until it has some.
-                None if notes.is_empty() => continue,
-                None => sent.push((described.id.clone(), digest)),
-            }
-            out.retain(|(id, ..)| *id != described.id);
-            out.push((described.id.clone(), notes, truncated));
-        }
-    }
-
-    /// Asks the plug-in to find the notes of each source it has not analysed yet, once, when it
-    /// says it can (ADR 0028): the notes then show on the clips without the editor being opened.
-    /// The work is the plug-in's, in this process; it says when it is done with a content change.
-    fn ask_for_notes(&self, dc: &Controller) {
-        let notes_type = kARAContentTypeNotes as ARAContentType;
-        // SAFETY: the plug-in's factory, valid while its module is loaded.
-        let Some(factory) = (unsafe { self.factory.as_ref() }) else { return };
-        let types = factory.analyzeableContentTypes;
-        let count = factory.analyzeableContentTypesCount.min(64);
-        if types.is_null() {
-            return;
-        }
-        // SAFETY: the factory's list of `count` content types, valid while its module is loaded.
-        let listed = unsafe { std::slice::from_raw_parts(types, count) };
-        if !listed.contains(&notes_type) {
-            return;
-        }
-        let (Some(incomplete), Some(request)) =
-            (dc.interface.isAudioSourceContentAnalysisIncomplete, dc.interface.requestAudioSourceContentAnalysis)
-        else {
-            return;
-        };
-        let mut asked = self.analysis_asked.borrow_mut();
-        for source in &self.sources {
-            if asked.contains(source) {
-                continue;
-            }
-            asked.push(*source);
-            // SAFETY: a live controller, not being edited, for a source of this document.
-            if unsafe { incomplete(dc.reference, *source, notes_type) } != 0 {
-                // SAFETY: as above, with a list of one content type.
-                unsafe { request(dc.reference, *source, 1, &notes_type) };
-            }
-        }
-    }
-
-    /// The regions' notes read since the last call: region id, its notes as they are now
-    /// (empty when it has none any more), and whether there were more than the protocol carries.
-    pub(crate) fn take_notes(&self) -> Vec<(String, Vec<AraNote>, bool)> {
-        std::mem::take(&mut *self.notes_out.borrow_mut())
-    }
-
-    /// The plug-in's edits as an archive: its document archive id and the bytes. `None` when it
-    /// cannot store them.
-    pub(crate) fn store(&self) -> Option<(String, Vec<u8>)> {
-        // What the plug-in has queued goes into the archive too.
-        self.notify_model_updates();
-        let dc = self.controller()?;
-        // SAFETY: the factory the document was made with, valid while its module is loaded.
-        let factory = unsafe { self.factory.as_ref() }?;
-        let id = text_of(factory.documentArchiveID)?;
-        let store = dc.interface.storeObjectsToArchive?;
-        let mut archive = Archive { bytes: Vec::new(), id: CString::new(id.clone()).ok()? };
-        let writer: ARAArchiveWriterHostRef = std::ptr::from_mut(&mut archive).cast();
-        // SAFETY: a live document controller, not being edited, on its model thread; the
-        // archive lives for the call. No filter stores the whole document.
-        let stored = unsafe { store(dc.reference, writer, std::ptr::null()) };
-        (stored != 0).then_some((id, archive.bytes))
-    }
-
-    /// The edits of one modification (`content-<id>`) and its source (the pool key), stored on
-    /// their own (a partial archive, ADR 0028 step 6): to give another track's plug-in when a
-    /// clip goes there with its edits kept. The plug-in's document archive id and the bytes.
-    pub(crate) fn export(&self, modification: &str, source: &str) -> Result<(String, Vec<u8>), String> {
-        // What the plug-in has queued goes into the archive too.
-        self.notify_model_updates();
-        let dc = self.controller().ok_or("no document controller")?;
-        // SAFETY: as in `store`.
-        let factory = unsafe { self.factory.as_ref() }.ok_or("no ARA factory")?;
-        let id = text_of(factory.documentArchiveID).ok_or("the plug-in names no archive kind")?;
-        let store = dc.interface.storeObjectsToArchive.ok_or("the plug-in cannot store edits")?;
-        let at = |ids: &[String], wanted: &str| ids.iter().position(|i| i == wanted);
-        let modification_ref = at(&self.modification_ids, modification)
-            .and_then(|i| self.modifications.get(i).copied())
-            .ok_or_else(|| format!("the document has no {modification}"))?;
-        let source_ref = at(&self.source_ids, source)
-            .and_then(|i| self.sources.get(i).copied())
-            .ok_or("the document does not have the clip's audio")?;
-        let filter = ARAStoreObjectsFilter {
-            structSize: size_of::<ARAStoreObjectsFilter>(),
-            documentData: 0,
-            audioSourceRefsCount: 1,
-            audioSourceRefs: &source_ref,
-            audioModificationRefsCount: 1,
-            audioModificationRefs: &modification_ref,
-        };
-        let mut archive = Archive { bytes: Vec::new(), id: CString::new(id.clone()).map_err(|_| "a bad archive id")? };
-        let writer: ARAArchiveWriterHostRef = std::ptr::from_mut(&mut archive).cast();
-        // SAFETY: a live document controller, not being edited, on its model thread; the archive,
-        // the filter and the refs it points at live for the call.
-        let stored = unsafe { store(dc.reference, writer, &filter) };
-        if stored == 0 {
-            return Err("the plug-in could not store the clip's edits".into());
-        }
-        Ok((id, archive.bytes))
-    }
-
-    /// Gives the plug-in the edits [`Document::export`] stored in another track's document,
-    /// for its modification `to` (it was `from` there) of the same `source`: a clip moved or
-    /// copied to this track with its edits kept. Refused while the document has no `to` yet
-    /// (the clip has not reached it), or for an archive of a kind the plug-in does not read.
-    pub(crate) fn import(&self, id: &str, bytes: &[u8], from: &str, to: &str, source: &str) -> Result<(), String> {
-        if !self.modification_ids.iter().any(|m| m == to) {
-            return Err(format!("the document has no {to} yet"));
-        }
-        if !self.source_ids.iter().any(|s| s == source) {
-            return Err("the document does not have the clip's audio yet".into());
-        }
-        self.check_archive(id)?;
-        let dc = self.controller().ok_or("no document controller")?;
-        let (Some(begin), Some(end), Some(restore)) =
-            (dc.interface.beginEditing, dc.interface.endEditing, dc.interface.restoreObjectsFromArchive)
-        else {
-            return Err("the plug-in cannot restore edits".into());
-        };
-        let texts = [source, from, to].map(CString::new);
-        let [Ok(source), Ok(from), Ok(to)] = texts else { return Err("a bad persistent id".into()) };
-        let source_id = source.as_ptr();
-        let (from_id, to_id) = (from.as_ptr(), to.as_ptr());
-        let filter = ARARestoreObjectsFilter {
-            structSize: size_of::<ARARestoreObjectsFilter>(),
-            documentData: 0,
-            audioSourceIDsCount: 1,
-            audioSourceArchiveIDs: &source_id,
-            audioSourceCurrentIDs: &source_id,
-            audioModificationIDsCount: 1,
-            audioModificationArchiveIDs: &from_id,
-            audioModificationCurrentIDs: &to_id,
-        };
-        let mut archive = Archive { bytes: bytes.to_vec(), id: CString::new(id).map_err(|_| "a bad archive id")? };
-        let reader: ARAArchiveReaderHostRef = std::ptr::from_mut(&mut archive).cast();
-        // SAFETY: a live document controller on its model thread, inside an edit; the archive,
-        // the filter and the texts it points at live for the call.
-        unsafe { begin(dc.reference) };
-        // SAFETY: as above.
-        let restored = unsafe { restore(dc.reference, reader, &filter) };
-        // SAFETY: as above, closing the edit.
-        unsafe { end(dc.reference) };
-        self.notify_model_updates();
-        if restored == 0 { Err("the plug-in could not read the clip's edits".into()) } else { Ok(()) }
-    }
-
-    /// Whether the plug-in reads archives of kind `id`: its own, or one it lists as compatible.
-    fn check_archive(&self, id: &str) -> Result<(), String> {
-        // SAFETY: as in `store`.
-        let factory = unsafe { self.factory.as_ref() }.ok_or("no ARA factory")?;
-        let mut known = vec![text_of(factory.documentArchiveID)];
-        let count = factory.compatibleDocumentArchiveIDsCount.min(MAX_COMPATIBLE_IDS);
-        if !factory.compatibleDocumentArchiveIDs.is_null() {
-            for index in 0..count {
-                // SAFETY: the factory's list holds `compatibleDocumentArchiveIDsCount` ids.
-                known.push(text_of(unsafe { factory.compatibleDocumentArchiveIDs.wrapping_add(index).read() }));
-            }
-        }
-        if known.iter().flatten().any(|k| k == id) {
-            Ok(())
-        } else {
-            Err("the plug-in does not read these saved edits".into())
-        }
-    }
-
-    /// Gives the plug-in back the edits [`Document::store`] took, for the objects with the same
-    /// persistent ids (the same clips). Refused when the archive is of a kind the plug-in does
-    /// not read (another plug-in's, or a newer version's).
-    pub(crate) fn restore(&self, id: &str, bytes: &[u8]) -> Result<(), String> {
-        let dc = self.controller().ok_or("no document controller")?;
-        self.check_archive(id)?;
-        let (Some(begin), Some(end), Some(restore)) =
-            (dc.interface.beginEditing, dc.interface.endEditing, dc.interface.restoreObjectsFromArchive)
-        else {
-            return Err("the plug-in cannot restore edits".into());
-        };
-        let mut archive = Archive { bytes: bytes.to_vec(), id: CString::new(id).map_err(|_| "a bad archive id")? };
-        let reader: ARAArchiveReaderHostRef = std::ptr::from_mut(&mut archive).cast();
-        // SAFETY: a live document controller on its model thread, inside an edit; the archive
-        // lives for the call. No filter restores every object whose id matches.
-        unsafe { begin(dc.reference) };
-        // SAFETY: as above.
-        let restored = unsafe { restore(dc.reference, reader, std::ptr::null()) };
-        // SAFETY: as above, closing the edit.
-        unsafe { end(dc.reference) };
-        self.notify_model_updates();
-        if restored == 0 { Err("the plug-in could not read its saved edits".into()) } else { Ok(()) }
     }
 
     fn controller(&self) -> Option<Controller> {
@@ -734,47 +435,89 @@ impl Document {
         Some(Controller { interface, reference: instance.documentControllerRef })
     }
 
-    /// Makes the musical context, the region sequence, the sources, their modifications and
-    /// the playback regions, inside the edit `bind` opened.
-    fn build(&mut self, dc: &Controller, document: &AraDocument) -> Result<(), String> {
-        let host_ref: *mut c_void = std::ptr::from_mut::<Host>(&mut self.host).cast();
-        let i = &dc.interface;
-        let missing = |what: &str| format!("the document controller cannot make {what}");
-        let make_context = i.createMusicalContext.ok_or_else(|| missing("a musical context"))?;
-        let context = ARAMusicalContextProperties {
-            structSize: size_of::<ARAMusicalContextProperties>(),
-            name: self.text(&document.name),
-            orderIndex: 0,
-            color: std::ptr::null(),
+    /// Runs `work` inside one edit of the document (`beginEditing` .. `endEditing`).
+    fn edit_with<T>(&mut self, dc: &Controller, work: impl FnOnce(&mut Self) -> T) -> Result<T, String> {
+        let (Some(begin), Some(end)) = (dc.interface.beginEditing, dc.interface.endEditing) else {
+            return Err("the document controller cannot be edited".into());
         };
-        // SAFETY: a live controller inside an edit, on its model thread; the properties live
-        // for the call, the host ref for the document.
-        self.context = unsafe { make_context(dc.reference, host_ref.cast(), &context) };
-        let make_sequence = i.createRegionSequence.ok_or_else(|| missing("a region sequence"))?;
-        let sequence = ARARegionSequenceProperties {
-            structSize: size_of::<ARARegionSequenceProperties>(),
-            name: self.text(&document.sequence),
-            orderIndex: 0,
-            musicalContextRef: self.context,
-            color: std::ptr::null(),
-        };
-        // SAFETY: as above.
-        self.sequence = unsafe { make_sequence(dc.reference, host_ref.cast(), &sequence) };
-        for (index, described) in document.sources.iter().enumerate() {
-            self.add_source(dc, index, &described.id, &described.name)?;
-        }
-        for region in &document.regions {
-            self.add_region(dc, region)?;
-        }
-        Ok(())
+        // SAFETY: a live document controller, on its model thread (this one).
+        unsafe { begin(dc.reference) };
+        let done = work(self);
+        // SAFETY: as above, closing the edit `begin` opened.
+        unsafe { end(dc.reference) };
+        Ok(done)
     }
 
     /// Keeps `value` for as long as the document and returns it as a C string for the plug-in.
     fn text(&mut self, value: &str) -> *const std::ffi::c_char {
         let owned = CString::new(value.replace('\0', " ")).unwrap_or_default();
         let pointer = owned.as_ptr();
-        self._texts.push(owned);
+        self.texts.push(owned);
         pointer
+    }
+
+    /// Lets the plug-in send the model changes it has queued (`notifyModelUpdates`): what it
+    /// worked out after an edit (its analysis, the regions it changed) reaches its editor now
+    /// rather than on its own timer. Called outside an edit, on the model thread.
+    fn notify_model_updates(&self) {
+        self.last_model_update.set(Instant::now());
+        let Some(dc) = self.controller() else { return };
+        let Some(notify) = dc.interface.notifyModelUpdates else { return };
+        let started = Instant::now();
+        // SAFETY: a live document controller, not being edited, on its model thread.
+        unsafe { notify(dc.reference) };
+        slow_call("notifyModelUpdates", started);
+    }
+
+    /// Opens the sources of `document` the document does not have yet, before an edit, so a
+    /// source that cannot be read changes nothing.
+    fn open_new_sources(&self, document: &AraDocument) -> Result<Vec<(String, String, Box<Source>)>, String> {
+        let mut new_sources: Vec<(String, String, Box<Source>)> = Vec::new();
+        for described in &document.sources {
+            if !self.source_ids.contains(&described.id) && !new_sources.iter().any(|(id, _, _)| *id == described.id) {
+                let audio = AudioSource::open(&described.address)
+                    .map_err(|e| format!("an audio source could not be opened: {e}"))?;
+                new_sources.push((described.id.clone(), described.name.clone(), Box::new(Source { audio })));
+            }
+        }
+        Ok(new_sources)
+    }
+
+    /// Takes a tempo or time signature change of `document` (the plug-in reads the musical
+    /// context again) and makes the sources opened by [`Shared::open_new_sources`], inside an
+    /// edit.
+    fn take_context_and_sources(
+        &mut self,
+        dc: &Controller,
+        document: &AraDocument,
+        new_sources: Vec<(String, String, Box<Source>)>,
+    ) -> Result<(), String> {
+        if self.host.set_context(document)
+            && !self.context.is_null()
+            && let Some(update) = dc.interface.updateMusicalContextContent
+        {
+            suhina_plugins::trace!("ara musical context changed");
+            // SAFETY: a live controller inside an edit, for this document's context; a null
+            // range is the whole of it.
+            unsafe {
+                update(
+                    dc.reference,
+                    self.context,
+                    std::ptr::null(),
+                    kARAContentUpdateEverythingChanged as ARAContentUpdateFlags,
+                )
+            };
+        }
+        for (id, name, source) in new_sources {
+            self.host.sources.push(source);
+            if let Err(why) = self.add_source(dc, self.host.sources.len() - 1, &id, &name) {
+                // No source was made for it: `host.sources` stays in step with `source_ids`,
+                // which the analysis pairs them by.
+                let _refused = self.host.sources.pop();
+                return Err(why);
+            }
+        }
+        Ok(())
     }
 
     /// Makes the audio source of `self.host.sources[index]`, persistent id `id`, inside an
@@ -810,12 +553,19 @@ impl Document {
         Ok(())
     }
 
-    /// The modification `region` plays, made inside an edit the first time it is asked for.
-    fn modification_for(&mut self, dc: &Controller, region: &AraRegion) -> Result<ARAAudioModificationRef, String> {
+    /// The modification `region` plays, made inside an edit the first time it is asked for;
+    /// `source` is the source's index in this document. Tracks that play the same content
+    /// share it, and so its edits, as the project's clips share their content (ADR 0001).
+    fn modification_for(
+        &mut self,
+        dc: &Controller,
+        region: &AraRegion,
+        source: usize,
+    ) -> Result<ARAAudioModificationRef, String> {
         if let Some(index) = self.modification_ids.iter().position(|id| *id == region.modification) {
             return self.modifications.get(index).copied().ok_or_else(|| "a modification is missing".into());
         }
-        let source = *self.sources.get(region.source).ok_or("a region names a source the document lacks")?;
+        let source = *self.sources.get(source).ok_or("a region names a source the document lacks")?;
         let host_ref: *mut c_void = std::ptr::from_mut::<Host>(&mut self.host).cast();
         let properties = ARAAudioModificationProperties {
             structSize: size_of::<ARAAudioModificationProperties>(),
@@ -851,8 +601,325 @@ impl Document {
         Ok(made)
     }
 
+    /// Asks the plug-in to find the notes of each source it has not analysed yet, once, when it
+    /// says it can (ADR 0028): the notes then show on the clips without the editor being opened.
+    /// The work is the plug-in's, in this process; it says when it is done with a content change.
+    fn ask_for_notes(&self, dc: &Controller) {
+        let started = Instant::now();
+        self.ask_for_notes_now(dc);
+        slow_call("asking for notes", started);
+    }
+
+    fn ask_for_notes_now(&self, dc: &Controller) {
+        let notes_type = kARAContentTypeNotes as ARAContentType;
+        // SAFETY: the plug-in's factory, valid while its module is loaded.
+        let Some(factory) = (unsafe { self.factory.as_ref() }) else { return };
+        let types = factory.analyzeableContentTypes;
+        let count = factory.analyzeableContentTypesCount.min(64);
+        if types.is_null() {
+            return;
+        }
+        // SAFETY: the factory's list of `count` content types, valid while its module is loaded.
+        let listed = unsafe { std::slice::from_raw_parts(types, count) };
+        if !listed.contains(&notes_type) {
+            return;
+        }
+        let (Some(incomplete), Some(request)) =
+            (dc.interface.isAudioSourceContentAnalysisIncomplete, dc.interface.requestAudioSourceContentAnalysis)
+        else {
+            return;
+        };
+        let mut asked = self.analysis_asked.borrow_mut();
+        for source in &self.sources {
+            if asked.contains(source) {
+                continue;
+            }
+            asked.push(*source);
+            // SAFETY: a live controller, not being edited, for a source of this document.
+            if unsafe { incomplete(dc.reference, *source, notes_type) } != 0 {
+                // SAFETY: as above, with a list of one content type.
+                unsafe { request(dc.reference, *source, 1, &notes_type) };
+            }
+        }
+    }
+
+    /// The plug-in's document archive id.
+    fn archive_id(&self) -> Option<String> {
+        // SAFETY: the factory the document was made with, valid while its module is loaded.
+        let factory = unsafe { self.factory.as_ref() }?;
+        text_of(factory.documentArchiveID)
+    }
+
+    /// Stores the sources and modifications with the persistent ids given (and the document's
+    /// own data): one track's edits, in a document the tracks share. `None` when the plug-in
+    /// cannot store them.
+    fn store(&self, source_ids: &[String], modification_ids: &[String]) -> Option<(String, Vec<u8>)> {
+        // What the plug-in has queued goes into the archive too.
+        self.notify_model_updates();
+        let dc = self.controller()?;
+        let id = self.archive_id()?;
+        let store = dc.interface.storeObjectsToArchive?;
+        let sources: Vec<ARAAudioSourceRef> = self
+            .source_ids
+            .iter()
+            .zip(&self.sources)
+            .filter(|(id, _)| source_ids.contains(id))
+            .map(|(_, source)| *source)
+            .collect();
+        let modifications: Vec<ARAAudioModificationRef> = self
+            .modification_ids
+            .iter()
+            .zip(&self.modifications)
+            .filter(|(id, _)| modification_ids.contains(id))
+            .map(|(_, modification)| *modification)
+            .collect();
+        let filter = ARAStoreObjectsFilter {
+            structSize: size_of::<ARAStoreObjectsFilter>(),
+            documentData: 1,
+            audioSourceRefsCount: sources.len(),
+            audioSourceRefs: sources.as_ptr(),
+            audioModificationRefsCount: modifications.len(),
+            audioModificationRefs: modifications.as_ptr(),
+        };
+        let mut archive = Archive { bytes: Vec::new(), id: CString::new(id.clone()).ok()? };
+        let writer: ARAArchiveWriterHostRef = std::ptr::from_mut(&mut archive).cast();
+        // SAFETY: a live document controller, not being edited, on its model thread; the
+        // archive, the filter and the lists it points at live for the call.
+        let stored = unsafe { store(dc.reference, writer, &filter) };
+        (stored != 0).then_some((id, archive.bytes))
+    }
+
+    /// Whether the plug-in reads archives of kind `id`: its own, or one it lists as compatible.
+    fn check_archive(&self, id: &str) -> Result<(), String> {
+        // SAFETY: as in `archive_id`.
+        let factory = unsafe { self.factory.as_ref() }.ok_or("no ARA factory")?;
+        let mut known = vec![text_of(factory.documentArchiveID)];
+        let count = factory.compatibleDocumentArchiveIDsCount.min(MAX_COMPATIBLE_IDS);
+        if !factory.compatibleDocumentArchiveIDs.is_null() {
+            for index in 0..count {
+                // SAFETY: the factory's list holds `compatibleDocumentArchiveIDsCount` ids.
+                known.push(text_of(unsafe { factory.compatibleDocumentArchiveIDs.wrapping_add(index).read() }));
+            }
+        }
+        if known.iter().flatten().any(|k| k == id) {
+            Ok(())
+        } else {
+            Err("the plug-in does not read these saved edits".into())
+        }
+    }
+
+    /// Restores an archive in one edit, with `filter` or (null) every object whose persistent
+    /// id matches. Whether the plug-in read it.
+    fn restore_with(&mut self, id: &str, bytes: &[u8], filter: *const ARARestoreObjectsFilter) -> Result<bool, String> {
+        self.check_archive(id)?;
+        let dc = self.controller().ok_or("no document controller")?;
+        let restore = dc.interface.restoreObjectsFromArchive.ok_or("the plug-in cannot restore edits")?;
+        let mut archive = Archive { bytes: bytes.to_vec(), id: CString::new(id).map_err(|_| "a bad archive id")? };
+        let reader: ARAArchiveReaderHostRef = std::ptr::from_mut(&mut archive).cast();
+        let restored = self.edit_with(&dc, |_| {
+            // SAFETY: a live document controller on its model thread, inside an edit; the
+            // archive and the filter live for the call.
+            unsafe { restore(dc.reference, reader, filter) }
+        })?;
+        self.host.archive_may_have_changed();
+        self.notify_model_updates();
+        Ok(restored != 0)
+    }
+}
+
+impl Drop for Shared {
+    /// Destroys the document's shared objects (modifications, sources, context) in one edit,
+    /// once every track's sequence and regions are gone, then the document controller, as ARA
+    /// requires.
+    fn drop(&mut self) {
+        let Some(dc) = self.controller() else { return };
+        let i = &dc.interface;
+        if let (Some(begin), Some(end)) = (i.beginEditing, i.endEditing) {
+            // SAFETY: a live document controller, on its model thread.
+            unsafe { begin(dc.reference) };
+            for &modification in &self.modifications {
+                if let Some(destroy) = i.destroyAudioModification {
+                    // SAFETY: a modification made in this document, destroyed once.
+                    unsafe { destroy(dc.reference, modification) };
+                }
+            }
+            for &source in &self.sources {
+                if let Some(enable) = i.enableAudioSourceSamplesAccess {
+                    // SAFETY: as above, for a source; its reading stops before it goes.
+                    unsafe { enable(dc.reference, source, 0) };
+                }
+                if let Some(destroy) = i.destroyAudioSource {
+                    // SAFETY: as above.
+                    unsafe { destroy(dc.reference, source) };
+                }
+            }
+            if !self.context.is_null()
+                && let Some(destroy) = i.destroyMusicalContext
+            {
+                // SAFETY: as above, for the context.
+                unsafe { destroy(dc.reference, self.context) };
+            }
+            // SAFETY: closing the edit opened above.
+            unsafe { end(dc.reference) };
+        }
+        if let Some(destroy) = i.destroyDocumentController {
+            // SAFETY: the controller, destroyed once, after every object of its document.
+            unsafe { destroy(dc.reference) };
+        }
+    }
+}
+
+/// An archive as stored: the plug-in's document archive id and the bytes.
+type Stored = (String, Vec<u8>);
+
+/// One plug-in instance's part of an ARA document: its track as a region sequence, the track's
+/// clips as playback regions, and the instance bound to the document, its renderers holding
+/// those regions. The document itself ([`Shared`]) is shared with the instances of the same
+/// plug-in on the project's other tracks.
+pub(crate) struct Document {
+    shared: Rc<RefCell<Shared>>,
+    sequence: ARARegionSequenceRef,
+    /// The sequence's name and place, as last told.
+    sequence_described: (String, u32),
+    regions: Vec<ARAPlaybackRegionRef>,
+    /// Each region as it was last described, in the same order (its id is `clip-<id>`, its
+    /// `source` an index into the document's sources).
+    region_described: Vec<AraRegion>,
+    /// The sources and modifications this track's clips played since it was bound, by
+    /// persistent id: what its state stores ([`Document::store`]).
+    owned_sources: Vec<String>,
+    owned_modifications: Vec<String>,
+    /// The plug-in's extension instance, whose renderers play and show the regions.
+    extension: *const ARAPlugInExtensionInstance,
+    /// The plug-in's editor view, told which region the host has selected; `None` when the
+    /// plug-in has none.
+    editor_view: Option<(ARAEditorViewRef, *const ARAEditorViewInterface)>,
+    /// When the regions' notes were last read, and the document's note change count then.
+    last_notes_read: Cell<Instant>,
+    notes_seen: Cell<u64>,
+    /// The notes last sent for each region (its id and a digest of them), so only a change is
+    /// sent again.
+    notes_sent: RefCell<Vec<(String, u64)>>,
+    /// Regions' notes read and not yet taken by the main loop: id, notes, whether cut.
+    notes_out: RefCell<Vec<(String, Vec<AraNote>, bool)>>,
+    /// The track's archive as last stored, and the document's change count then.
+    stored: RefCell<Option<(u64, Stored)>>,
+    /// The analysis progress last sent, in whole percents; `None` while none was going on.
+    analysis_sent: Cell<Option<u32>>,
+    _entry: Interface,
+}
+
+impl Document {
+    /// Binds `component` (a VST3 plug-in's component, initialised, not yet active) to the
+    /// document `document` names (made when this process has none yet), with the track it
+    /// describes as a region sequence of its own, in every role: playback renderer, editor
+    /// renderer and editor view. Fails when the plug-in does not support ARA 2, or an object
+    /// cannot be made.
+    pub(crate) fn bind(component: &ComPtr<IComponent>, document: &AraDocument) -> Result<Self, String> {
+        let entry = Interface::query(component, &ENTRY_POINT_IID).ok_or("the plug-in does not support ARA")?;
+        // SAFETY: the table of the object queried as the entry point.
+        let entry_vtbl = unsafe { &*entry.vtbl::<EntryPointVtbl>() };
+        // SAFETY: the entry point's own table, called on the object it belongs to.
+        let factory = unsafe { (entry_vtbl.get_factory)(entry.object) };
+        // SAFETY: the plug-in hands its factory, valid while its module is loaded, or null.
+        let factory = unsafe { factory.as_ref() }.ok_or("the plug-in has no ARA factory")?;
+        let wanted = kARAAPIGeneration_2_0_Final as ARAAPIGeneration;
+        if factory.lowestSupportedApiGeneration > wanted || factory.highestSupportedApiGeneration < wanted {
+            return Err("the plug-in does not support ARA 2".into());
+        }
+        initialise(factory)?;
+        let shared = Shared::get_or_make(factory, document)?;
+        let mut made = Self {
+            shared,
+            sequence: std::ptr::null_mut(),
+            sequence_described: (document.sequence.clone(), document.order),
+            regions: Vec::new(),
+            region_described: Vec::new(),
+            owned_sources: Vec::new(),
+            owned_modifications: Vec::new(),
+            extension: std::ptr::null(),
+            editor_view: None,
+            last_notes_read: Cell::new(Instant::now()),
+            // Read once the regions are made.
+            notes_seen: Cell::new(u64::MAX),
+            notes_sent: RefCell::new(Vec::new()),
+            notes_out: RefCell::new(Vec::new()),
+            stored: RefCell::new(None),
+            analysis_sent: Cell::new(None),
+            _entry: entry,
+        };
+        let new_sources = made.shared.borrow().open_new_sources(document)?;
+        let dc = made.shared.borrow().controller().ok_or("the plug-in has no document controller")?;
+        let shared = Rc::clone(&made.shared);
+        let built = shared.borrow_mut().edit_with(&dc, |s| {
+            s.take_context_and_sources(&dc, document, new_sources)?;
+            made.make_sequence(s, &dc)?;
+            let regions = made.regions_in(s, document)?;
+            for region in &regions {
+                made.add_region(s, &dc, region)?;
+            }
+            Ok::<(), String>(())
+        })?;
+        built?;
+
+        // Every role, through the newer entry point when the plug-in has it.
+        let roles =
+            (kARAPlaybackRendererRole | kARAEditorRendererRole | kARAEditorViewRole) as ARAPlugInInstanceRoleFlags;
+        let extension = match Interface::query(component, &ENTRY_POINT2_IID) {
+            Some(entry2) => {
+                // SAFETY: the table of the object queried as the second entry point.
+                let vtbl = unsafe { &*entry2.vtbl::<EntryPoint2Vtbl>() };
+                // SAFETY: the second entry point's own table, on its object; the reference is
+                // the live document controller's.
+                unsafe { (vtbl.bind_to_document_controller_with_roles)(entry2.object, dc.reference, roles, roles) }
+            }
+            // SAFETY: as above, through the first entry point (ARA 1's binding, every role).
+            None => unsafe { (entry_vtbl.bind_to_document_controller)(made._entry.object, dc.reference) },
+        };
+        // SAFETY: the plug-in hands its extension instance, valid while it lives, or null.
+        let extension = unsafe { extension.as_ref() }.ok_or("the plug-in did not bind to the document")?;
+        made.editor_view = (!extension.editorViewRef.is_null() && !extension.editorViewInterface.is_null())
+            .then_some((extension.editorViewRef, extension.editorViewInterface));
+        made.extension = extension;
+        let all = Edited { added: made.regions.clone(), removed: Vec::new() };
+        made.renderers(&all);
+        made.shared.borrow().notify_model_updates();
+        Ok(made)
+    }
+
+    /// Makes the track's region sequence, inside an edit.
+    fn make_sequence(&mut self, s: &mut Shared, dc: &Controller) -> Result<(), String> {
+        let make = dc.interface.createRegionSequence.ok_or("the document controller cannot make a region sequence")?;
+        let host_ref: *mut c_void = std::ptr::from_mut::<Host>(&mut s.host).cast();
+        let properties = ARARegionSequenceProperties {
+            structSize: size_of::<ARARegionSequenceProperties>(),
+            name: s.text(&self.sequence_described.0),
+            orderIndex: i32::try_from(self.sequence_described.1).unwrap_or(i32::MAX),
+            musicalContextRef: s.context,
+            color: std::ptr::null(),
+        };
+        // SAFETY: a live controller inside an edit, on its model thread; the properties live
+        // for the call, the host ref for the document.
+        self.sequence = unsafe { make(dc.reference, host_ref.cast(), &properties) };
+        if self.sequence.is_null() {
+            return Err("the plug-in refused the track's region sequence".into());
+        }
+        Ok(())
+    }
+
+    /// The regions of `document` with their sources as indices into the document's sources.
+    fn regions_in(&self, s: &Shared, document: &AraDocument) -> Result<Vec<AraRegion>, String> {
+        let mut regions = Vec::with_capacity(document.regions.len());
+        for region in &document.regions {
+            let id = &document.sources.get(region.source).ok_or("a region names a source the document lacks")?.id;
+            let source = s.source_ids.iter().position(|x| x == id).ok_or("a source is missing")?;
+            regions.push(AraRegion { source, ..region.clone() });
+        }
+        Ok(regions)
+    }
+
     /// A region's properties as ARA takes them.
-    fn region_properties(&mut self, region: &AraRegion) -> ARAPlaybackRegionProperties {
+    fn region_properties(&self, s: &mut Shared, region: &AraRegion) -> ARAPlaybackRegionProperties {
         suhina_plugins::trace!(
             "ara region {} {:?}: start {:.3}s duration {:.3}s offset {:.3}s modification {} clone_of {:?}",
             region.id,
@@ -870,97 +937,303 @@ impl Document {
             durationInModificationTime: region.duration,
             startInPlaybackTime: region.start,
             durationInPlaybackTime: region.duration,
-            musicalContextRef: self.context,
+            musicalContextRef: s.context,
             regionSequenceRef: self.sequence,
-            name: self.text(&region.name),
+            name: s.text(&region.name),
             color: std::ptr::null(),
         }
     }
 
-    /// Makes the playback region `region` inside an edit; returns it.
-    fn add_region(&mut self, dc: &Controller, region: &AraRegion) -> Result<ARAPlaybackRegionRef, String> {
-        let modification = self.modification_for(dc, region)?;
+    /// Makes the playback region `region` (its source an index into the document's sources)
+    /// inside an edit; returns it.
+    fn add_region(
+        &mut self,
+        s: &mut Shared,
+        dc: &Controller,
+        region: &AraRegion,
+    ) -> Result<ARAPlaybackRegionRef, String> {
+        let modification = s.modification_for(dc, region, region.source)?;
         let make = dc.interface.createPlaybackRegion.ok_or("the document controller cannot make a playback region")?;
-        let host_ref: *mut c_void = std::ptr::from_mut::<Host>(&mut self.host).cast();
-        let properties = self.region_properties(region);
+        let host_ref: *mut c_void = std::ptr::from_mut::<Host>(&mut s.host).cast();
+        let properties = self.region_properties(s, region);
         // SAFETY: a live controller inside an edit, for a modification of this document.
         let made = unsafe { make(dc.reference, modification, host_ref.cast(), &properties) };
         if made.is_null() {
             return Err(format!("the plug-in refused the playback region {:?}", region.name));
         }
         self.regions.push(made);
+        if let Some(id) = s.source_ids.get(region.source)
+            && !self.owned_sources.contains(id)
+        {
+            self.owned_sources.push(id.clone());
+        }
+        if !self.owned_modifications.contains(&region.modification) {
+            self.owned_modifications.push(region.modification.clone());
+        }
         // Kept without `clone_of`: a later document names no copy for it, and the region is the same.
         self.region_described.push(AraRegion { clone_of: None, ..region.clone() });
         Ok(made)
     }
 
-    /// Brings the document in line with `document`, the track's clips as they are now, in one
-    /// edit: sources and modifications it lacks are made (none goes: their edits stay in the
-    /// archive), regions that moved or changed length are updated, new ones made. Regions
-    /// that are gone, or play another modification now, are left in the document for
-    /// [`Document::renderers`] and [`Document::destroy`]; the result names them and the ones
-    /// made.
-    pub(crate) fn edit(&mut self, document: &AraDocument) -> Result<Edited, String> {
-        // New sources are opened first, so a source that cannot be read changes nothing.
-        let mut new_sources = Vec::new();
-        for described in &document.sources {
-            if !self.source_ids.contains(&described.id) && !new_sources.iter().any(|(id, _, _)| *id == described.id) {
-                let audio = AudioSource::open(&described.address)
-                    .map_err(|e| format!("an audio source could not be opened: {e}"))?;
-                new_sources.push((described.id.clone(), described.name.clone(), Box::new(Source { audio })));
-            }
-        }
-        let dc = self.controller().ok_or("the plug-in has no document controller")?;
-        let (Some(begin), Some(end)) = (dc.interface.beginEditing, dc.interface.endEditing) else {
-            return Err("the document controller cannot be edited".into());
+    /// The track this part of the document is, by name.
+    pub(crate) fn track(&self) -> &str {
+        &self.sequence_described.0
+    }
+
+    /// Tells the plug-in's editor view which region the host has selected (`clip-<id>`), so its
+    /// editor shows it; `None`, or an id the track does not hold, selects nothing. Returns
+    /// whether the plug-in was told.
+    pub(crate) fn select(&self, region: Option<&str>) -> bool {
+        let Some((view, interface)) = self.editor_view else { return false };
+        // SAFETY: the plug-in's editor view table, valid with its extension instance.
+        let interface = unsafe { &*interface };
+        let Some(notify) = interface.notifySelection else { return false };
+        let selected: Vec<ARAPlaybackRegionRef> = region
+            .and_then(|id| self.region_described.iter().position(|r| r.id == id))
+            .and_then(|index| self.regions.get(index).copied())
+            .into_iter()
+            .collect();
+        let sequences = if selected.is_empty() { Vec::new() } else { vec![self.sequence] };
+        let selection = ARAViewSelection {
+            structSize: size_of::<ARAViewSelection>(),
+            playbackRegionRefsCount: selected.len(),
+            playbackRegionRefs: selected.as_ptr(),
+            regionSequenceRefsCount: sequences.len(),
+            regionSequenceRefs: sequences.as_ptr(),
+            timeRange: std::ptr::null(),
         };
-        // SAFETY: a live document controller, on its model thread (this one).
-        unsafe { begin(dc.reference) };
-        let edited = self.apply(&dc, document, new_sources);
-        // SAFETY: as above, closing the edit `begin` opened.
-        unsafe { end(dc.reference) };
+        // SAFETY: the plug-in's editor view, on the model thread; the selection and the lists it
+        // points to live for the call.
+        unsafe { notify(view, &selection) };
+        true
+    }
+
+    /// Whether the plug-in said its edits changed since this was last asked (ARA 2.3).
+    #[allow(dead_code, reason = "read once the project shows unsaved edits made in the plug-in (#593)")]
+    pub(crate) fn take_changed(&self) -> bool {
+        self.shared.borrow().host.changed.swap(false, Ordering::AcqRel)
+    }
+
+    /// Lets the plug-in send the model changes it has queued ([`Shared::notify_model_updates`]).
+    pub(crate) fn notify_model_updates(&self) {
+        self.shared.borrow().notify_model_updates();
+    }
+
+    /// Lets the document send its queued model changes when [`MODEL_UPDATES_EVERY`] has passed
+    /// since any of its tracks last did, and reads this track's notes when they may have
+    /// changed. The host's main loop calls it between messages.
+    pub(crate) fn tick(&self) {
+        let due = self.shared.borrow().last_model_update.get().elapsed() >= MODEL_UPDATES_EVERY;
+        if due {
+            self.notify_model_updates();
+        }
+        // What the plug-in said changed reached the host inside that call; the notes are read
+        // now, outside it, as the API asks. While a region still has no notes (its analysis
+        // running, or a plug-in that says nothing when it ends) they are looked for again now
+        // and then.
+        let changes = self.shared.borrow().host.notes_changed.load(Ordering::Acquire);
+        let waiting = self.notes_sent.borrow().len() < self.region_described.len();
+        let again = waiting && self.last_notes_read.get().elapsed() >= NOTES_AGAIN_EVERY;
+        if changes != self.notes_seen.get() || again {
+            self.notes_seen.set(changes);
+            self.last_notes_read.set(Instant::now());
+            self.read_notes();
+        }
+    }
+
+    /// Reads every region's notes and keeps for [`Document::take_notes`] those that differ from
+    /// what was sent; a region gone is forgotten, so its notes are sent again if it comes back.
+    fn read_notes(&self) {
+        let shared = self.shared.borrow();
+        let Some(dc) = shared.controller() else { return };
+        shared.ask_for_notes(&dc);
+        let mut sent = self.notes_sent.borrow_mut();
+        sent.retain(|(id, _)| self.region_described.iter().any(|r| r.id == *id));
+        let mut out = self.notes_out.borrow_mut();
+        for (region, described) in self.regions.iter().zip(&self.region_described) {
+            let started = Instant::now();
+            let read = region_notes(&dc, *region, described.start);
+            slow_call(&format!("reading the notes of {}", described.id), started);
+            let Some((notes, truncated)) = read else {
+                suhina_plugins::trace!("ara notes {}: cannot be read", described.id);
+                continue;
+            };
+            suhina_plugins::trace!(
+                "ara notes {}: {} notes, first at {:?}s, last ends {:?}s (from region start)",
+                described.id,
+                notes.len(),
+                notes.first().map(|n| n.start),
+                notes.iter().map(|n| n.start + n.length).reduce(f64::max)
+            );
+            let digest = notes_digest(&notes, truncated);
+            match sent.iter_mut().find(|(id, _)| *id == described.id) {
+                Some((_, last)) if *last == digest => continue,
+                Some((_, last)) => *last = digest,
+                // A region with no notes is not sent until it has some.
+                None if notes.is_empty() => continue,
+                None => sent.push((described.id.clone(), digest)),
+            }
+            out.retain(|(id, ..)| *id != described.id);
+            out.push((described.id.clone(), notes, truncated));
+        }
+    }
+
+    /// How far the analysis of this track's sources has come (the least done of them), when it
+    /// moved by a percent, started or ended since the last call: `Some(None)` when nothing of
+    /// this track is being analysed any more.
+    pub(crate) fn take_analysis(&self) -> Option<Option<f32>> {
+        let shared = self.shared.borrow();
+        let mine: Vec<usize> = shared
+            .source_ids
+            .iter()
+            .zip(&shared.host.sources)
+            .filter(|(id, _)| self.owned_sources.contains(id))
+            .map(|(_, source)| std::ptr::from_ref::<Source>(source) as usize)
+            .collect();
+        let least = {
+            let analysis = shared.host.analysis.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            analysis.iter().filter(|(s, _)| mine.contains(s)).map(|(_, p)| *p).reduce(f32::min)
+        };
+        let percent = least.map(|p| (p * 100.0) as u32);
+        if percent == self.analysis_sent.get() {
+            return None;
+        }
+        self.analysis_sent.set(percent);
+        Some(least)
+    }
+
+    /// The regions' notes read since the last call: region id, its notes as they are now
+    /// (empty when it has none any more), and whether there were more than the protocol carries.
+    pub(crate) fn take_notes(&self) -> Vec<(String, Vec<AraNote>, bool)> {
+        std::mem::take(&mut *self.notes_out.borrow_mut())
+    }
+
+    /// This track's edits as an archive: the plug-in's document archive id and the bytes, the
+    /// sources and modifications its clips play (and the document's own data). `None` when the
+    /// plug-in cannot store them.
+    pub(crate) fn store(&self) -> Option<(String, Vec<u8>)> {
+        let shared = self.shared.borrow();
+        // What the plug-in has queued is counted before the count is read.
+        shared.notify_model_updates();
+        let changes = shared.host.archive_changes.load(Ordering::Acquire);
+        if let Some((at, archive)) = self.stored.borrow().as_ref()
+            && *at == changes
+        {
+            return Some(archive.clone());
+        }
+        let started = Instant::now();
+        let archive = shared.store(&self.owned_sources, &self.owned_modifications)?;
+        suhina_plugins::trace!(
+            "ara store {}: {} bytes in {:.1} ms",
+            self.sequence_described.0,
+            archive.1.len(),
+            started.elapsed().as_secs_f64() * 1000.0
+        );
+        *self.stored.borrow_mut() = Some((changes, archive.clone()));
+        Some(archive)
+    }
+
+    /// The edits of one modification (`content-<id>`) and its source (the pool key), stored on
+    /// their own (a partial archive, ADR 0028 step 6): to give another track's plug-in when a
+    /// clip goes there with its edits kept. The plug-in's document archive id and the bytes.
+    pub(crate) fn export(&self, modification: &str, source: &str) -> Result<(String, Vec<u8>), String> {
+        let shared = self.shared.borrow();
+        if !shared.modification_ids.iter().any(|m| m == modification) {
+            return Err(format!("the document has no {modification}"));
+        }
+        if !shared.source_ids.iter().any(|s| s == source) {
+            return Err("the document does not have the clip's audio".into());
+        }
+        shared
+            .store(&[source.to_string()], &[modification.to_string()])
+            .ok_or_else(|| "the plug-in could not store the clip's edits".into())
+    }
+
+    /// Gives the plug-in the edits [`Document::export`] stored in another track's document,
+    /// for its modification `to` (it was `from` there) of the same `source`: a clip moved or
+    /// copied to this track with its edits kept. Refused while the document has no `to` yet
+    /// (the clip has not reached it), or for an archive of a kind the plug-in does not read.
+    pub(crate) fn import(&self, id: &str, bytes: &[u8], from: &str, to: &str, source: &str) -> Result<(), String> {
+        let mut shared = self.shared.borrow_mut();
+        if !shared.modification_ids.iter().any(|m| m == to) {
+            return Err(format!("the document has no {to} yet"));
+        }
+        if !shared.source_ids.iter().any(|s| s == source) {
+            return Err("the document does not have the clip's audio yet".into());
+        }
+        let texts = [source, from, to].map(CString::new);
+        let [Ok(source), Ok(from), Ok(to)] = texts else { return Err("a bad persistent id".into()) };
+        let source_id = source.as_ptr();
+        let (from_id, to_id) = (from.as_ptr(), to.as_ptr());
+        let filter = ARARestoreObjectsFilter {
+            structSize: size_of::<ARARestoreObjectsFilter>(),
+            documentData: 0,
+            audioSourceIDsCount: 1,
+            audioSourceArchiveIDs: &source_id,
+            audioSourceCurrentIDs: &source_id,
+            audioModificationIDsCount: 1,
+            audioModificationArchiveIDs: &from_id,
+            audioModificationCurrentIDs: &to_id,
+        };
+        if shared.restore_with(id, bytes, &filter)? {
+            Ok(())
+        } else {
+            Err("the plug-in could not read the clip's edits".into())
+        }
+    }
+
+    /// Gives the plug-in back the edits [`Document::store`] took, for the objects with the same
+    /// persistent ids (the same clips). Refused when the archive is of a kind the plug-in does
+    /// not read (another plug-in's, or a newer version's).
+    pub(crate) fn restore(&self, id: &str, bytes: &[u8]) -> Result<(), String> {
+        // No filter: the archive holds this track's objects (a document of its own before the
+        // tracks shared one), and every object in it whose id matches takes its edits.
+        let restored = self.shared.borrow_mut().restore_with(id, bytes, std::ptr::null())?;
+        if restored { Ok(()) } else { Err("the plug-in could not read its saved edits".into()) }
+    }
+
+    /// Brings the track's part of the document in line with `document`, the track's clips as
+    /// they are now, in one edit: sources and modifications it lacks are made (none goes: their
+    /// edits stay in the archive), regions that moved or changed length are updated, new ones
+    /// made, the sequence renamed or moved. Regions that are gone, or play another modification
+    /// now, are left in the document for [`Document::renderers`] and [`Document::destroy`]; the
+    /// result names them and the ones made.
+    pub(crate) fn edit(&mut self, document: &AraDocument) -> Result<Edited, String> {
+        let shared = Rc::clone(&self.shared);
+        let new_sources = shared.borrow().open_new_sources(document)?;
+        let dc = shared.borrow().controller().ok_or("the plug-in has no document controller")?;
+        let edited = shared.borrow_mut().edit_with(&dc, |s| {
+            s.take_context_and_sources(&dc, document, new_sources)?;
+            self.apply(s, &dc, document)
+        })?;
+        let shared = shared.borrow();
         // The plug-in redraws the change once it may send what the edit set off.
-        self.notify_model_updates();
+        shared.notify_model_updates();
         // Moved, trimmed or new regions: the plug-in need not say so, so their notes are read.
-        self.host.notes_changed.store(true, Ordering::Release);
+        shared.host.notes_may_have_changed();
+        shared.host.archive_may_have_changed();
         edited
     }
 
-    /// [`Document::edit`]'s changes, inside the edit it opened.
-    fn apply(
-        &mut self,
-        dc: &Controller,
-        document: &AraDocument,
-        new_sources: Vec<(String, String, Box<Source>)>,
-    ) -> Result<Edited, String> {
-        // A tempo or time signature changed: the plug-in reads the musical context again.
-        if self.host.set_context(document)
-            && !self.context.is_null()
-            && let Some(update) = dc.interface.updateMusicalContextContent
+    /// [`Document::edit`]'s changes to the track's sequence and regions, inside the edit it
+    /// opened.
+    fn apply(&mut self, s: &mut Shared, dc: &Controller, document: &AraDocument) -> Result<Edited, String> {
+        let wanted = (document.sequence.clone(), document.order);
+        if wanted != self.sequence_described
+            && let Some(update) = dc.interface.updateRegionSequenceProperties
         {
-            suhina_plugins::trace!("ara musical context changed");
-            // SAFETY: a live controller inside an edit, for this document's context; a null
-            // range is the whole of it.
-            unsafe {
-                update(
-                    dc.reference,
-                    self.context,
-                    std::ptr::null(),
-                    kARAContentUpdateEverythingChanged as ARAContentUpdateFlags,
-                )
+            self.sequence_described = wanted;
+            let properties = ARARegionSequenceProperties {
+                structSize: size_of::<ARARegionSequenceProperties>(),
+                name: s.text(&self.sequence_described.0),
+                orderIndex: i32::try_from(self.sequence_described.1).unwrap_or(i32::MAX),
+                musicalContextRef: s.context,
+                color: std::ptr::null(),
             };
+            // SAFETY: a live controller inside an edit, for this track's sequence.
+            unsafe { update(dc.reference, self.sequence, &properties) };
         }
-        for (id, name, source) in new_sources {
-            self.host.sources.push(source);
-            self.add_source(dc, self.host.sources.len() - 1, &id, &name)?;
-        }
-        // The described regions' sources as indices into this document's sources.
-        let mut regions = Vec::with_capacity(document.regions.len());
-        for region in &document.regions {
-            let id = &document.sources.get(region.source).ok_or("a region names a source the document lacks")?.id;
-            let source = self.source_ids.iter().position(|s| s == id).ok_or("a source is missing")?;
-            regions.push(AraRegion { source, ..region.clone() });
-        }
+        let regions = self.regions_in(s, document)?;
         let mut edited = Edited::default();
         // Gone, or playing another modification (a region's modification cannot change).
         for (index, old) in self.region_described.iter().enumerate() {
@@ -984,14 +1257,14 @@ impl Document {
                         .updatePlaybackRegionProperties
                         .ok_or("the document controller cannot update a playback region")?;
                     let made = *self.regions.get(index).ok_or("a region is missing")?;
-                    let properties = self.region_properties(region);
+                    let properties = self.region_properties(s, region);
                     // SAFETY: a live controller inside an edit, for a region of this document.
                     unsafe { update(dc.reference, made, &properties) };
                     if let Some(old) = self.region_described.get_mut(index) {
                         *old = AraRegion { clone_of: None, ..region.clone() };
                     }
                 }
-                None => edited.added.push(self.add_region(dc, region)?),
+                None => edited.added.push(self.add_region(s, dc, region)?),
             }
         }
         Ok(edited)
@@ -1036,7 +1309,8 @@ impl Document {
         if edited.removed.is_empty() {
             return;
         }
-        let Some(dc) = self.controller() else { return };
+        let shared = self.shared.borrow();
+        let Some(dc) = shared.controller() else { return };
         let (Some(begin), Some(end), Some(destroy)) =
             (dc.interface.beginEditing, dc.interface.endEditing, dc.interface.destroyPlaybackRegion)
         else {
@@ -1050,6 +1324,7 @@ impl Document {
         }
         // SAFETY: closing the edit opened above.
         unsafe { end(dc.reference) };
+        drop(shared);
         let mut index = 0;
         while index < self.regions.len() {
             if self.regions.get(index).is_some_and(|r| edited.removed.contains(r)) {
@@ -1079,55 +1354,45 @@ impl Edited {
 }
 
 impl Drop for Document {
-    /// Destroys the document's objects (regions, modifications, sources, sequence, context) in
-    /// one edit, then the document controller, as ARA requires.
+    /// Takes the track's regions out of the instance's renderers, then destroys them and the
+    /// track's sequence in one edit. The document itself goes with the last track
+    /// ([`Shared`]'s drop). Called with the instance's processing stopped.
     fn drop(&mut self) {
-        let Some(dc) = self.controller() else { return };
+        let all = Edited { added: Vec::new(), removed: self.regions.clone() };
+        self.renderers(&all);
+        let shared = self.shared.borrow();
+        let Some(dc) = shared.controller() else { return };
         let i = &dc.interface;
         if let (Some(begin), Some(end)) = (i.beginEditing, i.endEditing) {
             // SAFETY: a live document controller, on its model thread.
             unsafe { begin(dc.reference) };
             for &region in &self.regions {
                 if let Some(destroy) = i.destroyPlaybackRegion {
-                    // SAFETY: a region made in this document, destroyed once.
+                    // SAFETY: a region made in this document that no renderer holds, destroyed
+                    // once.
                     unsafe { destroy(dc.reference, region) };
-                }
-            }
-            for &modification in &self.modifications {
-                if let Some(destroy) = i.destroyAudioModification {
-                    // SAFETY: as above, for a modification.
-                    unsafe { destroy(dc.reference, modification) };
-                }
-            }
-            for &source in &self.sources {
-                if let Some(enable) = i.enableAudioSourceSamplesAccess {
-                    // SAFETY: as above, for a source; its reading stops before it goes.
-                    unsafe { enable(dc.reference, source, 0) };
-                }
-                if let Some(destroy) = i.destroyAudioSource {
-                    // SAFETY: as above.
-                    unsafe { destroy(dc.reference, source) };
                 }
             }
             if !self.sequence.is_null()
                 && let Some(destroy) = i.destroyRegionSequence
             {
-                // SAFETY: as above, for the sequence.
+                // SAFETY: as above, for the track's sequence, empty now.
                 unsafe { destroy(dc.reference, self.sequence) };
-            }
-            if !self.context.is_null()
-                && let Some(destroy) = i.destroyMusicalContext
-            {
-                // SAFETY: as above, for the context.
-                unsafe { destroy(dc.reference, self.context) };
             }
             // SAFETY: closing the edit opened above.
             unsafe { end(dc.reference) };
         }
-        if let Some(destroy) = i.destroyDocumentController {
-            // SAFETY: the controller, destroyed once, after every object of its document.
-            unsafe { destroy(dc.reference) };
-        }
+        // The other tracks' plug-ins hear and show the change.
+        shared.notify_model_updates();
+    }
+}
+
+/// Traces a call into the plug-in that held this thread (its model thread, where its editor
+/// also runs) 50 ms or more: a stalled editor shows which call it was in.
+fn slow_call(what: &str, started: Instant) {
+    let took = started.elapsed();
+    if took >= Duration::from_millis(50) {
+        suhina_plugins::trace!("ara slow call: {what} took {:.1} ms", took.as_secs_f64() * 1000.0);
     }
 }
 
@@ -1417,13 +1682,27 @@ static MODEL_UPDATE: ARAModelUpdateControllerInterface = ARAModelUpdateControlle
 
 unsafe extern "C" fn analysis_progress(
     host: ARAModelUpdateControllerHostRef,
-    _source: ARAAudioSourceHostRef,
+    source: ARAAudioSourceHostRef,
     state: ARAAnalysisProgressState,
     value: f32,
 ) {
     suhina_plugins::trace!("ara analysis progress state {state} value {value:.2}");
+    // How far the source's analysis has come, for its clips to show.
+    // SAFETY: as in `modification_changed`.
+    if let Some(host) = unsafe { host.cast::<Host>().as_ref() } {
+        let key = source as usize;
+        let mut analysis = host.analysis.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        analysis.retain(|(s, _)| *s != key);
+        if state != kARAAnalysisProgressCompleted as ARAAnalysisProgressState {
+            analysis.push((key, if value.is_finite() { value.clamp(0.0, 1.0) } else { 0.0 }));
+        }
+    }
     // An analysis done: its notes are there to read, whether or not the plug-in also says the
     // content changed.
+    // SAFETY: as in `modification_changed`.
+    if let Some(host) = unsafe { host.cast::<Host>().as_ref() } {
+        host.archive_may_have_changed();
+    }
     if state == kARAAnalysisProgressCompleted as ARAAnalysisProgressState {
         // SAFETY: as in `modification_changed`.
         notes_may_have_changed(unsafe { host.cast::<Host>().as_ref() }, 0);
@@ -1436,6 +1715,10 @@ unsafe extern "C" fn source_changed(
     _range: *const ARAContentTimeRange,
     flags: ARAContentUpdateFlags,
 ) {
+    // SAFETY: the host ref is the document's boxed `Host`, live while the plug-in calls back.
+    if let Some(host) = unsafe { host.cast::<Host>().as_ref() } {
+        host.archive_may_have_changed();
+    }
     // An analysis done, say: the regions of the source have notes to read.
     // SAFETY: as in `modification_changed`.
     notes_may_have_changed(unsafe { host.cast::<Host>().as_ref() }, flags);
@@ -1447,7 +1730,7 @@ fn notes_may_have_changed(host: Option<&Host>, flags: ARAContentUpdateFlags) {
     if let Some(host) = host
         && flags & kARAContentUpdateNoteScopeRemainsUnchanged as ARAContentUpdateFlags == 0
     {
-        host.notes_changed.store(true, Ordering::Release);
+        host.notes_may_have_changed();
     }
 }
 
@@ -1516,6 +1799,10 @@ unsafe extern "C" fn modification_changed(
     _range: *const ARAContentTimeRange,
     flags: ARAContentUpdateFlags,
 ) {
+    // SAFETY: the host ref is the document's boxed `Host`, live while the plug-in calls back.
+    if let Some(host) = unsafe { host.cast::<Host>().as_ref() } {
+        host.archive_may_have_changed();
+    }
     // An edit in the plug-in: the project has unsaved changes.
     // SAFETY: the host ref is the document's boxed `Host`, live while the plug-in calls back.
     let host = unsafe { host.cast::<Host>().as_ref() };
@@ -1536,6 +1823,10 @@ unsafe extern "C" fn region_changed(
 }
 
 unsafe extern "C" fn document_changed(host: ARAModelUpdateControllerHostRef) {
+    // SAFETY: the host ref is the document's boxed `Host`, live while the plug-in calls back.
+    if let Some(host) = unsafe { host.cast::<Host>().as_ref() } {
+        host.archive_may_have_changed();
+    }
     // SAFETY: as in `modification_changed`.
     if let Some(host) = unsafe { host.cast::<Host>().as_ref() } {
         host.changed.store(true, Ordering::Release);

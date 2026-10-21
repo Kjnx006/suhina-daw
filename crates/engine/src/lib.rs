@@ -99,7 +99,7 @@ pub use metronome::ClickSound;
 use plugin::{DEADLINE_SHARE, Delay};
 pub use plugin::{
     Followed, Joint, MAX_JOINED, OFFLINE_TIMEOUT, PluginDevice, PluginProcessor, PluginSlotInfo, Plugins, Sent,
-    plugin_devices, plugin_key,
+    SongPosition, plugin_devices, plugin_key,
 };
 pub use plugin_params::{MAX_BLOCK_PARAMS, ParamEvent, RAMP_STEP, param_id};
 pub use preview::{PreviewMonitor, PreviewNote, PreviewNotes, preview_notes};
@@ -131,6 +131,28 @@ const LEAD_MARGIN_SECONDS: f64 = 0.003;
 /// ([`Controller::set_device_param`]): the value is the channel's new linear volume, and the
 /// playing graph takes it without a new graph where the track's chain can.
 pub const MIXER_VOLUME: usize = usize::MAX;
+/// The device index of a parameter message that turns a track's send
+/// ([`Controller::set_device_param`]): the parameter is the return track's id, the value the
+/// send's new linear level; the playing graph takes it without a new graph where the send is
+/// in it (it was heard when the graph was built).
+pub const MIXER_SEND: usize = usize::MAX - 1;
+/// The device index of a parameter message that turns a track's pan
+/// ([`Controller::set_device_param`]): the value is the channel's new pan, -1 to 1; the playing
+/// graph takes it without a new graph where the track's chain can.
+pub const MIXER_PAN: usize = usize::MAX - 2;
+
+/// Whether `project` plays the send from `source` to return `target`: both heard, a level above
+/// silence, no loop. A send that plays neither before an edit nor after it changes nothing the
+/// engine plays.
+pub fn send_heard(project: &Project, source: TrackId, target: TrackId) -> bool {
+    sends::plan(project).iter().any(|p| p.source == source && p.target == target)
+}
+
+/// Whether `track` is heard in `project`: not muted, nor silenced by a solo, along its way to
+/// the main output. The volume and pan of a track that is not heard change nothing it plays.
+pub fn track_heard(project: &Project, track: TrackId) -> bool {
+    track_gains(project, track).is_some()
+}
 
 /// What the last graph's build took, part by part, for the trace (`docs/debugging.md`): an
 /// edit to a large project held the window up for over a second there.
@@ -823,8 +845,24 @@ impl Renderer {
         // block runs: a chain may run part of it early, when notes crowd it.
         let at = self.running.then(|| self.time());
         let time = self.time();
+        let (bar, bar_start, signature) = self.graph.launcher.bar();
+        let song = plugin::SongPosition {
+            playing: self.running,
+            position: time,
+            tempo: context.tempo,
+            beat: context.beat,
+            bar,
+            bar_start,
+            numerator: signature.numerator,
+            denominator: signature.denominator,
+            cycle: self.graph.loop_beats,
+            cycle_seconds: self.graph.loop_beats.map(|(start, end)| {
+                let seconds = |beat| self.frame_of_beat(beat) as f64 / f64::from(self.sample_rate.max(1));
+                (seconds(start), seconds(end))
+            }),
+        };
         for chain in &mut self.graph.chains {
-            chain.transport(self.running, time, context.tempo);
+            chain.transport(&song);
             chain.automate(at, frames);
             chain.automate_mix(time, frames, self.running);
         }

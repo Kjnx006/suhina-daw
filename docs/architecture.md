@@ -3,7 +3,7 @@ description: How the crates, threads and commands fit together, from a file to t
 read_when: adding a crate or feature, where does code go, threads, audio thread, data flow, layers, player, controller
 type: system
 status: current
-last_verified: 2026-10-19
+last_verified: 2026-10-21
 covers:
   - crates/session/src/record_writer.rs
   - Cargo.toml
@@ -327,6 +327,15 @@ latency compensation, and so does a latency it reports while it runs (the host t
 unasked). A plug-in that is not installed is *missing*: it has no slot and its
 state stays in the project untouched. Offline renders start the plug-ins first and run the same
 renderer without a deadline.
+
+Before quitting, the window advances `Session::poll_plugin_edits` each frame for every open
+project together. Two background state reads cover processing and MIDI changes without an
+editor or dirty notification. Each project's check shares one second across both rounds;
+the window keeps handling events while hosts work, then uses the last known states on timeout.
+Periodic background reads refresh closed-editor plug-ins too, for backups; an open ARA editor's
+expensive archive waits until the editor closes. Confirmed state changes have a revision of
+their own for deciding when another backup is due, and the last completed state stays available
+while a control worker is busy.
 
 ## Where new code goes
 

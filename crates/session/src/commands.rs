@@ -2761,8 +2761,11 @@ fn set_volume(session: &mut Session, params: &Value) -> Result<Value, CommandErr
         }
     }
     // A fader move, nothing else: a playing engine takes it as a message where it can (a lane
-    // turned off changes more than the volume).
-    if !off {
+    // turned off changes more than the volume). Tracks not heard (muted, outside a solo) play
+    // nothing it changes.
+    if !off && channels.iter().all(|(track, _)| !suhina_engine::track_heard(&session.project, *track)) {
+        session.unheard_edit = true;
+    } else if !off {
         session.mixer_edits = channels
             .iter()
             .map(|(track, _)| crate::ParamEdit {
@@ -2817,6 +2820,20 @@ fn set_pan(session: &mut Session, params: &Value) -> Result<Value, CommandError>
             off |= automation::override_lane(&mut channel.automation, |l| l.param == suhina_model::automation::PAN);
         }
     }
+    // A pan knob's turn, nothing else: a playing engine takes it as a message where it can.
+    if !off && channels.iter().all(|(track, _)| !suhina_engine::track_heard(&session.project, *track)) {
+        session.unheard_edit = true;
+    } else if !off {
+        session.mixer_edits = channels
+            .iter()
+            .map(|(track, _)| crate::ParamEdit {
+                track: *track,
+                device: suhina_engine::MIXER_PAN,
+                param: 0,
+                value: pan,
+            })
+            .collect();
+    }
     Ok(with_override(json!({ "tracks": track_ids(&channels), "pan": vec![pan; channels.len()] }), off))
 }
 
@@ -2833,6 +2850,18 @@ fn adjust_pan(session: &mut Session, params: &Value) -> Result<Value, CommandErr
         channel.pan = (channel.pan + pan).clamp(-1.0, 1.0);
         off |= automation::override_lane(&mut channel.automation, |l| l.param == suhina_model::automation::PAN);
         pans.push(channel.pan);
+    }
+    if !off {
+        session.mixer_edits = channels
+            .iter()
+            .zip(&pans)
+            .map(|((track, _), pan)| crate::ParamEdit {
+                track: *track,
+                device: suhina_engine::MIXER_PAN,
+                param: 0,
+                value: *pan,
+            })
+            .collect();
     }
     Ok(with_override(json!({ "tracks": track_ids(&channels), "pan": pans }), off))
 }

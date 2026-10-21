@@ -872,6 +872,22 @@ impl Vst3Plugin {
         (in_channels, out_channels)
     }
 
+    /// Leaves its ARA document now, with its processing stopped: an instance released later
+    /// (`Loaded::unload`) must not keep its track's regions in the document the other tracks
+    /// share, where the instance loaded in its place puts them again.
+    pub(crate) fn leave_document(&mut self) {
+        if self.ara.is_none() {
+            return;
+        }
+        self.stop.store(true, Ordering::Release);
+        if let Some(audio) = self.audio.take() {
+            let _ = audio.join();
+        }
+        // SAFETY: a live component; processing has stopped.
+        let _ = unsafe { self.component.setActive(0) };
+        self.ara = None;
+    }
+
     /// How long ago it was loaded.
     pub(crate) fn age(&self) -> std::time::Duration {
         self.loaded_at.elapsed()
@@ -985,13 +1001,20 @@ impl Vst3Plugin {
         watch.take_frames();
         let peak = watch.take_peak();
         let playing = watch.playing.load(Ordering::Relaxed);
+        let track = self.ara.as_ref().map_or("", |ara| ara.track());
         suhina_plugins::trace!(
-            "ara audio {}: {}, song at {:.2} s, peak {:.4}",
+            "ara audio {} ({}): {}, song at {:.2} s, peak {:.4}",
             self.instance,
+            track,
             if playing { "playing" } else { "stopped" },
             watch.song_samples.load(Ordering::Relaxed) as f64 / rate,
             peak
         );
+    }
+
+    /// How far the analysis of a bound ARA document's track has come, when it changed.
+    pub(crate) fn take_ara_analysis(&self) -> Option<Option<f32>> {
+        self.ara.as_ref().and_then(|ara| ara.take_analysis())
     }
 
     /// The notes a bound ARA document read since the last call (#720).
@@ -1395,14 +1418,16 @@ impl Vst3Block {
     }
 }
 
-/// Puts the song's place the engine sent with the block (ADR 0028) into the plug-in's process
-/// context: playing or stopped, the arrangement position in samples and as beats, the tempo.
-/// A block without it leaves the context as it was, counting on from the last block.
+/// Puts the song's place the engine sent with the block into the plug-in's process context:
+/// playing or stopped, the arrangement position in samples and in beats, the tempo, the bar, the
+/// time signature and the loop. A block without it leaves the context as it was, counting on from the
+/// last block.
 fn follow_song(context: &mut ProcessContext, events: &[suhina_ipc::Event]) {
     use suhina_ipc::EventKind;
     use vst3::Steinberg::Vst::ProcessContext_::{StatesAndFlags, StatesAndFlags_ as Flags};
     #[allow(clippy::unnecessary_cast, reason = "the flags are signed on Windows")]
     let bits = |flag: StatesAndFlags| flag as u32;
+    let mut told_beat = false;
     for event in events {
         match event.kind {
             EventKind::Transport { playing, position } => {
@@ -1415,10 +1440,29 @@ fn follow_song(context: &mut ProcessContext, events: &[suhina_ipc::Event]) {
                 context.tempo = f64::from(bpm);
                 context.state |= bits(Flags::kTempoValid);
             }
+            EventKind::Beat { beat } => {
+                context.projectTimeMusic = beat;
+                context.state |= bits(Flags::kProjectTimeMusicValid);
+                told_beat = true;
+            }
+            EventKind::Cycle { on, start, end } => {
+                context.cycleStartMusic = f64::from(start);
+                context.cycleEndMusic = f64::from(end);
+                let cycle = bits(Flags::kCycleActive);
+                context.state = if on { context.state | cycle } else { context.state & !cycle };
+                context.state |= bits(Flags::kCycleValid);
+            }
+            EventKind::Bar { start, numerator, denominator, .. } => {
+                context.barPositionMusic = start;
+                context.timeSigNumerator = i32::from(numerator);
+                context.timeSigDenominator = i32::from(denominator);
+                context.state |= bits(Flags::kBarPositionValid) | bits(Flags::kTimeSigValid);
+            }
             _ => {}
         }
     }
-    if context.sampleRate > 0.0 && context.tempo > 0.0 {
+    // An older engine sends no beat: worked out from the samples at an even tempo.
+    if !told_beat && context.sampleRate > 0.0 && context.tempo > 0.0 {
         context.projectTimeMusic = context.projectTimeSamples as f64 / context.sampleRate * context.tempo / 60.0;
         context.state |= bits(Flags::kProjectTimeMusicValid);
     }

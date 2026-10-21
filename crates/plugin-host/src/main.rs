@@ -261,6 +261,13 @@ impl Loaded {
     /// A latency the plug-in reported since this was last asked, after restarting its
     /// processing where its format asks for that: the engine is to be told.
     /// The notes an ARA plug-in found in its regions since the last call (#720).
+    fn take_ara_analysis(&self) -> Option<Option<f32>> {
+        match self {
+            Self::Vst3(plugin) => plugin.take_ara_analysis(),
+            Self::Clap(_) | Self::Test { .. } => None,
+        }
+    }
+
     fn take_ara_notes(&self) -> Vec<(String, Vec<suhina_plugins::protocol::AraNote>, bool)> {
         match self {
             Self::Vst3(plugin) => plugin.take_ara_notes(),
@@ -423,6 +430,7 @@ impl Loaded {
                     let age = plugin.age();
                     if age < SETTLE {
                         suhina_plugins::trace!("vst3 unload: {age:?} old; released later");
+                        plugin.leave_document();
                         let at = Instant::now() + (SETTLE - age);
                         SETTLING.with(|settling| settling.borrow_mut().push((at, plugin)));
                         return;
@@ -526,11 +534,71 @@ pub(crate) fn send_now(message: &Message) -> bool {
     now.as_mut().is_some_and(|writer| send(writer, message).is_ok())
 }
 
+/// A message as the trace writes it: a list of numbers (a plug-in's state, an archive) as its
+/// length, and cut to `most` characters.
+fn traced(message: &Message, most: usize) -> String {
+    // A state or an archive can be megabytes: formatted whole it took longer than the read.
+    let bytes = |data: &[u8]| format!("<{} bytes>", data.len());
+    let text = match message {
+        Message::State { instance, data, controller } | Message::SetState { instance, data, controller } => {
+            let kind = if matches!(message, Message::State { .. }) { "State" } else { "SetState" };
+            format!(
+                "{kind} {{ instance: {instance}, data: {}, controller: {:?} }}",
+                bytes(data),
+                controller.as_deref().map(bytes)
+            )
+        }
+        Message::AraExported { instance, archive_id, data } => {
+            format!("AraExported {{ instance: {instance}, archive_id: {archive_id:?}, data: {} }}", bytes(data))
+        }
+        Message::AraImport { instance, archive_id, data, from, to, source } => format!(
+            "AraImport {{ instance: {instance}, archive_id: {archive_id:?}, data: {}, from: {from:?}, to: {to:?}, source: {source:?} }}",
+            bytes(data)
+        ),
+        _ => format!("{message:?}"),
+    };
+    let mut out = String::with_capacity(text.len().min(most + 16));
+    let mut rest = text.as_str();
+    while let Some(open) = rest.find('[') {
+        let (before, list) = rest.split_at(open);
+        out.push_str(before);
+        let Some(close) = list.find(']') else {
+            rest = list;
+            break;
+        };
+        let inside = &list[1..close];
+        if inside.len() > 24 && inside.bytes().all(|b| b.is_ascii_digit() || b == b',' || b == b' ' || b == b'-') {
+            out.push_str(&format!("<{} numbers>", inside.split(',').count()));
+        } else {
+            out.push_str(&list[..=close]);
+        }
+        rest = &list[close + 1..];
+    }
+    out.push_str(rest);
+    let cut = out.char_indices().nth(most).map_or(out.len(), |(i, _)| i);
+    out.truncate(cut);
+    out
+}
+
+/// Whether a memory report goes into the trace: one a minute, or when it moved by a tenth since
+/// the last one traced. Every other message does.
+fn memory_worth_tracing(message: &Message) -> bool {
+    static LAST: std::sync::Mutex<Option<(u64, Instant)>> = std::sync::Mutex::new(None);
+    let Message::Memory { bytes } = message else { return true };
+    let mut last = LAST.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let due = match *last {
+        Some((was, at)) => at.elapsed() >= Duration::from_secs(60) || bytes.abs_diff(was) > was / 10,
+        None => true,
+    };
+    if due {
+        *last = Some((*bytes, Instant::now()));
+    }
+    due
+}
+
 fn send(writer: &mut impl Write, message: &Message) -> std::io::Result<()> {
-    if suhina_plugins::trace::on() && !matches!(message, Message::AraNotes { .. }) {
-        let text = format!("{message:?}");
-        let cut = text.char_indices().nth(300).map_or(text.len(), |(i, _)| i);
-        suhina_plugins::trace!("host sends {}", &text[..cut]);
+    if suhina_plugins::trace::on() && !matches!(message, Message::AraNotes { .. }) && memory_worth_tracing(message) {
+        suhina_plugins::trace!("host sends {}", traced(message, 300));
     }
     let mut out = message.encode();
     out.push('\n');
@@ -624,6 +692,9 @@ fn run(address: &str) -> Result<(), Box<dyn std::error::Error>> {
             for (region, notes, truncated) in loaded.take_ara_notes() {
                 send(&mut writer, &Message::AraNotes { instance: *instance, region, notes, truncated })?;
             }
+            if let Some(progress) = loaded.take_ara_analysis() {
+                send(&mut writer, &Message::AraAnalysis { instance: *instance, progress })?;
+            }
             if let Some(latency) = loaded.latency_changed() {
                 send(&mut writer, &Message::LatencyChanged { instance: *instance, latency })?;
             }
@@ -685,9 +756,7 @@ fn run(address: &str) -> Result<(), Box<dyn std::error::Error>> {
             break;
         }
         if suhina_plugins::trace::on() {
-            let text = format!("{message:?}");
-            let cut = text.char_indices().nth(400).map_or(text.len(), |(i, _)| i);
-            suhina_plugins::trace!("host gets {}", &text[..cut]);
+            suhina_plugins::trace!("host gets {}", traced(&message, 400));
         }
         if let Some(reply) = answer(&mut instances, message) {
             send(&mut writer, &reply)?;

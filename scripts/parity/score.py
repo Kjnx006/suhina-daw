@@ -194,8 +194,10 @@ CHAPTERS = [
      "processor, a plug-in manager (plug-ins switched off, folders per format and switched off), latency "
      "compensation (followed when a plug-in changes its latency while it plays), saved state "
      "(a change in an editor counts as unsaved), VST2 read and matched to VST3, parameters set "
-     "and automated from the engine, ARA plug-ins on audio tracks (arrangement clips, edits saved, "
-     "clip changes followed live, the editor in the clip's place; warped and looped clips not yet). Missing AU, VST2 hosting, "
+     "and automated from the engine, the song's tempo, transport, position, bar, time signature and loop "
+     "given to every plug-in, ARA plug-ins on audio tracks (arrangement clips, edits saved, "
+     "clip changes followed live, the editor in the clip's place, one document a plug-in and project "
+     "so its editor shows every track; warped and looped clips not yet). Missing AU, VST2 hosting, "
      "configure mode, VST preset banks, sidechain parameters."),
     (25, "Instrument, Drum and Effect Racks", 20, 0.25, "partial",
      "Device groups: Ctrl+G groups picked devices, parallel branches with volume, pan, mute and "
@@ -203,12 +205,14 @@ CHAPTERS = [
      "layered on the same notes, plug-ins inside, latency compensated, groups nested four deep, "
      "moved and duplicated by command. No macros, key/velocity/chain zones, drum pads or group "
      "presets."),
-    (26, "Automation and Editing Envelopes", 22, 0.46, "partial",
+    (26, "Automation and Editing Envelopes", 22, 0.48, "partial",
      "Envelopes for track volume, pan and mute, built-in, .sd and plug-in device parameters: breakpoints "
      "with curved segments and jumps, saved, played in playback and renders (64-frame steps, ramped "
      "mixer gains), a manual change turning a lane off until re-enabled. Lanes under each track in "
-     "the Arrangement: a parameter chooser, points added, moved on the grid, selected and moved or "
-     "deleted together, curves bent by dragging, re-enabled from the lane. Missing recording, "
+     "the Arrangement: a parameter chooser with a search, the automated parameters first, devices and "
+     "parameter groups folded under headings, points added, moved on the grid, selected and moved or "
+     "deleted together, curves bent by dragging, re-enabled from the lane, a click near the line adding "
+     "a point on it, a faint line at the value of a lane without points. Missing recording, "
      "drawing with a pencil, plug-in lanes in the view, send, master and tempo automation, "
      "locking, simplifying envelopes."),
     (27, "Clip Envelopes", 13, 0.00, "absent", "No clip envelopes."),
