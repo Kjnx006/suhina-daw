@@ -3,7 +3,7 @@ description: Build-time .sd definitions of the native devices shipped with Suhin
 read_when: stock device bundle, build devices, native_device node, bundled sd
 type: spec
 status: superseded
-last_verified: 2026-10-19
+last_verified: 2026-10-21
 covers:
   - apps/suhina/build.rs
 ---
