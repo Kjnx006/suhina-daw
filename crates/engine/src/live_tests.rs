@@ -4,6 +4,7 @@
 //! Live input (ADR 0017): notes from a MIDI controller played by the armed tracks' instruments,
 //! with the transport stopped or running, across graph swaps.
 
+use suhina_device_api::controller;
 use suhina_model::*;
 
 use crate::chain_tests::{SR, blocks, device, project};
@@ -178,9 +179,51 @@ fn hostile_live_values_are_made_safe() {
     live.send(LiveEvent::NoteOn { key: 60, velocity: f32::NAN });
     live.send(LiveEvent::NoteOn { key: 61, velocity: f32::INFINITY });
     live.send(LiveEvent::NoteOn { key: 62, velocity: -3.0 });
+    // Controllers, pitch bend and channel pressure (#812) take the same hostile values.
+    live.send(LiveEvent::Controller { number: 1, value: f32::NAN });
+    live.send(LiveEvent::Controller { number: 255, value: 2.0 });
+    live.send(LiveEvent::PitchBend(f32::INFINITY));
+    live.send(LiveEvent::PitchBend(f32::NEG_INFINITY));
+    live.send(LiveEvent::Pressure(f32::NAN));
+    live.send(LiveEvent::Pressure(-5.0));
     let out = blocks(&mut renderer, 8, 256);
     assert!(out.iter().all(|s| s.is_finite()));
     assert!(peak(&out) > 0.0);
+}
+
+/// Pitch bend and the mod wheel reach the instrument's own pitch with its default routing
+/// (#812); channel pressure reaches it once its route is turned on.
+#[test]
+fn pitch_bend_the_mod_wheel_and_pressure_reach_the_instrument() {
+    let play = |devices: Vec<Device>, before: &[LiveEvent]| {
+        let mut renderer = stopped(&project(Vec::new(), 1.0, devices));
+        let mut controller = renderer.controller();
+        let mut live = controller.take_live_input().unwrap();
+        controller.send(LaunchCommand::SetArmed { track: TrackId(1), armed: true, input: Default::default() }).unwrap();
+        for event in before {
+            live.send(*event);
+        }
+        live.send(LiveEvent::NoteOn { key: 60, velocity: 1.0 });
+        blocks(&mut renderer, 10, 256)
+    };
+    let diff = |a: &[f32], b: &[f32]| a.iter().zip(b).fold(0.0f32, |m, (x, y)| m.max((x - y).abs()));
+    let synth = || vec![device("fm-synth", &[])];
+
+    // The pitch bend wheel bends the pitch, whatever the patch.
+    let plain = play(synth(), &[]);
+    let bent = play(synth(), &[LiveEvent::PitchBend(1.0)]);
+    assert!(diff(&plain, &bent) > 1e-3, "pitch bend changes the pitch heard");
+
+    // The default patch already routes the mod wheel to pitch (ADR 0004's fm-synth default).
+    let wheeled = play(synth(), &[LiveEvent::Controller { number: controller::MODULATION, value: 1.0 }]);
+    assert!(diff(&plain, &wheeled) > 1e-3, "the mod wheel changes the pitch heard with the default patch");
+
+    // Channel pressure reaches the instrument too, once the patch routes it (it does not by
+    // default): routed to pitch here, as the wheel is by default.
+    let routed = || vec![device("fm-synth", &[("pressureRange", 99.0), ("pressurePitch", 1.0)])];
+    let unrouted_plain = play(routed(), &[]);
+    let pressed = play(routed(), &[LiveEvent::Pressure(1.0)]);
+    assert!(diff(&unrouted_plain, &pressed) > 1e-3, "channel pressure changes the pitch heard once routed");
 }
 
 #[test]

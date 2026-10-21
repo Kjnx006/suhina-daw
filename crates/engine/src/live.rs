@@ -1,18 +1,21 @@
 // Copyright (C) 2026 The Suhina contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Live input ([ADR 0017](../../../docs/decisions/0017-inputs-and-latency.md)): notes played on a
+//! Live input ([ADR 0017](../../../docs/decisions/0017-inputs-and-latency.md)): notes and
+//! performance controls (a MIDI controller, the pitch bend wheel, channel pressure) played on a
 //! MIDI controller, heard through the instrument of every armed track, whether the transport
 //! runs or not.
 //!
-//! The MIDI driver's thread sends notes over a lock-free queue, each with where it came from (a
-//! port and a channel, [`LiveSource`]) and, when the driver stamped it, when it was played on
-//! the live clock ([`live_now`]); the render thread takes them at the start of each block and
-//! plays them on the chains of the armed tracks whose input ([`LiveFilter`]) takes that source,
-//! the way the preview voice plays its notes (ADR 0011). A stamped note is played a fixed delay
-//! after its time ([`Renderer::set_live_clock`](crate::Renderer::set_live_clock)), at the
-//! frame where that falls, so notes keep the spacing they were played with whatever the block
-//! size (#269); a note without a time plays at the block's first frame.
+//! The MIDI driver's thread sends notes and controls over a lock-free queue, each with where it
+//! came from (a port and a channel, [`LiveSource`]) and, when the driver stamped it, when it was
+//! played on the live clock ([`live_now`]); the render thread takes them at the start of each
+//! block and plays them on the chains of the armed tracks whose input ([`LiveFilter`]) takes
+//! that source, the way the preview voice plays its notes (ADR 0011). A stamped note is played a
+//! fixed delay after its time ([`Renderer::set_live_clock`](crate::Renderer::set_live_clock)), at
+//! the frame where that falls, so notes keep the spacing they were played with whatever the block
+//! size (#269); a note without a time plays at the block's first frame. A controller, pitch bend
+//! or channel pressure message (#812) reaches an armed track's instrument the same way, as a
+//! [`suhina_device_api::NoteEvent`], but carries no key state of its own.
 //! Which tracks are armed, and what each hears, comes from the controller
 //! ([`crate::LaunchCommand::SetArmed`]) and outlives graph swaps. The keys held and the sustain
 //! pedal are kept per source, so one controller's pedal does not hold another's notes. Nothing
@@ -22,6 +25,7 @@ use std::sync::OnceLock;
 use std::time::Instant;
 
 use rtrb::{Consumer, Producer, RingBuffer};
+use suhina_device_api::NoteEvent;
 use suhina_model::TrackId;
 
 use crate::chain::Chain;
@@ -97,6 +101,16 @@ pub enum LiveEvent {
     Sustain {
         on: bool,
     },
+    /// A MIDI controller other than the sustain pedal moved: `number` 0 to 127, `value` 0 to 1
+    /// (#812).
+    Controller {
+        number: u8,
+        value: f32,
+    },
+    /// The pitch bend wheel moved, from -1 (full down) through 0 to 1 (full up) (#812).
+    PitchBend(f32),
+    /// Channel pressure (aftertouch) moved, from 0 to 1 (#812).
+    Pressure(f32),
     /// Every key the controller holds goes up (a closed port, an all-notes-off message).
     AllNotesOff,
 }
@@ -506,6 +520,24 @@ impl Live {
                 }
                 for track in hearing() {
                     recorder.note(track, position, key, None);
+                }
+            }
+            LiveEvent::Controller { number, value } => {
+                let value = if value.is_finite() { value.clamp(0.0, 1.0) } else { return };
+                for chain in targets {
+                    chain.live_control(frame, NoteEvent::Controller { number, value });
+                }
+            }
+            LiveEvent::PitchBend(value) => {
+                let value = if value.is_finite() { value.clamp(-1.0, 1.0) } else { return };
+                for chain in targets {
+                    chain.live_control(frame, NoteEvent::PitchBend(value));
+                }
+            }
+            LiveEvent::Pressure(value) => {
+                let value = if value.is_finite() { value.clamp(0.0, 1.0) } else { return };
+                for chain in targets {
+                    chain.live_control(frame, NoteEvent::Pressure(value));
                 }
             }
             LiveEvent::Sustain { on } => {

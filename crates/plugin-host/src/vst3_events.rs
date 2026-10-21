@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! Notes and controllers for a VST3 instrument. Notes go to `process` as an `IEventList`;
-//! controllers and pitch bend are not events in VST3 but parameters, found through the
-//! controller's `IMidiMapping`, so they go as parameter changes ([`crate::vst3_params`]). Both
-//! lists are made before processing starts, so the audio thread does not allocate.
+//! controllers, pitch bend and channel pressure (aftertouch, #812) are not events in VST3 but
+//! parameters, found through the controller's `IMidiMapping`, so they go as parameter changes
+//! ([`crate::vst3_params`]). Both lists are made before processing starts, so the audio thread
+//! does not allocate.
 
 use std::cell::RefCell;
 
@@ -40,13 +41,15 @@ impl MidiMapping {
         Self(table)
     }
 
-    /// The parameter change a controller, pitch bend or parameter event makes: id, frame,
-    /// normalized value.
+    /// The parameter change a controller, pitch bend, channel pressure or parameter event
+    /// makes: id, frame, normalized value.
     pub(crate) fn change(&self, event: &LinkEvent) -> Option<(ParamID, i32, ParamValue)> {
         let (number, value) = match event.kind {
             EventKind::Controller { number, value, .. } => (usize::from(number), f64::from(value)),
             // -1 to 1 becomes 0 to 1, the centre at one half.
             EventKind::PitchBend { value, .. } => (129, (f64::from(value) + 1.0) / 2.0),
+            // Channel aftertouch, as VST3 numbers it (#812).
+            EventKind::Pressure { value, .. } => (128, f64::from(value)),
             // A parameter's own value, kept within VST3's normalized range.
             EventKind::Param { id, value } => return Some((id, event.frame as i32, f64::from(value).clamp(0.0, 1.0))),
             EventKind::NoteOn { .. }
@@ -164,6 +167,7 @@ fn note(event: &LinkEvent) -> Option<Event> {
         }
         EventKind::Controller { .. }
         | EventKind::PitchBend { .. }
+        | EventKind::Pressure { .. }
         | EventKind::Param { .. }
         | EventKind::Transport { .. }
         | EventKind::Tempo { .. }

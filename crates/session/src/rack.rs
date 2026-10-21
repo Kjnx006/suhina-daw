@@ -343,16 +343,13 @@ fn push_event(out: &mut Vec<Event>, frame: u32, event: DeviceEvent) {
             push(EventKind::Controller { channel: 0, number, value: value.clamp(0.0, 1.0) });
         }
         DeviceEvent::PitchBend(value) => push(EventKind::PitchBend { channel: 0, value: value.clamp(-1.0, 1.0) }),
+        DeviceEvent::Pressure(value) => push(EventKind::Pressure { channel: 0, value: value.clamp(0.0, 1.0) }),
         DeviceEvent::AllNotesOff => {
             push(EventKind::Controller { channel: 0, number: SUSTAIN, value: 0.0 });
             push(EventKind::Controller { channel: 0, number: ALL_NOTES_OFF, value: 0.0 });
         }
         // A plug-in has no use for the scale the notes are in.
-        DeviceEvent::On { .. }
-        | DeviceEvent::Off { .. }
-        | DeviceEvent::Controller { .. }
-        | DeviceEvent::Pressure(_)
-        | DeviceEvent::Scale(_) => {}
+        DeviceEvent::On { .. } | DeviceEvent::Off { .. } | DeviceEvent::Controller { .. } | DeviceEvent::Scale(_) => {}
     }
 }
 
@@ -2663,6 +2660,7 @@ mod tests {
             [
                 Event { frame: 3, note: -1, kind: EventKind::NoteOn { channel: 0, key: 60, velocity: 1.0 } },
                 Event { frame: 5, note: -1, kind: EventKind::PitchBend { channel: 0, value: -1.0 } },
+                Event { frame: 6, note: -1, kind: EventKind::Pressure { channel: 0, value: 0.5 } },
                 Event { frame: 7, note: -1, kind: EventKind::Controller { channel: 0, number: 64, value: 0.0 } },
                 Event { frame: 7, note: -1, kind: EventKind::Controller { channel: 0, number: 123, value: 0.0 } },
             ]
