@@ -51,6 +51,15 @@ catalog without it: the browser does not offer it, `device.addPlugin` and `track
 it, and a project that uses it opens with the device missing, so it never loads. Switched on
 again, it is offered at once and a project opened after finds it.
 
+Several at once: a click on a row picks it (**Ctrl** or **Cmd** adds a row, **Shift** takes the
+run from the last one picked), and the right-click menu has **Turn off** and **Turn on**. When
+the right-clicked row is one of the picked ones, the menu acts on every picked plug-in the table
+shows (the menu says how many, "Turn off 3 plug-ins"), in the order they were picked; a picked
+plug-in the search hides, or a rescan removed, is left alone. When the row is not picked, the
+right-click picks it and the menu acts on that plug-in alone. Each plug-in goes through
+`plugins.setEnabled`; the first one that fails stops the rest and shows its error. The menu
+entries wait while a scan runs, as the checkbox does.
+
 ## Files that gave no plug-ins
 
 What a scan gives for a file is one of four (ADR 0006 › 9):
