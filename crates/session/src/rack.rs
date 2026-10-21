@@ -633,6 +633,11 @@ enum Done {
 /// changes made in its own editor.
 const LIST_EVERY: Duration = Duration::from_secs(2);
 
+/// How long a listing for the panel waits for the host. It lends out the plug-in's control half
+/// meanwhile, so it must not wait for as long as the start-up timeout does: a host that stops
+/// answering would keep restarts and health checks away for minutes.
+const LIST_TIMEOUT: Duration = Duration::from_secs(2);
+
 /// A parameter list's ids and ranges (lowest, highest), as [`Instance::ranges`] keeps them.
 fn ranges(list: &[suhina_plugins::ParamInfo]) -> Vec<(u32, f64, f64)> {
     list.iter().map(|p| (p.id, p.min.min(p.max), p.max.max(p.min))).collect()
@@ -713,6 +718,9 @@ struct Instance {
     listed: Option<(Arc<[suhina_plugins::ParamInfo]>, Instant)>,
     /// A listing for the panel is under way.
     listing: bool,
+    /// When the last listing for the panel ended, answered or not; a plug-in that refuses to
+    /// list is asked as seldom as one that answers.
+    list_tried: Option<Instant>,
     /// For a plug-in that edits clips (ADR 0028): its track's clips as it was loaded with them.
     ara_layout: Option<crate::ara::Layout>,
     /// The audio sources of the ARA document it was loaded with, kept for as long as it runs;
@@ -733,6 +741,25 @@ struct Instance {
 }
 
 impl Instance {
+    /// Whether its parameters are to be listed again for the panel: it runs, no listing is under
+    /// way and the last one, answered or not, ended [`LIST_EVERY`] ago or never.
+    fn list_due(&self, now: Instant) -> bool {
+        self.status == PluginStatus::Running
+            && !self.listing
+            && self.list_tried.is_none_or(|at| now.saturating_duration_since(at) >= LIST_EVERY)
+    }
+
+    /// A listing for the panel ended at `now` with `list`, or with nothing when the plug-in did
+    /// not answer in time; the old list stays then.
+    fn list_done(&mut self, list: Option<Vec<suhina_plugins::ParamInfo>>, now: Instant) {
+        self.listing = false;
+        self.list_tried = Some(now);
+        if let Some(list) = list {
+            self.ranges = Some(ranges(&list));
+            self.listed = Some((list.into(), now));
+        }
+    }
+
     fn new(status: PluginStatus, plugin: Option<(String, String, &'static str)>, generation: u64) -> Self {
         Self {
             status,
@@ -742,6 +769,7 @@ impl Instance {
             ranges: None,
             listed: None,
             listing: false,
+            list_tried: None,
             control: None,
             generation,
             state_refused: None,
@@ -1079,13 +1107,7 @@ impl Rack {
                             ));
                             instance.ara_failed = true;
                         }
-                        Done::Listed(list) => {
-                            instance.listing = false;
-                            if let Some(list) = list {
-                                instance.ranges = Some(ranges(&list));
-                                instance.listed = Some((list.into(), Instant::now()));
-                            }
-                        }
+                        Done::Listed(list) => instance.list_done(list, Instant::now()),
                         Done::Saved(_) | Done::Stopped(_) => {}
                     }
                     instance.control = Some(control);
@@ -1148,14 +1170,9 @@ impl Rack {
     /// [`Rack::report`] after it answers carries it. The window asks for this while it shows the
     /// device's panel; commands never do, so they do not find the plug-in busy.
     pub fn list_params(&mut self, key: u64) {
-        let stale = self.instances.get(&key).is_some_and(|i| {
-            i.status == PluginStatus::Running
-                && i.control.is_some()
-                && !i.listing
-                && i.listed.as_ref().is_none_or(|(_, at)| at.elapsed() >= LIST_EVERY)
-        });
+        let stale = self.instances.get(&key).is_some_and(|i| i.control.is_some() && i.list_due(Instant::now()));
         if stale
-            && self.lend(key, |control| Done::Listed(control.params().ok())).is_ok()
+            && self.lend(key, |control| Done::Listed(control.params_within(LIST_TIMEOUT).ok())).is_ok()
             && let Some(instance) = self.instances.get_mut(&key)
         {
             instance.listing = true;
@@ -1739,6 +1756,7 @@ impl Rack {
         instance.status = PluginStatus::Loading;
         // The new process may list other parameters: its panel waits for its own list.
         instance.listed = None;
+        instance.list_tried = None;
         let (sender, generation) = (self.sender.clone(), self.next_generation);
         let spawned = std::thread::Builder::new().name("suhina-plugin-restart".into()).spawn(move || {
             let mut control = control;
@@ -2172,6 +2190,46 @@ mod tests {
         assert_eq!(rack.progress().missing, 0);
         assert!(rack.progress().failed.is_empty());
         assert_eq!(rack.progress().total, 3);
+    }
+
+    #[test]
+    fn a_failed_listing_is_tried_again_as_seldom_as_a_good_one() {
+        let now = Instant::now();
+        let mut instance = Instance::new(PluginStatus::Running, Some(("A".into(), "V".into(), "same")), 0);
+        assert!(instance.list_due(now), "never listed");
+        instance.listing = true;
+        assert!(!instance.list_due(now + LIST_EVERY * 3), "one is under way");
+        // The plug-in did not answer: nothing is listed, and it is not asked again at once.
+        instance.list_done(None, now);
+        assert!(!instance.listing && instance.listed.is_none());
+        assert!(!instance.list_due(now), "not on the next frame");
+        assert!(!instance.list_due(now + LIST_EVERY - Duration::from_millis(1)));
+        assert!(instance.list_due(now + LIST_EVERY));
+        // An answer is kept and waits as long.
+        let param = suhina_plugins::ParamInfo {
+            id: 7,
+            name: "Gain".into(),
+            group: String::new(),
+            min: 0.0,
+            max: 1.0,
+            default: 0.5,
+            value: 0.5,
+            text: String::new(),
+            steps: 0,
+            automatable: true,
+            read_only: false,
+            hidden: false,
+        };
+        let later = now + LIST_EVERY;
+        instance.list_done(Some(vec![param]), later);
+        assert_eq!(instance.ranges, Some(vec![(7, 0.0, 1.0)]));
+        assert!(!instance.list_due(later) && instance.list_due(later + LIST_EVERY));
+        // A failure afterwards keeps the list it had.
+        instance.list_done(None, later + LIST_EVERY);
+        assert!(instance.listed.is_some());
+        // A plug-in that does not run is not asked.
+        instance.status = PluginStatus::Loading;
+        assert!(!instance.list_due(later + LIST_EVERY * 9));
     }
 
     #[test]

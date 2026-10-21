@@ -788,11 +788,22 @@ impl Plugin {
         what: &'static str,
         wanted: impl Fn(&Message) -> bool,
     ) -> Result<Message, PluginError> {
+        self.request_within(self.launch.timeout, message, what, wanted)
+    }
+
+    /// [`Plugin::request`], waiting at most `timeout` for the reply.
+    fn request_within(
+        &mut self,
+        timeout: Duration,
+        message: &Message,
+        what: &'static str,
+        wanted: impl Fn(&Message) -> bool,
+    ) -> Result<Message, PluginError> {
         let mut group = lock(&self.group);
         if group.generation != self.generation {
             return Err(PluginError::Protocol("the host process was replaced; restart the plug-in".into()));
         }
-        let reply = group.request(Some(self.instance), message, what, self.launch.timeout, wanted);
+        let reply = group.request(Some(self.instance), message, what, timeout, wanted);
         if let Some(latency) = group.take_latency(self.instance) {
             self.latency = latency;
         }
@@ -842,8 +853,16 @@ impl Plugin {
 
     /// The plug-in's parameters with their current values.
     pub fn params(&mut self) -> Result<Vec<ParamInfo>, PluginError> {
+        self.params_within(self.launch.timeout)
+    }
+
+    /// [`Plugin::params`], waiting at most `timeout` for the host's answer instead of the launch
+    /// timeout, for a caller that must not keep the plug-in's control half for long. A late
+    /// answer is skipped by the next request.
+    pub fn params_within(&mut self, timeout: Duration) -> Result<Vec<ParamInfo>, PluginError> {
         let instance = self.instance;
-        let reply = self.request(
+        let reply = self.request_within(
+            timeout,
             &Message::GetParams { instance },
             "params",
             |m| matches!(m, Message::Params { instance: i, .. } if *i == instance),
