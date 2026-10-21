@@ -61,7 +61,7 @@ after every merge; do not edit by hand. Find a document by what you are about to
 | [Backups](spec/backups.md) | spec | draft | backup, backups, autosave, auto save, recovery, crash, lost work, .backup folder, project.autosave, critical operation, clean-up, power cut | Backups (autosave) of open projects - when they are written (an interval or before critical operations), where (the project's .backup folder, the settings folder for a project never saved), clean-up, and the recovery offer on start after a crash |
 | [Browser](spec/browser.md) | spec | draft | browser, library, samples, drag from the browser, drop files, preview, audition, search, folders, pinned, recent, colour tags, track.add, clip.addFiles, library commands, preview.play, MIDI file import, .mid, presets, .syx, .sd, new track, empty area | How the browser behaves: places, categories, search, the tree, previewing, dragging samples, MIDI files, devices, presets and plug-ins into the project, pins, recent items and colour tags |
 | [Clip launching](spec/clip-launching.md) | spec | current | clip launching, scenes, launch quantisation, stop, session view, launcher commands, fades on launched clips, follow actions, launch modes, gate, toggle, repeat, legato, per-clip quantisation, launch keys, MIDI notes, mappings, launcher.addMapping | How launching clips and scenes behaves: quantisation, stop buttons, scene tempo, launched clip fades, follow actions, launch modes, legato, per-clip quantisation, launching from computer keys and MIDI notes, launcher over arrangement |
-| [Cue output](spec/cue-output.md) | spec | current | cue, cue output, headphones, pre-listen, solo in place, preview output, cue volume, cue pair, outputs 3/4, track.setCue, output.setCuePair, output.setCueVolume, C button, render --cue, multi-channel device | How the cue output works: a second output pair on the same audio device for headphones, where browser previews and tracks whose cue (C) is on are heard apart from the main mix; the cue volume, Same as main, offline renders of the cue, and the commands |
+| [Cue output](spec/cue-output.md) | spec | current | cue, cue output, headphones, pre-listen, solo in place, preview output, cue volume, cue pair, outputs 3/4, track.setCue, output.setCuePair, output.setCueVolume, headphones button, cue button, render --cue, multi-channel device | How the cue output works: a second output pair on the same audio device for headphones, where browser previews and tracks whose cue (the headphones button) is on are heard apart from the main mix; the cue volume, Same as main, offline renders of the cue, and the commands |
 | [Delay](spec/delay.md) | spec | current | delay, echo, delay device, feedback, ping pong, tempo-synced delay, sixteenths, repitch, fade, jump, freeze, band-pass in the feedback loop, importing Live's Delay, DelayLine elements | The built-in stereo delay - its parameters, signal flow, how a time change sounds (Repitch, Fade, Jump), the LFO, ping-pong and freeze, how Live's Delay imports into it, and how close it comes to Live's renders |
 | [Device groups](spec/device-groups.md) | spec | current | device group, group effects, group devices, parallel processing, parallel chain, branch, macro, macro control, mix, dry/wet, group preset, nested devices, layering instruments | Planned device groups - several devices on a track as one unit, with parallel branches, per-branch volume, pan, mute and solo, a mix, macros, group presets, latency compensation, the model and the commands |
 | [Importing devices from Live Sets](spec/device-import.md) | spec | current | device import, importing devices, importing MIDI effects, device mapping, placeholder device, Operator, Live device to Suhina device, which device imports into what, golden renders of imported sets | How a device stored in a Live Set is brought into Suhina: the three import levels, how each Suhina device is learnt and mapped, and which Live device maps to which Suhina device |
@@ -85,6 +85,8 @@ after every merge; do not edit by hand. Find a document by what you are about to
 | [Custom device panels](spec/sdk-custom-ui.md) | spec | current | custom SDK control, device background, icon, photo, texture, XY pad, drawing API, image asset | Self-contained device canvases, image assets, drawing expressions and programmable parameter controls |
 | [SDK node reference](spec/sdk-nodes.md) | spec | current | SDK node reference, node ports, DSP primitives, graph authoring, AI device development | Every executable SDK node, ports, defaults, formulas, state and real-time limits |
 | [Sends and returns](spec/sends-and-returns.md) | spec | draft | send, sends, return track, returns, pre-fader, post-fader, track.setSend, track.setSendMode, return.add, return.remove, return.rename, send knob, effect return, aux | How sends and return tracks behave: what a send taps (before or after the fader), what a return plays, loops, solo and mute, latency, the commands and the send knobs |
+| [Settings guide export](spec/settings-guide-export.md) | spec | current | website settings, settings.json export, settings help, web guide, documentation synchronization, settings-guide CI | Source-owned settings help, its versioned website export and the coverage gate reviewed with native changes |
+| [Website shortcut export](spec/shortcuts-guide-export.md) | spec | current | website shortcuts, shortcuts.json, keyboard guide export, shortcut documentation coverage | Source-owned version-one shortcut data for the Suhina website, its coverage boundary, key tokens and review gate |
 | [Key inputs and plug-in buses](spec/sidechain.md) | spec | planned | sidechain, key input, key source, tap point, pre FX, post FX, post fader, routing, aux input, aux output, multi-out, multiple outputs, bus, audio port, region version, protocol version, VST2 bus, device input | Planned key inputs - a device whose detector reads another channel's signal (sidechain), the tap points it can read from, and the plug-in bus model (aux audio in and out) that carries the same idea across the sandbox boundary |
 | [Stem separation](spec/stem-separation.md) | spec | planned | stem separation, separate stems, vocals drums bass other, separation crate, separation model, model manifest, inference backend, tract, ort, ONNX, overlap-add, chunking, window weighting, band splitter, test backend | How stem separation behaves: an audio clip split offline into stems by a model the user supplies, the chunking, resampling and channels around the model, the test backend, limits, and what lands in the project |
 | [Stems files](spec/stems-format.md) | spec | draft | stems, stem file, .stem.mp4, .stem.m4a, Traktor stems, NI stems, master track, mastering_dsp, MP4 boxes, edit list, AAC priming, multitrack audio file, DJ, remix, folded group | Stems files (.stem.mp4, .stem.m4a): an MP4 with the master and its stems as audio tracks, stem names, colours and mastering settings in moov/udta/stem; what Suhina reads and how it maps the mastering to its compressor and limiter |
@@ -98,7 +100,8 @@ after every merge; do not edit by hand. Find a document by what you are about to
 | [Waveforms](spec/waveforms.md) | spec | current | waveform, peaks, RMS, waveform drawing, zoom, samples, stereo lanes, dB scale, clip waveform, preview waveform, sample map tooltip, frame budget | How waveforms are computed and drawn in clips, the browser's preview and the sample map's tooltips: peak levels with RMS, lanes per channel, the shape, samples close up, the dB scale, the frame budget |
 | [Window zoom](spec/window-zoom.md) | spec | current | zoom, UI zoom, window zoom, interface size, scale, Ctrl+Plus, Ctrl+Minus, Cmd+Plus, bigger text, high-DPI, zoom display | Zooming the whole window (every panel, text and control larger or smaller), its keys, limits and how it is remembered |
 | [The claim bot](claim-bot.md) | howto | current | claim, /claim, /claim @user, claim for someone else, on behalf, /unclaim, /hold, /ready, claim bot, project board, PROJECT_TOKEN, status automation, good first issue, lapsed claim, duplicate pull request, feature not agreed, project sync, board out of date, cards missing from the board, Touches, overlapping work, overlap, blocked by, blocked, dependency, Depends on, stacked pull requests, merge order, trusted contributor, TRUSTED_CONTRIBUTORS, maintainer, who may claim, claim limit, too many claims | How the claim bot moves an issue's card on the project board, holds work, refuses blocked work, lists overlapping work, and how the Depends on check orders pull requests |
-| [Debugging the running app](debugging.md) | howto | current | debugging, bug hunting, trace, SUHINA_TRACE, --trace, diagnostic log, live debugging, UI lag, slow frame, frame time, stutter, plug-in host log, ARA, Melodyne, playhead jumps, flicker, timing, latency, screen recording, video frames, contact sheet | How to find out what the running app does around a bug: the trace log (suhina --trace), adding trace points, reading the log, and reading a screen recording frame by frame |
+| [Reviewing a pull request](code-review.md) | howto | current | code review, reviewing a pull request, review feedback, contributor changes, security review, performance review, approval readiness, Codex review | How to review pull requests for requirements, correctness, performance, security, and regression risks |
+| [Debugging the running app](debugging.md) | howto | current | debugging, bug hunting, trace, SUHINA_TRACE, --trace, diagnostic log, live debugging, UI lag, slow frame, frame time, stutter, plug-in host log, ARA, Melodyne, playhead jumps, flicker, timing, latency, screen recording, video frames, contact sheet, tester, hang, freeze, working a bug through | How to find out what the running app does around a bug: the trace log (suhina --trace), adding trace points, reading the log, reading a screen recording frame by frame, and working a bug through with a tester |
 | [Author a data-only SDK device](device-sdk.md) | howto | current | make an effect, MIDI effect or instrument, SDK tutorial, .sd example, node discovery | Author data-only effects, MIDI effects and instruments in Rust or with AI agents |
 | [Keyboard shortcuts](guide/keyboard-shortcuts.md) | howto | current | user guide, keyboard shortcuts, what does this key do, list of keys, every shortcut explained, keybindings, hotkeys, action ids, which action a key runs, back up keys, share keymap, keymap.json, rebind a key, keys for agents | User guide to the keyboard shortcuts, one entry per action with its default key, where it works and what it does, written for users and for agents |
 | [How to check it](how-to-check.md) | howto | current | how to check it, test steps, QA steps, how to test, pull request description, manual testing, reviewer steps, check a change | How to write a pull request's "How to check it" section, steps a newcomer can follow from the test build to check a change in what Suhina does |
@@ -116,9 +119,10 @@ Change this code, and check these documents.
 | Code | Documents |
 |---|---|
 | `.claude/skills/how-to-check/SKILL.md` | [How to check it](how-to-check.md) |
+| `.claude/skills/trace-debugging/SKILL.md` | [Debugging the running app](debugging.md) |
 | `.github/ISSUE_TEMPLATE/5-preset.yml` | [0014: Presets for devices](decisions/0014-stock-presets.md) |
 | `.github/PULL_REQUEST_TEMPLATE/preset.md` | [0014: Presets for devices](decisions/0014-stock-presets.md) |
-| `.github/pull_request_template.md` | [How to check it](how-to-check.md) |
+| `.github/pull_request_template.md` | [Reviewing a pull request](code-review.md), [How to check it](how-to-check.md) |
 | `.github/workflows/ci.yml` | [Releasing](releasing.md) |
 | `.github/workflows/claim.yml` | [The claim bot](claim-bot.md) |
 | `.github/workflows/depends-on.yml` | [The claim bot](claim-bot.md) |
@@ -127,8 +131,11 @@ Change this code, and check these documents.
 | `.github/workflows/project-sync.yml` | [The claim bot](claim-bot.md) |
 | `.github/workflows/ready-to-merge.yml` | [Releasing](releasing.md) |
 | `.github/workflows/release.yml` | [Releasing](releasing.md) |
+| `.github/workflows/settings-guide.yml` | [Settings guide export](spec/settings-guide-export.md), [Website shortcut export](spec/shortcuts-guide-export.md) |
 | `.github/workflows/test-build-links.yml` | [Releasing](releasing.md) |
 | `.github/workflows/test-build.yml` | [Releasing](releasing.md) |
+| `AGENTS.md` | [Reviewing a pull request](code-review.md) |
+| `CONTRIBUTING.md` | [Reviewing a pull request](code-review.md) |
 | `Cargo.toml` | [Architecture](architecture.md) |
 | `apps/suhina-cli/build.rs` | [Releasing](releasing.md) |
 | `apps/suhina-cli/src/main.rs` | [0028: MCP in the running app](decisions/0028-mcp-in-the-running-app.md), [MCP server](mcp.md), [Export](spec/export.md) |
@@ -416,6 +423,8 @@ Change this code, and check these documents.
 | `devices/reverb/**` | [Reverb](spec/reverb.md) |
 | `devices/sampler/**` | [Sampler](spec/sampler.md) |
 | `docs/decisions/0008-patch-devices.md` | [plugdata and the device SDK: scope comparison](research/parity-plugdata-device-sdk.md) |
+| `docs/guide-data/shortcuts-help.json` | [Website shortcut export](spec/shortcuts-guide-export.md) |
+| `docs/guide-data/shortcuts.json` | [Website shortcut export](spec/shortcuts-guide-export.md) |
 | `docs/spec/sdk-nodes.md` | [plugdata and the device SDK: scope comparison](research/parity-plugdata-device-sdk.md) |
 | `presets/**` | [0014: Presets for devices](decisions/0014-stock-presets.md) |
 | `scripts/ara_bindings.sh` | [0028: ARA hosting](decisions/0028-ara-hosting.md) |
@@ -430,8 +439,12 @@ Change this code, and check these documents.
 | `scripts/parity/**` | [parity-live-12](research/parity-live-12.md) |
 | `scripts/project_sync.py` | [The claim bot](claim-bot.md) |
 | `scripts/release_notes.py` | [Releasing](releasing.md) |
+| `scripts/settings_guide.py` | [Settings guide export](spec/settings-guide-export.md) |
+| `scripts/shortcuts_guide.py` | [Website shortcut export](spec/shortcuts-guide-export.md) |
 | `scripts/stems-fixture.py` | [Stems files](spec/stems-format.md) |
 | `scripts/test-signal.py` | [Making the `.als` test corpus](spec/als-corpus.md) |
 | `scripts/test_project_sync.py` | [The claim bot](claim-bot.md) |
+| `scripts/test_settings_guide.py` | [Settings guide export](spec/settings-guide-export.md) |
+| `scripts/test_shortcuts_guide.py` | [Website shortcut export](spec/shortcuts-guide-export.md) |
 | `scripts/video_frames.py` | [Debugging the running app](debugging.md) |
 | `third_party/ara-api` | [0028: ARA hosting](decisions/0028-ara-hosting.md) |

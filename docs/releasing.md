@@ -3,7 +3,7 @@ description: How versions are numbered, how release builds, the nightly and test
 read_when: release, version, release candidate, tag, binaries, release workflow, nightly, past nightlies, development build, download, test build, pull request build, try a pull request, merge queue, merge group, ready to merge label, auto-merge, update branch, merging many pull requests, batch build, Discord announcement, Discord bot, testing forum, merged thread, release notes, changelog
 type: howto
 status: current
-last_verified: 2026-10-19
+last_verified: 2026-10-21
 covers:
   - .github/workflows/ci.yml
   - .github/workflows/release.yml
@@ -213,7 +213,7 @@ checking out or running the pull request's code) then:
 | Event | What happens |
 |---|---|
 | a maintainer adds the label | the app approves the head commit as the event saw it (the rule for `main` needs one approval, and a maintainer cannot approve their own pull request) and turns on auto-merge with that commit as the expected head; the queue takes the pull request once `ci` is green and every review thread is resolved |
-| the label on a contributor's pull request without `test-build` | the label comes off, with a comment: a maintainer tries the build of the commit they read first |
+| the label on a contributor's pull request without `test-build` | queued as usual when a maintainer has approved that same head commit in a review; otherwise the label comes off, with a comment: a maintainer approves the commit they read, or tries its build first |
 | the label on a Dependabot Cargo update (branch `dependabot/cargo/…`) | as for a maintainer's own pull request: no `test-build` needed, the queue's build and tests check the new crate; an update of the Actions still needs `test-build`, since `ci` runs no Rust jobs for a change under `.github/` |
 | anyone else adds the label | it comes off |
 | a push by a maintainer | the label stays; the app approves the new head and turns auto-merge on for it |
@@ -225,11 +225,18 @@ The merge method is the queue's (squash). Agents never add the label (`AGENTS.md
 It acts with a short-lived token of the GitHub App that also pushes the generated docs
 (`docs-generated.yml`), not with `GITHUB_TOKEN`: GitHub starts no workflows for a merge made through
 `GITHUB_TOKEN`, and those on `main` must run after every merge. Setup, once: the app has Repository
-permissions › **Contents** and **Pull requests**: Read and write; its `DOCS_BOT_APP_ID` and
-`DOCS_BOT_PRIVATE_KEY` are in the `docs-bot` environment, which `pull_request_target` may use
+permissions › **Contents** and **Pull requests**: Read and write; its public Client ID is the
+`DOCS_BOT_CLIENT_ID` variable and its private key the `DOCS_BOT_PRIVATE_KEY` secret in the
+`docs-bot` environment, which `pull_request_target` may use
 because it runs on `main`; and Settings › General › **Allow auto-merge** is on. Without that setting the
 *approve and queue* job fails, and nothing merges. The maintainers are listed in the workflow as in
 the test build's.
+
+Use the Client ID from the app's GitHub settings (or the public `GET /apps/{app_slug}` response),
+not its numeric App ID. `actions/create-github-app-token` v3 deprecates the `app-id` input.
+The issue and PR-comment bot uses the `SUHINA_BOT_CLIENT_ID` variable and the existing
+`SUHINA_BOT_PRIVATE_KEY` secret in the `suhina-bot` environment. Both bots still create tokens
+for this repository only. Client IDs are public; private keys remain environment secrets.
 
 **One build of several pull requests.** To try a batch before merging it, run Actions › Test build
 › Run workflow with their numbers (`302 303 304`), as described under [Test builds](#test-builds):
