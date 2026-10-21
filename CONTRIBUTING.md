@@ -275,7 +275,9 @@ Signed-off-by: Your Name <you@example.com>
 change or have the right to submit it under the project's licence. For Suhina this includes
 the clean-room rules above: the change does not come from disassembled, decompiled or leaked
 material, from notes based on such material, or from content of a proprietary product, and no
-agent that wrote it was given such material. CI checks the sign-off on pull requests from forks.
+agent that wrote it was given such material. CI checks the sign-off on pull requests from forks,
+on the commits that are not on a branch of this repository already (a pull request built on
+another one's branch here does not answer for that branch's commits).
 
 ## Reporting a rights problem
 
