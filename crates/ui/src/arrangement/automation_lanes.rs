@@ -134,6 +134,16 @@ impl Scale {
         }
     }
 
+    /// Whether `automation.addPoint` keeps `value` as it is: a whole-number parameter (an integer,
+    /// a toggle, a choice) rounds it, which would move a point spliced onto a slope.
+    fn keeps(&self, value: f64) -> bool {
+        match self {
+            Self::Device(info) => info.clamp(value) == value,
+            Self::Sd(parameter) => parameter.clamp(value) == value,
+            Self::Volume | Self::Pan | Self::Mute => true,
+        }
+    }
+
     /// A value in the unit of the set command, as a number: the volume's silence is its floor.
     fn number(&self, value: f64) -> f64 {
         match self {
@@ -896,7 +906,9 @@ fn lane(
         params["beat"] = json!(beat);
         let level = level_points(param);
         let near = distance_to(&envelope(&level, &param.scale, plot, geometry), pos) <= SEGMENT_HIT;
-        match splice(&level, beat, param.scale.stepped()).filter(|_| near) {
+        // On a whole-number lane a value between two numbers cannot be kept: the point goes where
+        // the pointer is, as off the line.
+        match splice(&level, beat, param.scale.stepped()).filter(|(value, _)| near && param.scale.keeps(*value)) {
             Some((value, curve)) => {
                 params["value"] = param.scale.exact(value);
                 if curve != 0.0 {
@@ -1623,6 +1635,21 @@ mod tests {
         assert_eq!(splice(&[], 1.0, false), None);
         // A step holds its first value.
         assert_eq!(splice(&ramp, 4.0, true), Some((0.0, 0.0)));
+    }
+
+    /// A whole-number lane cannot keep a value between two numbers, so a point is not spliced
+    /// with one; a value that is a whole number is kept.
+    #[test]
+    fn a_whole_number_lane_keeps_only_whole_numbers() {
+        let integer = Scale::Device(ParamInfo::integer("steps", "Steps", (0, 3), 0, Unit::None));
+        let ramp = [AutomationPoint::new(0.0, 0.0), AutomationPoint::new(8.0, 3.0)];
+        let (value, _) = splice(&ramp, 4.0, integer.stepped()).unwrap();
+        assert_eq!(value, 1.5);
+        assert!(!integer.keeps(value));
+        let halves = [AutomationPoint::new(0.0, 0.0), AutomationPoint::new(8.0, 2.0)];
+        let (value, _) = splice(&halves, 4.0, integer.stepped()).unwrap();
+        assert!(integer.keeps(value), "{value}");
+        assert!(Scale::Pan.keeps(0.123_456));
     }
 
     /// A point spliced onto a curved segment keeps the part before it exactly and the part after it
