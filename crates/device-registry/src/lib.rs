@@ -5,10 +5,11 @@
 //! `DeviceKind::Builtin(id)` turns into a running device here. The engine builds device chains
 //! through this crate; front ends list what can be added.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use suhina_device_api::{Device, DeviceInfo};
-pub mod stock;
+use suhina_device_sdk::DeviceSdkError;
+use suhina_device_sdk::builtin::{self, Layout, Panel};
 
 /// The built-in effects, instruments and MIDI effects, in the order a device browser lists them.
 pub const DEVICES: [&DeviceInfo; 14] = [
@@ -33,9 +34,39 @@ pub fn info(id: &str) -> Option<&'static DeviceInfo> {
     DEVICES.iter().copied().find(|info| info.id == id)
 }
 
-/// Native instruments can author their panel with the same SDK widgets as .sd graphs.
-pub fn panel(id: &str) -> Option<(suhina_device_sdk::ui::DeviceUi, Vec<suhina_device_sdk::Parameter>)> {
-    (id == "sampler").then(|| (suhina_device_sampler::panel(), suhina_device_sampler::parameters()))
+/// The layout of the device with this id, when it has one (ADR 0021 › Amendment: device panels
+/// for built-in devices): the `.sd` UI part only, its parameters named by id. A device crate
+/// gives it in Rust, or as `devices/<name>/panel.json` listed in [`LAYOUT_FILES`].
+pub fn layout(id: &str) -> Option<Result<Layout, DeviceSdkError>> {
+    if id == "sampler" {
+        return Some(Ok(suhina_device_sampler::layout()));
+    }
+    LAYOUT_FILES.iter().find(|(file_id, _)| *file_id == id).map(|(_, text)| Layout::from_json(text))
+}
+
+/// The layouts kept as JSON next to a device crate, by device id.
+pub const LAYOUT_FILES: &[(&str, &str)] = &[];
+
+/// The panel of the device with this id: its parameters from its `DeviceInfo`, laid out by its
+/// layout, or the generated parameter list when it has none or its layout does not load.
+/// Made once per id while Suhina runs, off the audio thread. `None` for an unknown id.
+pub fn panel(id: &str) -> Option<&'static Panel> {
+    /// Every device's panel, in the order of [`DEVICES`].
+    static PANELS: OnceLock<Vec<Panel>> = OnceLock::new();
+    let index = DEVICES.iter().position(|info| info.id == id)?;
+    PANELS
+        .get_or_init(|| {
+            DEVICES
+                .iter()
+                .map(|info| {
+                    layout(info.id)
+                        .and_then(Result::ok)
+                        .and_then(|layout| layout.panel(info).ok())
+                        .unwrap_or_else(|| builtin::generated(info))
+                })
+                .collect()
+        })
+        .get(index)
 }
 
 /// A new device with this id at its defaults, prepared for 48 kHz, or `None` for an unknown
@@ -162,6 +193,41 @@ mod tests {
         assert!(super::preset(&bank, 0).is_err());
         assert!(super::preset(b"not a preset", 1).is_err());
         assert!(super::preset(&vec![0u8; MAX_PRESET_BYTES + 1], 1).is_err());
+    }
+
+    #[test]
+    fn every_layout_loads_and_names_only_its_devices_parameters() {
+        // A layout that names a parameter id its device lacks fails here, rather than falling
+        // back to the generated list unnoticed.
+        for info in DEVICES {
+            if let Some(layout) = layout(info.id) {
+                let panel = layout.and_then(|l| l.panel(info)).unwrap_or_else(|e| panic!("{}: {e}", info.id));
+                assert_eq!(panel_ids(&panel), info.params.iter().map(|p| p.id).collect::<Vec<_>>());
+            }
+        }
+        for (id, _) in LAYOUT_FILES {
+            assert!(super::info(id).is_some(), "panel.json for unknown device {id}");
+        }
+        assert!(layout("sampler").is_some(), "the sampler has its own layout");
+    }
+
+    #[test]
+    fn every_device_has_a_panel_with_its_parameters() {
+        for info in DEVICES {
+            let panel = panel(info.id).unwrap_or_else(|| panic!("{} has no panel", info.id));
+            assert_eq!(panel_ids(panel), info.params.iter().map(|p| p.id).collect::<Vec<_>>(), "{}", info.id);
+            for (parameter, native) in panel.parameters.iter().zip(info.params) {
+                assert_eq!((parameter.min, parameter.max, parameter.default), (native.min, native.max, native.default));
+            }
+        }
+        // MIDI effects get one too: the generated list.
+        assert!(panel("pitch").is_some_and(|p| p.ui.is_none()));
+        assert!(panel("sampler").is_some_and(|p| p.ui.is_some()));
+        assert!(panel("no-such-device").is_none());
+    }
+
+    fn panel_ids(panel: &Panel) -> Vec<&str> {
+        panel.parameters.iter().map(|p| p.id.as_str()).collect()
     }
 
     #[test]

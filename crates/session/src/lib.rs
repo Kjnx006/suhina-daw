@@ -938,6 +938,15 @@ impl Session {
         self.plugins.report(key)
     }
 
+    /// Has the plug-in device at `path` on `track` list its parameters again in the background,
+    /// for its generated panel, when its list is a couple of seconds old
+    /// ([`rack::Rack::list_params`]).
+    pub fn list_plugin_params_at(&mut self, track: suhina_model::TrackId, path: &[usize]) {
+        if let Some(key) = plugin_key_at_path(&self.project, track, path) {
+            self.plugins.list_params(key);
+        }
+    }
+
     pub fn player(&self) -> Option<&Player> {
         self.player.as_ref()
     }

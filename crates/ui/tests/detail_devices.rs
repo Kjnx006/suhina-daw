@@ -459,3 +459,101 @@ fn channel_device_state(harness: &Harness<'static, App>, index: usize) -> String
         .and_then(|d| d.state.as_deref().map(|state| String::from_utf8_lossy(state).into_owned()))
         .unwrap_or_default()
 }
+
+/// A built-in effect and a MIDI effect show their parameters as controls a click changes, each
+/// change one `device.setParam` that undo takes back (#679).
+#[test]
+fn a_built_in_devices_generated_panel_edits_its_parameters() {
+    let mut project = project();
+    project.channels[0].devices = vec![device("Pitch"), device("Utility")];
+    let mut harness = arrangement();
+    harness.state_mut().set_session(Session::new(project), &[]);
+    harness.run();
+    harness.get_by_label(CLIP).click();
+    harness.run();
+    harness.get_by_label("Show Devices").click();
+    harness.run();
+    let value = |harness: &Harness<'static, App>, device: usize, id: &str| {
+        project_now(harness).channels[0].devices[device].params.iter().find(|p| p.id == id).map(|p| p.value)
+    };
+    for (device, label, id) in [(0, "Follow Scale", "followScale"), (1, "Mono", "mono")] {
+        assert_eq!(value(&harness, device, id), None, "{id} starts at its default");
+        harness.get_by_label(label).click();
+        harness.run();
+        assert_eq!(value(&harness, device, id), Some(1.0), "{label} turned on");
+    }
+    harness.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    harness.run();
+    assert_ne!(value(&harness, 1, "mono"), Some(1.0), "undo takes the last change back");
+    assert_eq!(value(&harness, 0, "followScale"), Some(1.0));
+}
+
+/// An `.sd` effect with an expanded panel: a gain node, its Power toggle in both panels.
+fn expanded_device() -> Device {
+    use suhina_device_sdk::ui::{CustomControl, DeviceUi, UiBinding, UiGesture};
+    use suhina_device_sdk::{Connection, DeviceGraph, DeviceRole, Node, Parameter, ParameterControl};
+    let mut graph = DeviceGraph::new("org.example.big", "Big Gain", DeviceRole::Effect);
+    graph.parameters = vec![
+        Parameter::new("gain", "Gain", (0.0, 2.0), 1.0),
+        Parameter::new("power", "Power", (0.0, 1.0), 0.0).control(ParameterControl::Toggle),
+    ];
+    graph.nodes = vec![Node::audio_input("in"), Node::gain("g", "gain"), Node::audio_output("out")];
+    graph.connections = vec![Connection::new("in", "g"), Connection::new("g", "out")];
+    let mut big = DeviceUi { size: [600.0, 300.0], ..DeviceUi::default() };
+    big.controls.push(CustomControl {
+        widget: None,
+        visible_when: None,
+        id: "power".into(),
+        name: "Big power switch".into(),
+        tooltip: String::new(),
+        bounds: [20.0, 20.0, 80.0, 40.0],
+        gesture: UiGesture::Toggle,
+        x: Some(UiBinding::new("power")),
+        y: None,
+        drawing: vec![],
+    });
+    graph.expanded = Some(big);
+    Device { state: Some(graph.to_sd().unwrap().into_bytes()), ..Device::new("Big Gain", DeviceKind::Sd) }
+}
+
+/// A device with an expanded panel has a button in its header that opens it over the main area;
+/// a control in it is the same `device.setParam` as in the compact panel, and the close button
+/// and Escape close it (#679).
+#[test]
+fn an_expanded_panel_opens_from_the_header_and_edits_the_same_parameters() {
+    let mut project = project();
+    project.channels[0].devices = vec![device("Utility"), expanded_device()];
+    let mut harness = arrangement();
+    harness.state_mut().set_session(Session::new(project), &[]);
+    harness.run();
+    harness.get_by_label(CLIP).click();
+    harness.run();
+    harness.get_by_label("Show Devices").click();
+    harness.run();
+    assert!(harness.query_by_label("Expand Utility").is_none(), "a device without one has no button");
+    assert!(harness.query_by_label("Big power switch").is_none());
+    harness.get_by_label("Expand Big Gain").click();
+    harness.run();
+    let switch = harness.get_by_label("Big power switch").rect();
+    assert!(switch.top() < harness.get_by_label("Device Big Gain").rect().top(), "over the main area, above the chain");
+    harness.get_by_label("Big power switch").click();
+    harness.run();
+    let power = |harness: &Harness<'static, App>| {
+        project_now(harness).channels[0].devices[1].params.iter().find(|p| p.id == "power").map(|p| p.value)
+    };
+    assert_eq!(power(&harness), Some(1.0));
+    harness.get_by_label("Close expanded panel").click();
+    harness.run();
+    assert!(harness.query_by_label("Big power switch").is_none(), "the close button closes it");
+    harness.get_by_label("Expand Big Gain").click();
+    harness.run();
+    harness.key_press(Key::Escape);
+    harness.run();
+    assert!(harness.query_by_label("Big power switch").is_none(), "Escape closes it");
+    // A panel whose device goes away closes with it.
+    harness.get_by_label("Expand Big Gain").click();
+    harness.run();
+    harness.get_by_label("Remove Big Gain").click();
+    harness.run();
+    assert!(harness.query_by_label("Close expanded panel").is_none());
+}

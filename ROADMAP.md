@@ -145,8 +145,18 @@ refused or suspended, never by losing its edits.
 - **SDK panel composition:** numeric formatting chains, inherited parameter metadata and local
   control-group coordinates simplify panels without changing their saved format or runtime.
 
-- Stock instruments and effects are generated as validated `.sd` files during
-  application builds and embedded for startup; DSP uses registered Rust implementations.
+- Every built-in effect, instrument and MIDI effect has editable controls in the device panel:
+  its layout (the Sampler's), or a parameter list generated from the device's own parameters,
+  260 px wide and at most 168 px high, scrolling past that. Each change is `device.setParam`, so it
+  is one undo step and an automation lane takes it over. Built-ins are native code with a layout
+  loaded by their id, not `.sd` files ([ADR 0021](docs/decisions/0021-device-graph-files.md) ›
+  Amendment: device panels).
+- A device with an expanded panel (`device.expanded` in a `.sd` file, version 5, or in a
+  built-in's layout) has a button in its header that opens it over the main area; Escape or its
+  close button closes it. Both panels change the same parameters.
+- A running plug-in's device panel lists its parameters under its editor button, as a generated
+  list that sets them by id (hidden and read-only ones left out), and follows changes made in
+  its own editor every two seconds.
 
 - **Sampler:** single-source polyphonic sample and granular playback with an editable
   waveform, SDK controls, browser/system sample drops and recording from the armed
@@ -219,8 +229,7 @@ From Live Sets we authored ourselves in Live 12.4 ([format spec](docs/spec/als-f
   (Block, Fold, Limit); a note-off always ends the key its note started
   ([spec](docs/spec/pitch.md)). On a track with no instrument the changed notes play as the
   track's sine tones. It is in the browser under **MIDI Effects** and is set through
-  `device.setParam` or an automation lane; the device panel shows no controls for built-in
-  devices yet.
+  `device.setParam`, an automation lane or its generated parameter list in the device panel.
 - Sends and return tracks play: each track sends to each return before or after its fader; a
   return runs its devices over what it is sent and plays into the main channel or a group, with
   latency compensation on every send; loops are refused (`track.setSend`, `track.setSendMode`,

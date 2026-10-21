@@ -490,29 +490,6 @@ pub(crate) fn add(session: &mut Session, params: &Value) -> Result<Value, Comman
 pub(crate) fn add_sd(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let path = params.get("path").and_then(Value::as_str).ok_or("path must be a .sd file path")?;
     let graph = suhina_device_sdk::DeviceGraph::read_file(std::path::Path::new(path)).map_err(|e| e.to_string())?;
-    if let Some(id) = graph.native_device_id().map_err(|e| e.to_string())? {
-        let _prepared = graph.prepare_native_at(48000., &suhina_device_registry::create).map_err(|e| e.to_string())?;
-        let mut request = params.clone();
-        let object = request.as_object_mut().ok_or("parameters must be an object")?;
-        object.remove("path");
-        object.insert("id".into(), json!(id));
-        let result = add(session, &request)?;
-        let index =
-            result["device"].as_u64().and_then(|i| usize::try_from(i).ok()).ok_or("missing inserted device index")?;
-        let device = channel_param(session, params)?.devices.get_mut(index).ok_or("inserted device is missing")?;
-        device.name = graph.name.clone();
-        device.params = graph
-            .parameters
-            .iter()
-            .filter(|p| {
-                suhina_device_registry::info(id)
-                    .and_then(|info| info.params.iter().find(|native| native.id == p.id))
-                    .is_some_and(|native| native.default != p.default)
-            })
-            .map(|p| DeviceParam::new(&p.id, p.default))
-            .collect();
-        return Ok(json!({"device":index,"id":graph.id,"name":graph.name,"kind":"sd","implementation":id}));
-    }
     let values: Vec<DeviceParam> =
         graph.parameters.iter().map(|parameter| DeviceParam::new(parameter.id.clone(), parameter.default)).collect();
     let state = graph.to_sd().map_err(|e| e.to_string())?.into_bytes();
