@@ -277,7 +277,8 @@ the clean-room rules above: the change does not come from disassembled, decompil
 material, from notes based on such material, or from content of a proprietary product, and no
 agent that wrote it was given such material. CI checks the sign-off on pull requests from forks,
 on the commits that are not on a branch of this repository already (a pull request built on
-another one's branch here does not answer for that branch's commits).
+another one's branch here does not answer for that branch's commits). GitHub's temporary pull
+request merge refs do not count as repository branches: the fork's own commits still need sign-off.
 
 ## Reporting a rights problem
 

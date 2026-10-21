@@ -92,7 +92,7 @@ jobs:
                      pullRequests(states: OPEN, first: 100, orderBy: { field: UPDATED_AT, direction: DESC }) {
                        nodes {
                          number title headRefName baseRefName headRepository { nameWithOwner }
-                         files(first: 100) { totalCount nodes { path } }
+                         files(first: 100) { totalCount nodes { path changeType } }
                        }
                      }
                    }
@@ -130,15 +130,21 @@ jobs:
               }
               for (const other of pulls) {
                 if (other.number === pr.number || stack.has(other.number)) continue;
-                let theirs = ((other.files && other.files.nodes) || []).map((file) => file.path);
-                // A large pull request's files past the first hundred are read page by page.
-                if (other.files && other.files.totalCount > theirs.length) {
-                  const all = await github.paginate(github.rest.pulls.listFiles, {
-                    ...context.repo,
-                    pull_number: other.number,
-                    per_page: 100,
-                  });
-                  theirs = all.flatMap((file) => [file.filename, file.previous_filename].filter(Boolean));
+                const nodes = (other.files && other.files.nodes) || [];
+                let theirs = nodes.map((file) => file.path);
+                // REST supplies both further pages and the old names GraphQL leaves out.
+                if (other.files && (other.files.totalCount > nodes.length || nodes.some((file) => file.changeType === "RENAMED"))) {
+                  try {
+                    const all = await github.paginate(github.rest.pulls.listFiles, {
+                      ...context.repo,
+                      pull_number: other.number,
+                      per_page: 100,
+                    });
+                    theirs = all.flatMap((file) => [file.filename, file.previous_filename].filter(Boolean));
+                  } catch (error) {
+                    // Keep the known files and still compare the remaining pull requests.
+                    core.warning(`Could not read the files of #${other.number}: ${error.message}`);
+                  }
                 }
                 const hit = mine.filter((file) => theirs.includes(file));
                 if (hit.length > 0) found.push({ name: `#${other.number}`, title: other.title, hit });

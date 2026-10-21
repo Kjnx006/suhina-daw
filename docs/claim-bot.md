@@ -9,6 +9,7 @@ covers:
   - scripts/claim_bot_test.py
   - .github/workflows/depends-on.yml
   - .github/workflows/overlap.yml
+  - scripts/test_pr_workflows.py
   - scripts/depends_on_test.py
   - .github/workflows/project-sync.yml
   - scripts/project_sync.py
@@ -118,8 +119,10 @@ sentence saying what the line does. A lookup that fails leaves its part out of t
 A bug fix or a small change needs no issue and no claim, so the same lookup runs on pull requests
 too: the [Overlap](../.github/workflows/overlap.yml) workflow comments on a pull request when
 another open pull request or a claim's `Touches:` line covers its files, and keeps that one comment
-current with each push. It skips pull requests in the same stack and `Cargo.lock` and the generated
-documents, and it never fails.
+current with each push. Renamed files count under both their old and new names in either pull
+request. If one pull request's full file lookup fails, the notice compares its already known files
+and continues with the other pull requests; the run log warns about the incomplete lookup.
+It skips pull requests in the same stack and `Cargo.lock` and the generated documents, and it never fails.
 
 ## The Depends on check
 
@@ -217,6 +220,7 @@ maintainer who finds such a pull request abandoned closes it, or moves the card 
 python scripts/claim_bot_test.py
 python scripts/depends_on_test.py
 python -m unittest discover -s scripts -p 'test_project_sync.py'
+python -m unittest discover -s scripts -p 'test_pr_workflows.py'
 ```
 
 The first runs the workflow's script against mocked API clients, because a wrong branch would write
@@ -238,3 +242,9 @@ The third, which the CI `docs` job runs with the other script tests, runs the pr
 recorded GraphQL answers, with no network: every row of the table above, refused commands, paging,
 a dry run that writes nothing, and a missing Status option that stops the run before its first
 write.
+
+The PR workflow tests run the Overlap script against mocked API clients, including renamed files
+on either side and a failed file lookup followed by another overlapping pull request. They also
+run the CI DCO shell step in a temporary Git repository with upstream branches and a synthetic PR
+merge ref: upstream commits are exempt, but unsigned fork commits fail even when stacked on an
+upstream branch. These tests need Git, Bash and Node.js and run in the CI `docs` job.

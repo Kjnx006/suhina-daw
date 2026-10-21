@@ -209,7 +209,9 @@ jobs:
         run: |
           missing=0
           for commit in $(git rev-list --no-merges "$BASE..$HEAD"); do
-            if [ -n "$(git branch -r --contains "$commit")" ]; then
+            # The checkout's pull/<number>/merge ref contains every PR commit; it is not
+            # an upstream branch and must never exempt a fork's own commits.
+            if [ -n "$(git branch -r --contains "$commit" --list 'origin/*')" ]; then
               continue
             fi
             author=$(git log -1 --format='%an <%ae>' "$commit")
