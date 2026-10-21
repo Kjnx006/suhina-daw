@@ -38,6 +38,8 @@ impl ClipNotes {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Layout {
     name: String,
+    /// The track's place among the project's tracks.
+    order: u32,
     tempo_bpm: f64,
     /// The song's tempo map and time signatures for the plug-in's musical context, so its
     /// timeline counts bars as the song does.
@@ -51,6 +53,8 @@ impl Layout {
     /// The layout for a plug-in on `track`: its enabled audio clips whose files the pool holds.
     pub(crate) fn of(project: &Project, audio: &AudioPool, track: TrackId) -> Self {
         let name = project.tracks.iter().find(|t| t.id == track).map_or_else(String::new, |t| t.name.clone());
+        let order =
+            project.tracks.iter().position(|t| t.id == track).map_or(0, |i| u32::try_from(i).unwrap_or(u32::MAX));
         let map = project.transport.tempo_map(1.0);
         let mut files: Vec<(String, String)> = Vec::new();
         let mut regions = Vec::new();
@@ -102,7 +106,7 @@ impl Layout {
             }
         }
         let (tempo, bars) = musical_context(project);
-        Self { name, tempo_bpm: project.transport.tempo_bpm, tempo, bars, files, regions }
+        Self { name, order, tempo_bpm: project.transport.tempo_bpm, tempo, bars, files, regions }
     }
 
     /// For each region, in order, the modification its new one is a copy of, as it was in
@@ -185,7 +189,9 @@ impl Layout {
         }
         Some(AraDocument {
             name: self.name.clone(),
+            document: String::new(),
             sequence: self.name.clone(),
+            order: self.order,
             tempo_bpm: self.tempo_bpm,
             tempo: self.tempo.clone(),
             bars: self.bars.clone(),

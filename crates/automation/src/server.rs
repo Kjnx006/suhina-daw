@@ -49,6 +49,10 @@ pub struct SuhinaMcp {
     tool_router: ToolRouter<Self>,
 }
 
+/// How often a server of its own takes in the plug-ins that started
+/// ([`SuhinaMcp::keep_plugins_running`]).
+const PLUGIN_TICK: std::time::Duration = std::time::Duration::from_millis(50);
+
 /// Where the tools' projects live.
 #[derive(Clone)]
 enum Host {
@@ -253,8 +257,37 @@ impl SuhinaMcp {
 
     /// Serves MCP over stdin and stdout until the client disconnects.
     pub async fn serve_stdio(self) -> Result<(), String> {
+        let ticking = self.keep_plugins_running();
         let running = self.serve((tokio::io::stdin(), tokio::io::stdout())).await.map_err(|e| e.to_string())?;
-        running.waiting().await.map(|_| ()).map_err(|e| e.to_string())
+        let served = running.waiting().await.map(|_| ()).map_err(|e| e.to_string());
+        if let Some(ticking) = ticking {
+            ticking.abort();
+        }
+        served
+    }
+
+    /// Takes in the plug-ins that started since the last look, every [`PLUGIN_TICK`], as the
+    /// desktop app does every frame: between an agent's commands (or with only `projects.*`
+    /// ones, which do not look) they stayed loading, and the project played without them.
+    /// Skips a tick while a command holds the projects. `None` when attached to the app, whose
+    /// window does it.
+    fn keep_plugins_running(&self) -> Option<tokio::task::JoinHandle<()>> {
+        let Host::Own(projects) = &self.host else { return None };
+        let projects = Arc::clone(projects);
+        Some(tokio::spawn(async move {
+            let mut tick = tokio::time::interval(PLUGIN_TICK);
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                tick.tick().await;
+                let projects = Arc::clone(&projects);
+                let _ = tokio::task::spawn_blocking(move || {
+                    if let Ok(mut projects) = projects.try_lock() {
+                        projects.poll_plugins();
+                    }
+                })
+                .await;
+            }
+        }))
     }
 
     /// Runs `f` with the open projects on a blocking thread. A panic in a command would poison

@@ -117,6 +117,8 @@ pub struct Backup {
 pub(crate) struct SessionBackups {
     /// The session's change count when it was last backed up.
     pub(crate) backed_at: u64,
+    /// Confirmed plug-in state changes at the last backup, independent of project commands.
+    pub(crate) plugin_revision: u64,
     /// When the interval last started: the project opened or last backed up.
     pub(crate) since: Instant,
     /// Backups written to the settings folder, while the project had no file of its own.
@@ -126,7 +128,7 @@ pub(crate) struct SessionBackups {
 
 impl Default for SessionBackups {
     fn default() -> Self {
-        Self { backed_at: 0, since: Instant::now(), in_settings: Vec::new(), last: None }
+        Self { backed_at: 0, plugin_revision: 0, since: Instant::now(), in_settings: Vec::new(), last: None }
     }
 }
 
@@ -537,7 +539,10 @@ impl Projects {
 
     /// Whether project `id` has changes that are neither saved nor backed up.
     pub fn backup_due(&self, id: ProjectId) -> bool {
-        self.get(id).is_some_and(|s| s.has_unsaved_changes() && s.changes != s.backup.backed_at)
+        self.get(id).is_some_and(|s| {
+            s.has_unsaved_changes()
+                && (s.changes != s.backup.backed_at || s.plugins.edits.revision() != s.backup.plugin_revision)
+        })
     }
 
     /// Sends a backup of project `id` to the backup thread when it has changes that are not
@@ -555,6 +560,7 @@ impl Projects {
         let file = session.source().map(Path::to_path_buf);
         let snapshot = session.snapshot(&folder);
         session.backup.backed_at = session.changes;
+        session.backup.plugin_revision = session.plugins.edits.revision();
         session.backup.since = Instant::now();
         self.backups.send(Message::Write(Box::new(Job { run, project: id.0, file, name, folder, snapshot, clean_up })));
         Ok(true)
@@ -785,6 +791,29 @@ mod tests {
         assert!(projects.backups.flush(Duration::from_secs(10)));
         projects.tick_backups();
         projects.get(id).and_then(|s| s.last_backup().cloned()).expect("a backup was written")
+    }
+
+    #[test]
+    fn plug_in_changes_make_a_backup_due_without_project_commands_and_again_after_a_backup() {
+        let settings = temporary("plugin-revisions");
+        let mut projects = Projects::new();
+        projects.set_backup_folder(Some(settings.clone()));
+        let id = projects.add(Session::new(blank_project()), None).unwrap();
+        let read = |projects: &mut Projects, byte| {
+            projects.get_mut(id).unwrap().plugins.edits.read(1, &suhina_plugins::SavedState::from(vec![byte]));
+        };
+        read(&mut projects, 0);
+        read(&mut projects, 1);
+        assert!(!projects.backup_due(id), "one differing read does not count");
+        read(&mut projects, 1);
+        assert!(projects.back_up(id).unwrap(), "plug-in-only changes need a backup");
+        wait_for_backup(&mut projects, id);
+        read(&mut projects, 1);
+        assert!(!projects.backup_due(id), "unchanged reads do not repeat a backup");
+        read(&mut projects, 2);
+        read(&mut projects, 2);
+        assert!(projects.backup_due(id), "a later plug-in change needs another backup");
+        assert_eq!(projects.get(id).unwrap().changes, 0, "no project command helped");
     }
 
     #[test]

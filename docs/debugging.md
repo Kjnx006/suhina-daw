@@ -8,6 +8,7 @@ covers:
   - crates/plugins/src/trace.rs
   - crates/ui/src/kit/frame_trace.rs
   - scripts/video_frames.py
+  - scripts/trace-summary.py
   - .claude/skills/trace-debugging/SKILL.md
 ---
 
@@ -69,12 +70,15 @@ host process have their own id, so `grep "\[12345\]"` shows one process. To foll
 | `host unloads N` / `host unloaded N in …` | host | an instance let go of, and how long it took |
 | `vst3 unload: …` / `vst3 drop: …` / `vst3 audio: …` | host (`vst3.rs`) | each step of a VST3 plug-in's teardown, to find the call that hangs |
 | `ara region …` | host (`ara.rs`) | an ARA playback region described to the plug-in: start, duration, offset |
+| `ara document "<key>" shared with another track` | host (`ara.rs`) | a track's plug-in joining the ARA document another track's made (one a plug-in and project) |
+| `ara audio N: playing/stopped, song at S s, peak P` | host (`vst3.rs`) | once a second for an ARA-bound instance N: the song position it was told and its loudest sample, so a silent ARA track says whether the plug-in played nothing |
 | `ara analysis progress …`, `ara content changed …`, `ara notes …` | host | the plug-in's analysis and content notifications, and the notes read |
 | `ara plug-in asks transport …` | host | the plug-in's play, stop and position requests |
 | `ara musical context changed` | host | the tempo map or time signatures sent to the plug-in again |
 | `slow frame N ms: part ms, …; what was shown` | app (`kit/frame_trace.rs`) | a frame whose drawing took 25 ms or more, part by part (› UI time) |
 | `frames: N in 1.0 s …` | app | once a second while the window draws: frames, drawing time on average and the longest, the longest wait between frames |
-| `audio: device underruns N (+n), stretched frames late N (+n), engine load …` | app | once a second, when sound went missing since the last look or the engine's load is 70 % or more (› Audio dropouts) |
+| `audio: device underruns N (+n), stretched frames late N (+n), … plug-in blocks late N (+n, most <plug-in on track>: n), engine load …` | app | once a second, when sound went missing since the last look or the engine's load is 70 % or more (› Audio dropouts) |
+| `slow engine update: N ms (graph …)` | app (`session/src/lib.rs`) | a project change whose new engine graph took 25 ms or more to make, part by part |
 | `slow <work>: N ms` | app | library listings, browser rows, the sample map and its cache, a drop, adding to a track: anything that took 5 ms or more |
 
 ### UI time
@@ -92,7 +96,16 @@ The parts, in the order the frame draws them: `input` (keys, polls, the sample m
 `detail` (the detail area: clip column, devices, piano roll), `view setup`, `timeline` (the
 Arrangement's lanes and clips, rebuilt only after the project changed: `timeline rebuilt`),
 `arrangement view` or `session view` (drawing it), `views`, `drags`, `dialogs`, `commands`
-(running what the frame asked for) and `rest`. The part that stands out is where to look.
+(running what the frame asked for), `quit check` (advancing all projects' nonblocking plug-in state checks
+before asking whether to save on quit) and `rest`. The part that stands
+out is where to look.
+
+A closed project's plug-ins are unloaded on a thread of their own, so the window goes on drawing
+meanwhile: `closed project let go in …` says how long it took. Quitting lets every project go at
+once and shows "Closing Suhina" for up to 2 s: `quit: projects let go in …`, or
+`quit: projects not let go, closing anyway after 2s` when a plug-in was still busy (an ARA plug-in
+finishing an analysis can hold its host for many seconds); its host process then ends on its own
+once the plug-in is done.
 
 Once a second a `frames:` line sums up: how many frames, their drawing time on average and the
 longest, and the longest wait between two frames. A long wait with short drawing means the time
@@ -110,9 +123,18 @@ happens. Two counters tell the causes apart:
 - **stretched frames late:** a warped (stretched) clip's audio, made ahead on a thread of its
   own, was not ready when the engine reached it, so that clip alone played silence. A Live Set
   with many warped clips leans on this.
+- **plug-in blocks late:** a plug-in's block was not back from its host process by the time the
+  engine had to hand the device its buffer, so that block passed the sound through unprocessed (a
+  crackle on that track). The line names the plug-in late most often and its track. A return's
+  plug-ins run after every track that sends to them, so they have the least time left.
 
 Lines come only when a counter grew or the load is high, so a session that plays cleanly writes
 none.
+
+What is normal: a few late plug-in blocks in the first second of playback (every plug-in wakes at
+once), and a few thousand stretched frames late right after a jump of the play position (the
+stretched clips there are made from the new place first). Late blocks that keep coming while it
+plays, or underruns at all, are the bug.
 
 ### Adding a trace point
 
@@ -135,6 +157,19 @@ trace point that helped find a bug in the code: the next bug in the same place n
 points on the audio thread must not allocate: there, set an atomic and trace from another thread.
 
 ### Reading it
+
+Start with the summary, which sums up what was heard and seen and says when:
+
+```bash
+python scripts/trace-summary.py trace.log            # the whole session
+python scripts/trace-summary.py trace.log --since 120  # its last two minutes
+python scripts/trace-summary.py trace.log --follow     # live, only the lines worth acting on
+```
+
+It lists the processes and the plug-ins each host runs, the audio counters with their times and
+the plug-in most often late, the slowest frames by the part that took the time, the slow engine
+updates, plug-ins loaded twice, failed, slow to let go or never let go, the ARA documents and
+notes, and the last actions. Then read the log around the times it names.
 
 - **Order and gaps:** the timestamps show what came before what, and how long each step took. A
   plug-in that stayed "Loading" showed as `host unloads 1` with no `host unloaded 1` after it, for

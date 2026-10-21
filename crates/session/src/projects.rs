@@ -392,6 +392,34 @@ impl Projects {
         Ok(closed.session)
     }
 
+    /// Closes every open project, as quitting does, and lets their sessions go at once, each on
+    /// a thread of its own ([`let_go`]): their names and threads, to wait for. A window shows
+    /// the projects still going meanwhile.
+    pub fn let_go_all(&mut self) -> Vec<(String, std::thread::JoinHandle<()>)> {
+        self.active = None;
+        self.open.drain(..).filter_map(|o| Some((o.name, let_go(o.session)?))).collect()
+    }
+
+    /// [`Projects::let_go_all`], then waits up to `timeout` for them. Returns whether every one
+    /// was let go in time: a plug-in still busy then is left to its host, which ends when this
+    /// process does.
+    pub fn close_all(&mut self, timeout: std::time::Duration) -> bool {
+        let started = std::time::Instant::now();
+        let going = self.let_go_all();
+        if going.is_empty() {
+            return true;
+        }
+        while going.iter().any(|(_, g)| !g.is_finished()) {
+            if started.elapsed() >= timeout {
+                suhina_plugins::trace!("quit: projects not let go after {timeout:?}; their plug-ins end with the app");
+                return false;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        suhina_plugins::trace!("quit: projects let go in {:?}", started.elapsed());
+        true
+    }
+
     /// Uses `library` for the `plugins.*` commands instead of the one in Suhina's settings
     /// folder (for tests, or a portable setup).
     pub fn with_library(library: Library) -> Self {
@@ -761,6 +789,22 @@ fn previous(projects: &mut Projects, _: &Value) -> Result<Value, CommandError> {
 
 fn close(projects: &mut Projects, params: &Value) -> Result<Value, CommandError> {
     let id = project_param(params)?;
-    projects.close(id)?;
+    let_go(projects.close(id)?);
     Ok(json!({ "closed": id.0, "active": projects.active.map(|a| a.0) }))
+}
+
+/// Lets a closed project's `session` go on a thread of its own: its plug-ins are unloaded there,
+/// one host after another, so one that takes its time does not hold up the caller (the window).
+/// An ARA plug-in finishing an analysis held its host 16 s, and with it the window, when a
+/// project was closed or the app quit without saving. Returns the thread, or `None` when none
+/// could be started and the session was let go here.
+pub fn let_go(session: Session) -> Option<std::thread::JoinHandle<()>> {
+    let started = std::time::Instant::now();
+    std::thread::Builder::new()
+        .name("closing project".into())
+        .spawn(move || {
+            drop(session);
+            suhina_plugins::trace!("closed project let go in {:?}", started.elapsed());
+        })
+        .ok()
 }

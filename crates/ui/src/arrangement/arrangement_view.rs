@@ -3126,8 +3126,8 @@ fn clip_box<'a>(
         suhina_plugins::trace::state(
             &format!("fade handles of clip-{}", clip.id.0),
             format!(
-                "on {} row {}/{} at beat {:.3} for {:.3}, clip {:?}, row {:?}, selected {selected}, pointer in {pointer_in}",
-                lane.name, clip.row, clip.rows, clip.start, clip.length, rect, row.clip
+                "on {} row {}/{} at beat {:.3} for {:.3}, selected {selected}, pointer in {pointer_in}",
+                lane.name, clip.row, clip.rows, clip.start, clip.length
             ),
         );
     }
@@ -3359,6 +3359,14 @@ fn paint_clip(
     {
         paint_ara_notes(painter, rect, marks, notes, tempo, start, clip.length, x_of, beat_width, ink);
     }
+    // An ARA plug-in loading or analysing the track's audio: said on the clip, which shows no
+    // notes yet and cannot be edited in it until it is done.
+    if clip.audio
+        && let Some((name, progress)) = timeline.ara_activity.get(&lane.track)
+        && marks.height() >= 4.0
+    {
+        paint_ara_activity(painter, marks, body, ink, name, *progress);
+    }
     // Where a looping clip starts another pass: a notch in its top and bottom edges and a
     // dashed line between them, the repeats drawn as the clip itself (#700).
     if !clip.seams.is_empty() {
@@ -3433,6 +3441,37 @@ fn clip_grab_area(rect: Rect) -> Option<Rect> {
 /// it (a title bar); the drag that moves the clip takes the whole upper half.
 fn clip_name_bar(rect: Rect) -> Option<Rect> {
     (rect.height() >= CLIP_BODY_LEAST).then(|| Rect::from_min_size(rect.min, Vec2::new(rect.width(), CLIP_NAME_BAR)))
+}
+
+/// An ARA plug-in loading or analysing a clip's audio, over the clip's waveform: the body dimmed,
+/// "<plug-in> loading" or "<plug-in> analysing N %" in the middle of what is in view, and a
+/// thin bar along the bottom that fills with the analysis.
+fn paint_ara_activity(
+    painter: &egui::Painter,
+    marks: Rect,
+    body: Color32,
+    ink: Color32,
+    name: &str,
+    progress: Option<f32>,
+) {
+    let view = marks.intersect(painter.clip_rect());
+    if !view.is_positive() {
+        return;
+    }
+    painter.rect_filled(view, 0.0, body.gamma_multiply(0.55));
+    let text = match progress {
+        None => format!("{name} loading\u{2026}"),
+        Some(p) => format!("{name} analysing {} %", (p * 100.0).round() as u32),
+    };
+    if view.width() >= 60.0 && view.height() >= 12.0 {
+        widgets::text_in(painter, view, Align2::CENTER_CENTER, &text, theme::ui_font(theme::TEXT_SMALL), ink);
+    }
+    let track = Rect::from_min_max(Pos2::new(marks.left(), marks.bottom() - 2.0), marks.right_bottom());
+    painter.rect_filled(track, 0.0, motion::mix(body, ink, 0.2));
+    if let Some(p) = progress {
+        let done = Rect::from_min_max(track.min, Pos2::new(track.left() + track.width() * p, track.bottom()));
+        painter.rect_filled(done, 0.0, theme::accent());
+    }
 }
 
 /// Text and marks that read on `background`: dark on a light colour, light on a dark one.
