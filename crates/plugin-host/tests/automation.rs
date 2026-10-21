@@ -236,9 +236,13 @@ fn a_shown_plug_ins_parameters_are_listed_in_the_background_for_its_panel() {
     // Asked again at once, it is not listed again: the list is fresh for a couple of seconds.
     session.list_plugin_params_at(track, &[0]);
     assert!(session.execute("device.pluginParams", &device).is_ok());
-    // A restart forgets the old process's list: the panel waits for the new one's.
+    // A restart forgets the old process's list: the panel waits for the new one's. Rendered in
+    // real time from here, a block does not wait the offline timeout on the stopped process, and
+    // the new one has its own deadline.
+    renderer.set_offline(false);
     session.execute("device.restart", &device).unwrap();
     assert_eq!(session.plugin_report_at(track, &[0]).unwrap().params, None, "a restarting plug-in lists nothing");
+    let deadline = Instant::now() + PATIENT;
     while session.execute("device.plugin", &device).unwrap()["status"] != "running" {
         session.sync_plugins();
         play(&mut renderer, 2);
