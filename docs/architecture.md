@@ -209,8 +209,10 @@ gesture id grouping both XY axes into one undo step. See [ADR 0021](decisions/00
    `sends.rs`), with
    a slot for each plug-in device the session knows of (ADR 0006), and the delay lines of
    latency compensation. Every buffer the renderer will ever need
-   is allocated here. The player takes the stretch worker (`Renderer::take_stretch_worker`) and
-   runs it on its own thread.
+   is allocated here, except the launcher clips' stretchers, which the stretch thread builds
+   afterwards (ADR 0003 › decision 7). The player takes the stretch worker
+   (`Renderer::take_stretch_worker`) and runs it on its own thread, with the launcher's
+   preparer (`Controller::run_stretch_worker`).
 4. **Play.** `Renderer::process` fills one block of interleaved stereo
    (`Renderer::process_with_cue` the cue bus beside it). It never allocates,
    locks, blocks or does I/O. Offline rendering (`render_offline*`, `render_launches`, and
