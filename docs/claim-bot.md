@@ -120,7 +120,8 @@ A bug fix or a small change needs no issue and no claim, so the same lookup runs
 too: the [Overlap](../.github/workflows/overlap.yml) workflow comments on a pull request when
 another open pull request or a claim's `Touches:` line covers its files, and keeps that one comment
 current with each push. It reads every page of open pull requests before checking overlaps and
-stack relationships. Renamed files count under both their old and new names in either pull
+stack relationships. If a later page fails, known overlaps are still compared; an existing notice
+is preserved, and any new notice says the scan is incomplete. Renamed files count under both their old and new names in either pull
 request. If one pull request's full file lookup fails, the notice compares its already known files
 and continues with the other pull requests; the run log warns about the incomplete lookup.
 It skips pull requests in the same stack and `Cargo.lock` and the generated documents, and it never fails.

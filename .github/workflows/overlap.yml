@@ -84,30 +84,37 @@ jobs:
 
             const found = [];
             let closes = [];
+            let incomplete = false;
             try {
               const pulls = [];
               let cursor = null;
-              let repo;
+              let repo = {};
               do {
-                const open = await github.graphql(
-                  `query ($owner: String!, $name: String!, $number: Int!, $cursor: String) {
-                     repository(owner: $owner, name: $name) {
-                       pullRequest(number: $number) { closingIssuesReferences(first: 10) { nodes { number } } }
-                       pullRequests(states: OPEN, first: 100, after: $cursor, orderBy: { field: UPDATED_AT, direction: DESC }) {
-                         pageInfo { hasNextPage endCursor }
-                         nodes {
-                           number title headRefName baseRefName headRepository { nameWithOwner }
-                           files(first: 100) { totalCount nodes { path changeType } }
+                try {
+                  const open = await github.graphql(
+                    `query ($owner: String!, $name: String!, $number: Int!, $cursor: String) {
+                       repository(owner: $owner, name: $name) {
+                         pullRequest(number: $number) { closingIssuesReferences(first: 10) { nodes { number } } }
+                         pullRequests(states: OPEN, first: 100, after: $cursor, orderBy: { field: UPDATED_AT, direction: DESC }) {
+                           pageInfo { hasNextPage endCursor }
+                           nodes {
+                             number title headRefName baseRefName headRepository { nameWithOwner }
+                             files(first: 100) { totalCount nodes { path changeType } }
+                           }
                          }
                        }
-                     }
-                   }`,
-                  { owner: context.repo.owner, name: context.repo.repo, number: pr.number, cursor },
-                );
-                repo = open.repository || {};
-                const page = repo.pullRequests || {};
-                pulls.push(...(page.nodes || []));
-                cursor = page.pageInfo && page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
+                     }`,
+                    { owner: context.repo.owner, name: context.repo.repo, number: pr.number, cursor },
+                  );
+                  repo = open.repository || {};
+                  const page = repo.pullRequests || {};
+                  pulls.push(...(page.nodes || []));
+                  cursor = page.pageInfo && page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
+                } catch (error) {
+                  incomplete = true;
+                  core.warning(`Could not finish reading open pull requests: ${error.message}`);
+                  break;
+                }
               } while (cursor);
               closes = ((repo.pullRequest && repo.pullRequest.closingIssuesReferences.nodes) || []).map((n) => n.number);
               // GitHub links `Closes #N` only from a pull request into the default branch, so a
@@ -158,6 +165,7 @@ jobs:
                 if (hit.length > 0) found.push({ name: `#${other.number}`, title: other.title, hit });
               }
             } catch (error) {
+              incomplete = true;
               core.warning(`Could not read the open pull requests: ${error.message}`);
             }
             try {
@@ -196,6 +204,7 @@ jobs:
                 if (hit.length > 0) found.push({ name: `#${issue.number}`, title: issue.title, hit, claim: true });
               }
             } catch (error) {
+              incomplete = true;
               core.warning(`Could not read the claims: ${error.message}`);
             }
 
@@ -213,8 +222,11 @@ jobs:
                 `\`Depends on #N\`); when it changes the same code for another reason, say so in both ` +
                 `pull requests. This is a notice, not a check.`;
             } else {
+              if (incomplete) return;
               body = `${MARKER}\nNo other open pull request or claim changes these files now.`;
             }
+
+            if (incomplete) body += "\n\nThe scan is incomplete because an API lookup failed; other overlaps may be missing.";
 
             try {
               const comments = await github.paginate(github.rest.issues.listComments, {
@@ -226,6 +238,8 @@ jobs:
                 (entry) => entry.user && entry.user.type === "Bot" && (entry.body || "").startsWith(MARKER),
               );
               if (previous) {
+                // Preserve the last complete notice until a complete scan can replace it.
+                if (incomplete) return;
                 if (previous.body !== body) {
                   await github.rest.issues.updateComment({ ...context.repo, comment_id: previous.id, body });
                 }

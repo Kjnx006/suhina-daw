@@ -121,7 +121,9 @@ const github = {
       createComment: async args => state.comments.push(args.body),
     },
   },
-  graphql: async (query, variables) => ({ repository: {
+  graphql: async (query, variables) => {
+    if (input.fail_page !== null && Number(variables.cursor || 0) === input.fail_page) throw new Error("fixture page failure");
+    return { repository: {
     pullRequest: { closingIssuesReferences: { nodes: [] } },
     pullRequests: {
       pageInfo: {
@@ -136,7 +138,8 @@ const github = {
         ...(query.includes("changeType") ? { changeType: p.changeType || "MODIFIED" } : {}),
       }] },
     })) },
-  } }),
+  } };
+  },
   paginate: async (method, args) => {
     if (method === "files") {
       if (args.pull_number === 999) return input.mine || [{ filename: "a.rs" }];
@@ -146,6 +149,7 @@ const github = {
       return p.files;
     }
     if (method === "issues") return [];
+    if (input.no_previous) return [];
     return [{ id: 1, user: { type: "Bot" }, body: "<!-- overlap -->\nEarlier notice" }];
   },
 };
@@ -156,14 +160,28 @@ run(github, context, { warning: message => state.warnings.push(message) })
 
 
 class OverlapTests(unittest.TestCase):
-    def run_notice(self, pulls, mine=None):
+    def run_notice(self, pulls, mine=None, fail_page=None, no_previous=False):
         script = job_script((WORKFLOWS / "overlap.yml").read_text(encoding="utf-8"))
         result = subprocess.run(
             ["node", "-e", OVERLAP_HARNESS],
-            input=json.dumps(dict(script=script, pulls=pulls, mine=mine)),
+            input=json.dumps(dict(script=script, pulls=pulls, mine=mine, fail_page=fail_page, no_previous=no_previous)),
             capture_output=True, text=True, check=True,
         )
         return json.loads(result.stdout)
+
+    def test_later_page_failure_preserves_existing_notice(self):
+        pulls = [dict(number=n, path="a.rs") for n in range(1, 102)]
+        state = self.run_notice(pulls, fail_page=100)
+        self.assertEqual(state["comments"], [])
+        self.assertTrue(any("finish reading" in w for w in state["warnings"]))
+
+    def test_later_page_failure_still_reports_known_overlap_as_incomplete(self):
+        pulls = [dict(number=n, path="unrelated.rs") for n in range(1, 102)]
+        pulls[0]["path"] = "a.rs"
+        state = self.run_notice(pulls, fail_page=100, no_previous=True)
+        self.assertIn("#1 Work", state["comments"][0])
+        self.assertIn("scan is incomplete", state["comments"][0])
+        self.assertNotIn("No other open", state["comments"][0])
 
     def test_other_pr_rename_compares_old_name(self):
         state = self.run_notice([dict(
