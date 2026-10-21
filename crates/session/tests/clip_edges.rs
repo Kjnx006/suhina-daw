@@ -165,6 +165,29 @@ fn warp_turned_on_marks_the_audio_s_end_at_the_song_s_tempo_now() {
     assert_eq!(end.audio_time, 4.0);
 }
 
+#[test]
+fn warp_turned_on_in_a_slot_marks_the_audio_s_end_at_the_song_s_tempo_not_the_arrangement_s() {
+    // A slot's clip has no place in the arrangement: a tempo change there (120, then 60 from
+    // beat 2) does not reach it, and its 4 s are 8 beats at the song's 120.
+    let mut p = project();
+    p.transport.tempo_bpm = 120.0;
+    p.transport.tempo_changes = vec![TempoPoint { beat: 2.0, bpm: 60.0, ramp: false }];
+    p.launcher.scenes = vec![Scene::default()];
+    p.launcher.columns = vec![LauncherColumn {
+        track: TrackId(3),
+        slots: vec![Slot { clip: Some(Clip::new(ContentId(1), 0.0, 8.0)), has_stop: true }],
+    }];
+    let mut session = Session::new(p);
+    run(&mut session, "clip.setAudio", json!({ "track": 3, "scene": 1, "warp": true })).unwrap();
+    let markers = match &session.project().content(ContentId(1)).unwrap().lanes[0].data {
+        LaneData::Audio(region) => region.warp_markers.clone(),
+        LaneData::Notes(_) => panic!("not audio"),
+    };
+    let end = markers.last().unwrap();
+    assert!((end.time - 8.0).abs() < 1e-9, "{markers:?}");
+    assert_eq!(end.audio_time, 4.0);
+}
+
 /// The clip properties' audio controls (#699): warp on gives the audio two warp markers and
 /// keeps them when turned off again; the mode and transpose are set; one undo step each.
 #[test]

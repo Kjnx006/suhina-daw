@@ -233,12 +233,17 @@ pub(crate) fn set_audio(session: &mut Session, params: &Value) -> Result<Value, 
     }
     let (at, clip) = named(session, params)?;
     let (id, content_id) = (clip.id, clip.content);
-    // Where the content's beat 0 falls in the arrangement, and the song's tempo map from there:
-    // turning warp on keeps the audio at its own speed at the tempo it plays at now, ramps and
-    // changes included, not at the one it was imported at.
+    // Turning warp on keeps the audio at its own speed at the tempo it plays at now, not at the
+    // one it was imported at. An arrangement clip plays by the song's tempo map from where its
+    // content's beat 0 falls, ramps and changes included; a slot's clip has no place on that map
+    // and plays at the song's tempo (a scene's tempo is the launch's, not the clip's).
     let origin = clip.start - clip.offset;
     let map = session.project.transport.tempo_map(1.0);
-    let beats_for = |seconds: f64| map.beat_at(map.time_at(origin) + seconds) - origin;
+    let tempo = session.project.transport.tempo_bpm;
+    let in_slot = matches!(at, ClipAt::Slot(..));
+    let beats_for = |seconds: f64| {
+        if in_slot { seconds * tempo / 60.0 } else { map.beat_at(map.time_at(origin) + seconds) - origin }
+    };
     let content =
         session.project.contents.iter_mut().find(|c| c.id == content_id).ok_or("the clip's content is missing")?;
     let mut found = None;
