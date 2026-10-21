@@ -424,7 +424,9 @@ Before reviewing a pull request, read [`docs/code-review.md`](docs/code-review.m
 procedure, the rules in this file and any more specific instructions for the changed paths.
 
 Trace changed behaviour through callers, shared code and side effects. Check the agreed scope
-against relevant issues and documents, previous fixes and existing review feedback. Equivalent
+against relevant issues and documents, previous fixes and existing review feedback. First check
+whether an open or recently merged pull request already solves the same problem; when one does,
+that is the first finding. Equivalent
 operations share project semantics, but desktop and MCP authorization may deliberately differ;
 batch and nested execution must preserve the caller's restrictions.
 
