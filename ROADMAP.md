@@ -281,6 +281,11 @@ From Live Sets we authored ourselves in Live 12.4 ([format spec](docs/spec/als-f
   change turned off is turned on again from its header; each edit one undo step through the
   `automation.*` commands ([#420](https://github.com/suhina-daw/suhina-daw/issues/420),
   [spec](docs/spec/automation.md#in-the-arrangement-view)).
+- Automation points added on the line: a click on or near an envelope adds a point on it, so a
+  level or straight segment stays exactly so, and a lane without points shows a faint line at
+  the parameter's value that a click puts the first point on
+  ([#736](https://github.com/suhina-daw/suhina-daw/issues/736),
+  [spec](docs/spec/automation.md#in-the-arrangement-view)).
 - Backups: each project with unsaved changes is copied to `.backup/` beside its file (a project
   never saved: to the settings folder) every 5 minutes by default, at another interval, before
   critical operations (closing, quitting, relinking, adding files, loading a plug-in, deleting a

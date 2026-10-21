@@ -290,3 +290,76 @@ fn a_send_to_an_empty_return_playing_into_main_makes_the_track_louder_on_main() 
     let expected = plain.clone();
     assert_sounds_like(&out, &expected);
 }
+
+/// Plays `project` for 10 blocks, sends `device`'s value through the controller, plays 30 more:
+/// the last block, against `expected`'s same frames.
+fn turned(project: &Project, device: usize, param: usize, value: f64, expected: &Project) -> (Vec<f32>, Vec<f32>) {
+    let mut renderer = Renderer::new(project, SR).unwrap();
+    let mut controller = renderer.controller();
+    let mut out = blocks(&mut renderer, 10, 480);
+    controller.set_device_param(TrackId(1), device, param, value).unwrap();
+    out.extend(blocks(&mut renderer, 30, 480));
+    let mut reference = Renderer::new(expected, SR).unwrap();
+    let whole = blocks(&mut reference, 40, 480);
+    let last = 39 * 480 * 2;
+    (out[last..].to_vec(), whole[last..].to_vec())
+}
+
+#[test]
+fn a_send_turned_while_playing_reaches_its_level_without_a_new_graph() {
+    // From unity to a quarter: once the smoothing has settled, as a graph built at a quarter.
+    let (live, built) = turned(&sending(1.0, false, vec![]), crate::MIXER_SEND, 2, 0.25, &sending(0.25, false, vec![]));
+    assert!(peak(&built) > 0.1);
+    assert!(max_diff(&live, &built) < 1e-3, "{}", max_diff(&live, &built));
+}
+
+#[test]
+fn a_pan_turned_while_playing_moves_the_track_and_its_post_fader_send() {
+    let mut panned = sending(1.0, false, vec![]);
+    panned.channels[0].pan = -0.5;
+    let (live, built) = turned(&sending(1.0, false, vec![]), crate::MIXER_PAN, 0, -0.5, &panned);
+    assert!(peak(&built) > 0.1);
+    assert!(max_diff(&live, &built) < 1e-3, "{}", max_diff(&live, &built));
+    // To either end and back, without a new graph.
+    let mut hard = sending(1.0, false, vec![]);
+    hard.channels[0].pan = -1.0;
+    let (live, built) = turned(&sending(1.0, false, vec![]), crate::MIXER_PAN, 0, -1.0, &hard);
+    assert!(max_diff(&live, &built) < 1e-3, "{}", max_diff(&live, &built));
+    let (live, built) = turned(&hard, crate::MIXER_PAN, 0, 0.3, &{
+        let mut back = sending(1.0, false, vec![]);
+        back.channels[0].pan = 0.3;
+        back
+    });
+    assert!(max_diff(&live, &built) < 1e-3, "{}", max_diff(&live, &built));
+}
+
+#[test]
+fn a_pan_turned_while_playing_moves_the_track_on_the_cue_too() {
+    // Cued, the track is heard on the cue bus after its own volume and pan (cue spec): a pan
+    // turned live moves it there as a graph built at the new pan has it.
+    let cued = |pan: f64| {
+        let mut p = sending(1.0, false, vec![]);
+        p.channels[0].cue = true;
+        p.channels[0].pan = pan;
+        p
+    };
+    let cue_of = |renderer: &mut Renderer, blocks: usize| {
+        let mut cue = Vec::new();
+        for _ in 0..blocks {
+            let (mut main, mut block) = (vec![0.0f32; 480 * 2], vec![0.0f32; 480 * 2]);
+            renderer.process_with_cue(&mut main, &mut block);
+            cue.extend(block);
+        }
+        cue
+    };
+    let mut renderer = Renderer::new(&cued(0.0), SR).unwrap();
+    let mut controller = renderer.controller();
+    let mut live = cue_of(&mut renderer, 10);
+    controller.set_device_param(TrackId(1), crate::MIXER_PAN, 0, -0.5).unwrap();
+    live.extend(cue_of(&mut renderer, 30));
+    let mut reference = Renderer::new(&cued(-0.5), SR).unwrap();
+    let built = cue_of(&mut reference, 40);
+    let last = 39 * 480 * 2;
+    assert!(peak(&built[last..]) > 0.05, "the cue hears the track");
+    assert!(max_diff(&live[last..], &built[last..]) < 1e-3, "{}", max_diff(&live[last..], &built[last..]));
+}

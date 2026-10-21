@@ -44,11 +44,38 @@ impl Meters {
         self.tracks.iter().find(|(t, _)| *t == track).map(|(_, l)| *l).unwrap_or_default()
     }
 
-    /// Whether any meter shows a level, so the window keeps drawing while they fall.
+    /// Whether any meter shows a level, so the window keeps drawing while they fall: one below
+    /// the scale's bottom shows nothing.
     pub fn moving(&self) -> bool {
-        let lit = |l: &Level| l.peak.iter().any(|&p| p > 0.0);
+        let lit = |l: &Level| l.peak.iter().any(|&p| shown_db(p).is_some());
         lit(&self.main) || self.tracks.iter().any(|(_, l)| lit(l))
     }
+
+    /// Whether `other` draws the same meters: the same levels to the scale's step, the same clip
+    /// lights. A plug-in's noise or a reverb's tail far below the scale changed the levels every
+    /// block, and the window drew every frame for it, which held up an embedded plug-in
+    /// editor's input (it shares the window's input queue).
+    pub fn shows_same(&self, other: &Self) -> bool {
+        let same = |a: &Level, b: &Level| {
+            a.clipped == b.clipped
+                && a.peak.iter().chain(&a.rms).zip(b.peak.iter().chain(&b.rms)).all(|(x, y)| step(*x) == step(*y))
+        };
+        same(&self.main, &other.main)
+            && self.tracks.len() == other.tracks.len()
+            && self.tracks.iter().zip(&other.tracks).all(|((ta, a), (tb, b))| ta == tb && same(a, b))
+    }
+}
+
+/// A level in dB on the scale, `None` below its bottom (nothing drawn).
+fn shown_db(level: f32) -> Option<f64> {
+    let db = 20.0 * f64::from(level.max(0.0)).log10();
+    (db.is_finite() && db >= RANGE.0).then_some(db)
+}
+
+/// A level as the meter draws it, to a quarter of a dB (finer than a point on any meter's
+/// height); everything below the scale is one step.
+fn step(level: f32) -> Option<i64> {
+    shown_db(level).map(|db| (db * 4.0).round() as i64)
 }
 
 /// Whose meter it is: the clip light's click resets this one.

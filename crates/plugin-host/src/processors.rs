@@ -148,7 +148,19 @@ impl Processor for Burst {
         // It sleeps rather than spins: the host's audio thread may run at real-time priority,
         // and spinning there could take the engine's core on a small machine, which would
         // measure the scheduler rather than the engine.
-        if !events.is_empty() {
+        // Notes and controllers start or reset voices; the song's place, which comes with every
+        // block, does not.
+        use suhina_ipc::EventKind;
+        let voices = events.iter().any(|e| {
+            matches!(
+                e.kind,
+                EventKind::NoteOn { .. }
+                    | EventKind::NoteOff { .. }
+                    | EventKind::Controller { .. }
+                    | EventKind::PitchBend { .. }
+            )
+        });
+        if voices {
             std::thread::sleep(self.0);
         }
         for (o, i) in output.iter_mut().zip(input) {

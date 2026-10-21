@@ -69,6 +69,45 @@ pub enum Followed {
     Refused,
 }
 
+/// Where the song is as a block starts, as plug-ins are told it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SongPosition {
+    /// The transport runs.
+    pub playing: bool,
+    /// The arrangement position of the block's first frame, in frames.
+    pub position: u64,
+    /// The tempo, in beats per minute.
+    pub tempo: f64,
+    /// The position in beats (quarter notes), through the tempo map.
+    pub beat: f64,
+    /// The bar it is in: its number from 0, the beat it starts at, its time signature.
+    pub bar: u32,
+    pub bar_start: f64,
+    pub numerator: u8,
+    pub denominator: u8,
+    /// The arrangement loop, in beats, while it is on.
+    pub cycle: Option<(f64, f64)>,
+    /// The same loop in seconds through the tempo map.
+    pub cycle_seconds: Option<(f64, f64)>,
+}
+
+impl Default for SongPosition {
+    fn default() -> Self {
+        Self {
+            playing: false,
+            position: 0,
+            tempo: 120.0,
+            beat: 0.0,
+            bar: 0,
+            bar_start: 0.0,
+            numerator: 4,
+            denominator: 4,
+            cycle: None,
+            cycle_seconds: None,
+        }
+    }
+}
+
 /// The audio half of a running plug-in, as the engine sees it. Implemented outside the engine
 /// (the session, over `suhina-plugins`); test doubles implement it too.
 pub trait PluginProcessor: Send {
@@ -132,12 +171,11 @@ pub trait PluginProcessor: Send {
         let _ = params;
     }
 
-    /// Where the song is as the next block starts: whether the transport runs, the
-    /// arrangement position of the block's first frame (in frames) and the tempo. The engine
-    /// calls it before every block; a plug-in that follows the song (an ARA renderer,
-    /// ADR 0028) is told with the block, the rest ignore it. Never allocates.
-    fn transport(&mut self, playing: bool, position: u64, tempo: f64) {
-        let _ = (playing, position, tempo);
+    /// Where the song is as the next block starts ([`SongPosition`]). The engine calls it before
+    /// every block; a hosted plug-in is told with the block, so its tempo-synced parts and an
+    /// ARA renderer (ADR 0028) follow the song. Never allocates.
+    fn transport(&mut self, song: &SongPosition) {
+        let _ = song;
     }
 
     /// Where the plug-in runs while it can take part in a joint round trip now; `None` (the
