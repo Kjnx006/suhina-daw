@@ -27,7 +27,9 @@ const MAX_HOPS: usize = 64;
 
 /// The chains of `project`'s tracks, ordered so every bus comes after the chains that feed it,
 /// with their targets, gains and latency compensation set; and the latency every path is
-/// brought up to. Allocates: call it off the audio thread.
+/// brought up to. With `source`, a source render: the node has a chain even without devices
+/// and every track that plays into it targets it, so the render can read the sum at the node.
+/// Allocates: call it off the audio thread.
 pub(crate) fn build(
     project: &Project,
     audio: &crate::AudioPool,
@@ -35,6 +37,7 @@ pub(crate) fn build(
     plugins: &mut Plugins,
     column_of: impl Fn(TrackId) -> u32,
     assets: &crate::DeviceAssets,
+    source: Option<TrackId>,
 ) -> (Vec<Chain>, u32) {
     // Every track with devices has a chain, a silent one too (muted, or not soloed): its
     // devices keep running at a gain of zero, so a plug-in keeps its state and its process,
@@ -90,6 +93,15 @@ pub(crate) fn build(
         {
             chains.push(Chain::passthrough(track.id, column_of(track.id)));
         }
+    }
+
+    // A source render makes the node a bus for its subtree: it has a chain even when it holds
+    // no devices, so everything that plays into it sums into it and the render reads the sum
+    // there.
+    if let Some(source) = source
+        && chains.iter().all(|c| c.track != source)
+    {
+        chains.push(Chain::passthrough(source, column_of(source)));
     }
 
     // A bus: a track with a chain that some other channel plays into.
@@ -227,9 +239,17 @@ pub(crate) fn build(
         .unwrap_or(0);
     for (i, chain) in chains.iter_mut().enumerate() {
         let arrived = arrive.get(i).copied().unwrap_or(0);
-        let to = match targets.get(i) {
-            Some(Some((target, _))) => input.get(*target).copied().unwrap_or(0),
-            _ => latency,
+        // A node render's captured chain lands where the whole mix lands: the devices between
+        // its parent and the master delay its sound in the whole mix, and their effects and
+        // mixer settings stay out of the render, so their latency rides the chain's own delay
+        // instead. Every other chain aligns to its target's input as it always did.
+        let to = if Some(chain.track) == source {
+            latency
+        } else {
+            match targets.get(i) {
+                Some(Some((target, _))) => input.get(*target).copied().unwrap_or(0),
+                _ => latency,
+            }
         };
         chain.delay = Delay::new(to.saturating_sub(arrived) as usize);
         if let Some(mix) = chain.mix.as_mut() {
@@ -255,6 +275,39 @@ pub(crate) fn build(
         chain.set_sends(sends);
     }
     (chains, latency)
+}
+
+/// Whether `track` plays into `source`'s channel through the channel tree — the source node's
+/// subtree. The source's own track is (its channel is the source's, or the group track's is);
+/// a return channel that plays into the node's bus is not, its role says so, because a node
+/// render leaves the returns out.
+pub(crate) fn in_source(project: &Project, track: TrackId, source_channel: ChannelId) -> bool {
+    let Some(channel) = project.tracks.iter().find(|t| t.id == track).and_then(|t| t.channel) else {
+        return false;
+    };
+    let output_of = |id: ChannelId| project.channels.iter().find(|c| c.id == id).and_then(|c| c.output);
+    let role_of = |id: ChannelId| project.channels.iter().find(|c| c.id == id).map(|c| c.role);
+    // A return is not inside a node's subtree even when it plays into the node's bus.
+    if role_of(channel) == Some(ChannelRole::Effect) && channel != source_channel {
+        return false;
+    }
+    if channel == source_channel {
+        return true;
+    }
+    // Bounded, so a routing cycle in a malformed project cannot loop forever.
+    let mut visited = Vec::new();
+    let mut next = output_of(channel);
+    while let Some(id) = next.take() {
+        if id == source_channel {
+            return true;
+        }
+        if visited.len() > MAX_HOPS || visited.contains(&id) {
+            return false;
+        }
+        visited.push(id);
+        next = output_of(id);
+    }
+    false
 }
 
 /// Whether `track`'s channel has its cue on.

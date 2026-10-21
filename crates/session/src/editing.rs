@@ -354,18 +354,16 @@ fn free_path(folder: &Path, name: &str) -> Result<PathBuf, CommandError> {
     Err(format!("no free file name for {name:?} in {}", folder.display()).into())
 }
 
-/// Writes interleaved stereo as a 32-bit float WAV file.
+/// Writes interleaved stereo as a 32-bit float WAV file, through the one writer every export
+/// and preview writes with (`media::write`). A bounce rewrites whatever it wrote before, by
+/// its own new name each time.
 fn write_wav(path: &Path, rate: u32, samples: &[f32]) -> Result<(), CommandError> {
-    let spec = hound::WavSpec {
-        channels: 2,
-        sample_rate: rate,
-        bits_per_sample: 32,
-        sample_format: hound::SampleFormat::Float,
-    };
-    let fail = |e: hound::Error| CommandError(format!("could not write {}: {e}", path.display()));
-    let mut writer = hound::WavWriter::create(path, spec).map_err(fail)?;
-    for sample in samples {
-        writer.write_sample(*sample).map_err(fail)?;
-    }
-    writer.finalize().map_err(fail)
+    use suhina_media::write::WriteMode;
+    suhina_media::write::write_audio_file(
+        path,
+        samples,
+        &suhina_media::write::AudioFileSpec::float_wav(rate),
+        WriteMode::Replace,
+    )
+    .map_err(|e| CommandError(format!("could not write {e}")))
 }

@@ -8,6 +8,7 @@ pub mod info;
 pub mod midi;
 pub mod stems;
 pub mod tempo;
+pub mod write;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

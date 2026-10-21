@@ -135,6 +135,16 @@ impl IComponentTrait for Processor {
     }
 
     unsafe fn getState(&self, state: *mut IBStream) -> tresult {
+        // A test's controlled state-read responder: a host asked to delay its state reply does
+        // so once per process, so a test can hold a reply out over a switch or a cancel
+        // deterministically, without short sleeps of its own.
+        static ONCE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let delay = std::env::var("SUHINA_TEST_PLUGIN_SAVE_DELAY_MS").ok().and_then(|v| v.parse::<u64>().ok());
+        if let Some(ms) = delay
+            && ONCE.compare_exchange(0, 1, Ordering::Relaxed, Ordering::Relaxed).is_ok()
+        {
+            std::thread::sleep(std::time::Duration::from_millis(ms));
+        }
         // SAFETY: as in `setState`.
         let Some(stream) = (unsafe { ComRef::from_raw(state) }) else { return kInvalidArgument };
         let mut bytes = f32::from_bits(self.gain.load(Ordering::Relaxed)).to_le_bytes();

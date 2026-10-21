@@ -184,21 +184,69 @@ pub(crate) fn order(chains: Vec<Chain>, after: impl Fn(&Chain) -> Vec<TrackId>) 
     sequence.into_iter().filter_map(|i| slots.get_mut(i).and_then(Option::take)).collect()
 }
 
+/// A source render's capture: the chain whose output the render reads, which chains are
+/// inside the source node's subtree (`keep[i]` is chain `i`'s; the returns the subtree sends
+/// to are never inside), and the block buffer the source chain's output is mixed into.
+pub(crate) struct Capture<'a> {
+    pub(crate) chain: usize,
+    pub(crate) keep: &'a [bool],
+    pub(crate) buffer: &'a mut [f32],
+}
+
 /// Runs every chain over the rest of a block of `frames` frames, in order, so a bus or a
 /// return has everything that plays into it before it runs: each chain adds its sound to its
-/// returns, then to its bus or `out`, and, when its cue is on, to the cue bus. Never allocates.
-pub(crate) fn finish(chains: &mut [Chain], out: &mut [f32], cue: &mut [f32], frames: usize, context: &ProcessContext) {
+/// returns, then to its bus or `out`, and, when its cue is on, to the cue bus. With `capture`,
+/// a source render: the named chain's output is mixed into the capture buffer instead of where
+/// it plays, and a chain outside the source node's subtree adds nothing into a chain inside
+/// it (a return routed into the node's bus plays into the mix, not into the node's file).
+/// Never allocates.
+pub(crate) fn finish(
+    chains: &mut [Chain],
+    out: &mut [f32],
+    cue: &mut [f32],
+    frames: usize,
+    context: &ProcessContext,
+    mut capture: Option<Capture>,
+) {
+    // The capture buffer starts empty; the source chain's mix adds to it.
+    if let Some(cap) = capture.as_mut()
+        && let Some(buffer) = cap.buffer.get_mut(..(frames.min(MAX_BLOCK) * 2).min(cap.buffer.len()))
+    {
+        buffer.fill(0.0);
+    }
     for i in 0..chains.len() {
         let (done, later) = chains.split_at_mut(i + 1);
         let Some(chain) = done.last_mut() else { continue };
         chain.complete(frames, context);
+        // Whether chain `i` is inside the source node's subtree; every chain is, when there is
+        // no capture (a normal render).
+        let inside = capture.as_ref().is_none_or(|c| c.keep.get(i).copied().unwrap_or(true));
         for k in 0..chain.sends.len() {
             let target = chain.sends.get(k).and_then(|s| s.target.checked_sub(i + 1));
-            if let Some(ret) = target.and_then(|t| later.get_mut(t)) {
-                chain.send(k, ret.input(frames), frames);
+            let Some(ret) = target.and_then(|t| later.get_mut(t)) else { continue };
+            if !inside
+                && target
+                    .is_some_and(|t| capture.as_ref().is_some_and(|c| c.keep.get(i + 1 + t).copied().unwrap_or(true)))
+            {
+                continue;
             }
+            chain.send(k, ret.input(frames), frames);
         }
-        match chain.target.and_then(|t| t.checked_sub(i + 1)).and_then(|t| later.get_mut(t)) {
+        // The source chain's output goes into the capture buffer instead of where it plays; its
+        // latency compensation, gains and mixer lanes are the same `mix` applies.
+        if let Some(cap) = capture.as_mut()
+            && cap.chain == i
+        {
+            chain.mix(&mut *cap.buffer, cue, frames);
+            continue;
+        }
+        let target = chain.target.and_then(|t| t.checked_sub(i + 1));
+        if !inside
+            && target.is_some_and(|t| capture.as_ref().is_some_and(|c| c.keep.get(i + 1 + t).copied().unwrap_or(true)))
+        {
+            continue;
+        }
+        match target.and_then(|t| later.get_mut(t)) {
             Some(bus) => chain.mix(bus.input(frames), cue, frames),
             None => chain.mix(out, cue, frames),
         }

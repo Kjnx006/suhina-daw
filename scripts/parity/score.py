@@ -42,7 +42,7 @@ CHAPTERS = [
     (1, "Welcome to Live", 1, None, "n/a", "Front matter."),
     (2, "First Steps (installation, Learn/Info view, Settings)", 11, 0.52, "partial",
      "Release and nightly packages for Windows, macOS and Linux; Help > About names the build "
-     "(version, nightly date and commit, platform). Settings pages, grouped by task in headed sections, scrolling and searchable: General, Arrangement, Session and mixer, Clip editor, Transport, Detail area, Browser, Appearance (zoom, theme, graphics), MIDI, Audio (driver/device/rate/buffer/exclusive/cue; "
+     "(version, nightly date and commit, platform). Settings pages, grouped by task in headed sections, scrolling and searchable: General, Export (MCP write folders), Arrangement, Session and mixer, Clip editor, Transport, Detail area, Browser, Appearance (zoom, theme, graphics), MIDI, Audio (driver/device/rate/buffer/exclusive/cue; "
      "a change or a device back after unplugging keeps playback and launched clips going; "
      "input device, MIDI inputs on/off), "
      "Shortcuts, Plug-ins; the detail area beside the browser or across the full width. Missing Link, Tempo & MIDI, File & Folder, Library, Record/Warp/Launch, "
@@ -58,11 +58,17 @@ CHAPTERS = [
      "category as the instruments or the effects by name and format, with pins and tags on them. "
      "Missing collections/tag editor depth, packs, Splice, "
      "Cloud, Push transfer, filter groups, browser history."),
-    (5, "Managing Files and Sets", 43, 0.38, "partial",
+    (5, "Managing Files and Sets", 43, 0.40, "partial",
      ".suhina save/open, File > Open recent, .als import, templates, several projects in tabs, missing-file locate and "
      "relink, backups on an interval or before critical operations with the offer after a crash. "
+     "Export renders the mix to wav (32f, 24 or 16 with dither), flac or ogg, at a sample rate, with normalise and overwrite "
+     "refused until asked: File > Export… (format, rate, depth, normalise, dither, overwrite) and the shared project.export "
+     "(a range and tail, a source, or the whole mix), one export at a time, the state the running plug-ins have now "
+     "(what their editors changed), and the write rules held again where the bytes land. "
+     "Settings > Export grants and revokes MCP write folders, including the project-folder default; "
+     "attached MCP exports prepare over frames and render off the window thread. "
      "Missing project folders/collect, unused files, packing, .asd, decoding cache, set "
-     "merging, file-reference view, export audio/video."),
+     "merging, file-reference view, the export dialog's source and range rows, mp3."),
     (6, "Arrangement View", 22, 0.60, "partial",
      "Layout, zoom, transport, track headers with a band of the track colour that opens the colour palette, ruler/play start, play from the selected clip, clip drag+move, "
      "overlap replace/stack, fades and fade shapes, the control bar's grid value (bars to "

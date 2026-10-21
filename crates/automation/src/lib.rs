@@ -6,6 +6,7 @@
 //! desktop app's endpoints, through which agents work on its open projects (ADR 0028).
 
 pub mod attach;
+pub mod confine;
 pub mod endpoint;
 pub mod render;
 pub mod server;

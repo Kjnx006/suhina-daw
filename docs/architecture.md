@@ -271,6 +271,13 @@ The main thread and the audio thread share nothing mutable. They talk in two dir
 
 ## Commands
 
+Export preparation is bounded work across window frames. Attached MCP jobs can remain pending
+between frames; a pending job is advanced only once per frame, and cancelled requests release
+their preparation state. `project.export` then renders and encodes on a worker without holding
+`Projects` or a session lock. The desktop uses the same preparation and render functions. The
+host supplies MCP write-folder preferences to `Projects`; no command changes them, and the
+automation layer applies its existing canonical-path validation to every allowed write root.
+
 Every user-visible action is a command in `session` with an id, typed parameters and a kind
 ([ADR 0002](decisions/0002-commands.md)). The CLI, the MCP server and the UI all call
 `Session::execute(id, params)`, or `Projects::execute` when several projects are open (it runs

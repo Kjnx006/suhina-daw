@@ -60,6 +60,7 @@ impl ParamType {
             Self::Notes => "notes",
             Self::Numbers => "numbers",
             Self::Clips => "clips",
+            Self::Range => "range",
             Self::Clip => "clip",
             Self::DevicePath => "device path",
         }
@@ -107,6 +108,8 @@ pub enum ParamType {
     Numbers,
     /// A list of arrangement clips, each `{ "clip": id }` or (deprecated) `{ "track": …, "index": n }`.
     Clips,
+    /// A range of beats, `{start, end}` from the arrangement's start.
+    Range,
     /// A clip id (integer, from `project.clips` or `project.launcher`) or a clip name (string) that
     /// only one clip has.
     Clip,
@@ -293,6 +296,7 @@ impl<T> CommandSpec<T> {
                 ParamType::Bool => json!("boolean"),
                 ParamType::Track | ParamType::Clip | ParamType::DevicePath => json!(["integer", "string"]),
                 ParamType::Decibels => json!(["number", "string"]),
+                ParamType::Range => json!("object"),
                 ParamType::Text => json!("string"),
             };
             properties.insert(p.name.to_string(), json!({ "type": ty, "description": p.doc }));
@@ -1609,6 +1613,41 @@ static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: files::add_track,
+    },
+    CommandSpec {
+        id: "project.export",
+        label: "Render the mix, or the named node of the track tree, to an audio file: wav (32-bit float or 16/24-bit PCM), flac or ogg, with sample rate, depth, range, tail, normalise and dither",
+        params: &[
+            optional(
+                "path",
+                ParamType::Text,
+                "the file to write (output is an alias); its extension decides the format when format is left out",
+            ),
+            optional("output", ParamType::Text, "the file to write; an alias of path"),
+            optional("format", ParamType::Text, "wav (default), flac or ogg"),
+            optional("sample_rate", ParamType::Integer, "hertz; 48000 by default"),
+            optional("bit_depth", ParamType::Text, "32f (the default for wav), 24 or 16"),
+            optional("overwrite", ParamType::Bool, "true replaces an existing file; it is never replaced without this"),
+            optional(
+                "range",
+                ParamType::Range,
+                "the beats to render, {start, end} from the arrangement's start; the whole arrangement when left out",
+            ),
+            optional("tail", ParamType::Number, "extra beats rendered after the range's end"),
+            optional("normalize", ParamType::Bool, "true scales the file's peak to -0.3 dBFS"),
+            optional(
+                "dither",
+                ParamType::Bool,
+                "triangular dither for a reduced depth; on there, off at 32f, by default",
+            ),
+            optional(
+                "source",
+                ParamType::Track,
+                "the track or group of the track tree to render, instead of the whole mix (id or name)",
+            ),
+        ],
+        kind: CommandKind::Read,
+        run: crate::export::export,
     },
     CommandSpec {
         id: "project.missingFiles",

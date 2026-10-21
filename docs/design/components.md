@@ -301,6 +301,11 @@ dragging, and a drag is one undo step.
 
 ## Settings
 
+The Export page's MCP write permissions use the standard On/Off row for the project's folder,
+showing that folder in the note. Explicit allowed folders occupy separate rows with fitted
+path text and a Remove button on the right. Add folder… opens the system folder picker.
+The list scrolls with the page, and its note says that each grant includes subfolders.
+
 Options › Settings (Ctrl+,) opens a dialog over the window until it is closed (Close, Escape or
 Ctrl+, again): the view stays behind it, dimmed with `window.background` at 60 % and taking no
 clicks, wheel or pinch (they reach only the dialog, as with every dialog over the window); embedded plug-in editors hide while it shows. The dialog is at most 772 × 720 px (6 px
