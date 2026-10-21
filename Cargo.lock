@@ -4460,7 +4460,6 @@ dependencies = [
  "raw-window-handle",
  "rfd",
  "suhina-automation",
- "suhina-device-bundle",
  "suhina-engine",
  "suhina-library",
  "suhina-media",
@@ -4534,15 +4533,6 @@ version = "0.0.1"
 dependencies = [
  "suhina-device-api",
  "suhina-dsp",
-]
-
-[[package]]
-name = "suhina-device-bundle"
-version = "0.0.1"
-dependencies = [
- "suhina-device-registry",
- "suhina-device-sdk",
- "suhina-model",
 ]
 
 [[package]]
@@ -4838,7 +4828,6 @@ dependencies = [
  "serde_json",
  "suhina-als",
  "suhina-device-api",
- "suhina-device-bundle",
  "suhina-device-fm-synth",
  "suhina-device-nam-amp-modeler",
  "suhina-device-nam-cab-loader",
@@ -4883,7 +4872,6 @@ dependencies = [
  "memory-stats",
  "serde_json",
  "suhina-device-api",
- "suhina-device-bundle",
  "suhina-device-nam-amp-modeler",
  "suhina-device-nam-cab-loader",
  "suhina-device-registry",

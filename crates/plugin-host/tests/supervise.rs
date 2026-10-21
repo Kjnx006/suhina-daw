@@ -552,6 +552,20 @@ fn parameters_are_listed_set_and_kept_over_a_restart() {
     assert!(plain.params().unwrap().is_empty());
 }
 
+#[test]
+fn parameters_listed_within_a_time_wait_for_no_longer() {
+    let (mut plugin, _audio) = start("test:clap");
+    assert_eq!(plugin.params_within(PATIENT).unwrap().len(), 1);
+    // A time too short for the host to answer in: a timeout (or the answer, if it was quicker),
+    // whatever the launch's. How long it took is not measured: a busy runner proves nothing.
+    match plugin.params_within(Duration::ZERO) {
+        Ok(_) | Err(PluginError::Timeout(_)) => {}
+        Err(other) => panic!("{other}"),
+    }
+    // The late answer is skipped by the next request, which gets its own.
+    assert_eq!(plugin.params().unwrap().len(), 1);
+}
+
 /// Runs blocks of `input` (`FRAMES` frames, stereo) until the plug-in reports `latency`, and
 /// returns the time that took.
 fn until_latency(plugin: &mut Plugin, audio: &mut PluginAudio, latency: u32) -> Duration {

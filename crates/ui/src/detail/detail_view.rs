@@ -12,6 +12,8 @@
 
 use egui::{Align2, Id, Pos2, Rect, Sense, Ui, Vec2};
 use serde_json::json;
+use suhina_device_sdk::builtin::{COMPACT_HEIGHT, COMPACT_WIDTH};
+use suhina_device_sdk::{ControlShape, LabelPosition, ParameterControl};
 use suhina_engine::model::{ClipId, DeviceKind, LaneData, Note, Project, StretchMode, TrackId};
 use suhina_session::{Placement, PluginReport, PluginStatus};
 
@@ -35,9 +37,11 @@ fn device_display_name(device: &suhina_engine::model::Device) -> String {
     }
 }
 
-/// Width of one device in a row, and of the column the stacked chain takes.
+/// Width of one device in a row, at least.
 pub const DEVICE_WIDTH: f32 = 220.0;
-pub const STACK_WIDTH: f32 = 260.0;
+/// Default width of the column the stacked chain takes: a compact panel 260 px wide and its
+/// padding (ADR 0021 › Amendment: device panels, 5).
+pub const STACK_WIDTH: f32 = COMPACT_WIDTH + PAD * 2.0;
 const PARAM_ROW: f32 = 16.0;
 const NODE_ROW: f32 = 22.0;
 /// Width of the clip's properties beside the chain, and of a property's label.
@@ -137,25 +141,76 @@ pub struct BranchBox {
     pub devices: Vec<DeviceBox>,
 }
 
+/// What a device panel draws from a parameter list: an `.sd` device's graph, a built-in's
+/// panel or a running plug-in's generated list.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GraphBox {
+    /// The compact panel's canvas; `None` draws the parameters as a generated list.
     pub canvas: Option<std::sync::Arc<suhina_device_sdk::ui::DeviceUi>>,
+    /// The device's larger panel, opened from its header over the main area, if it has one.
+    pub expanded: Option<std::sync::Arc<suhina_device_sdk::ui::DeviceUi>>,
+    /// The visible nodes form one chain, so the list marks each step with an arrow.
     pub linear: bool,
+    /// The names of an `.sd` graph's visible nodes, in signal order; empty for the others.
     pub nodes: Vec<String>,
+    /// Every parameter, in its device's order.
     pub parameters: Vec<GraphParameter>,
 }
 
+/// One parameter as a device panel shows and edits it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GraphParameter {
+    /// How its device writes the value it was listed with (a plug-in's "-3.2 dB"), or empty.
+    pub text: String,
+    /// What a double-click puts it back to.
     pub default: f64,
+    /// How it looks: label, size, colours, step, decimals, a choice's labels.
     pub ui: suhina_device_sdk::ParameterUi,
-    pub control: suhina_device_sdk::ParameterControl,
+    /// The control that edits it.
+    pub control: ParameterControl,
+    /// Written after its value; empty for none.
     pub unit: String,
+    /// The id `device.setParam` names it by.
     pub id: String,
+    /// Its label in the panel.
     pub name: String,
+    /// Its lowest value.
     pub min: f64,
+    /// Its highest value.
     pub max: f64,
+    /// Its value now, within `min..=max`.
     pub value: f64,
+}
+
+impl GraphParameter {
+    /// `parameter` as a panel shows it, at `value`.
+    pub(crate) fn new(parameter: &suhina_device_sdk::Parameter, value: f64) -> Self {
+        Self {
+            text: String::new(),
+            default: parameter.default,
+            ui: parameter.ui.clone(),
+            control: parameter.control,
+            unit: parameter.unit.clone(),
+            id: parameter.id.clone(),
+            name: parameter.name.clone(),
+            min: parameter.min,
+            max: parameter.max,
+            value,
+        }
+    }
+}
+
+/// `parameters` at the values `device` keeps for them (kept in range), or at their defaults.
+fn graph_parameters(
+    parameters: &[suhina_device_sdk::Parameter],
+    device: &suhina_engine::model::Device,
+) -> Vec<GraphParameter> {
+    parameters
+        .iter()
+        .map(|p| {
+            GraphParameter::new(p, device.params.iter().find(|v| v.id == p.id).map_or(p.default, |v| p.clamp(v.value)))
+        })
+        .collect()
 }
 
 /// Where a plug-in device's plug-in stands, as its panel shows it.
@@ -430,6 +485,11 @@ impl Detail {
                     }
                     if let Some(graph) = device_box.graph.as_mut() {
                         for parameter in graph.parameters.iter_mut().filter(|p| p.id == lane.param) {
+                            let value = value.clamp(parameter.min, parameter.max);
+                            // A plug-in's text is for the value it listed, not the one played.
+                            if value != parameter.value {
+                                parameter.text.clear();
+                            }
                             parameter.value = value;
                         }
                     }
@@ -546,6 +606,8 @@ fn device_box(
     id: TrackId,
     plugins: &mut dyn FnMut(TrackId, &[usize]) -> Option<PluginReport>,
 ) -> DeviceBox {
+    let report = matches!(d.kind, DeviceKind::Clap { .. } | DeviceKind::Vst3 { .. } | DeviceKind::Vst2 { .. })
+        .then(|| plugins(id, path));
     DeviceBox {
         index: path.last().copied().unwrap_or(0),
         at: DeviceAt(path.to_vec()),
@@ -608,34 +670,20 @@ fn device_box(
             .filter(|path| !path.is_empty())
             .map(str::to_owned),
         graph: match (&d.kind, d.state.as_deref()) {
-            // A built-in with a stock `.sd` panel (the Sampler, #600), read from the bundle by id.
-            (DeviceKind::Builtin(_), _) => {
-                suhina_device_bundle::source(d).and_then(crate::detail::device_canvas::graph).map(|cached| GraphBox {
-                    canvas: cached.canvas.clone(),
-                    linear: false,
-                    nodes: vec![],
-                    parameters: cached
-                        .graph
-                        .parameters
-                        .iter()
-                        .map(|p| GraphParameter {
-                            default: p.default,
-                            control: p.control,
-                            ui: p.ui.clone(),
-                            unit: p.unit.clone(),
-                            id: p.id.clone(),
-                            name: p.name.clone(),
-                            min: p.min,
-                            max: p.max,
-                            value: d.params.iter().find(|v| v.id == p.id).map_or(p.default, |v| p.clamp(v.value)),
-                        })
-                        .collect(),
-                })
-            }
+            // A built-in's panel, loaded by its id from this Suhina (ADR 0021 › Amendment: device
+            // panels): its parameters from the device, its layout's canvas or the generated list.
+            (DeviceKind::Builtin(id), _) => suhina_device_registry::panel(id).map(|panel| GraphBox {
+                canvas: panel.ui.clone(),
+                expanded: panel.expanded.clone(),
+                linear: false,
+                nodes: vec![],
+                parameters: graph_parameters(&panel.parameters, d),
+            }),
             (DeviceKind::Sd, Some(state)) => crate::detail::device_canvas::graph(state).map(|cached| {
                 let graph = &cached.graph;
                 GraphBox {
                     canvas: cached.canvas.clone(),
+                    expanded: cached.expanded.clone(),
                     linear: graph.connections.len() == graph.nodes.len().saturating_sub(1)
                         && graph
                             .nodes
@@ -648,32 +696,52 @@ fn device_box(
                         .filter(|node| node.visible)
                         .map(|node| node.kind.info().name.into())
                         .collect(),
-                    parameters: graph
-                        .parameters
-                        .iter()
-                        .map(|parameter| GraphParameter {
-                            default: parameter.default,
-                            control: parameter.control,
-                            ui: parameter.ui.clone(),
-                            unit: parameter.unit.clone(),
-                            id: parameter.id.clone(),
-                            name: parameter.name.clone(),
-                            min: parameter.min,
-                            max: parameter.max,
-                            value: d
-                                .params
-                                .iter()
-                                .find(|value| value.id == parameter.id)
-                                .map_or(parameter.default, |value| parameter.clamp(value.value)),
-                        })
-                        .collect(),
+                    parameters: graph_parameters(&graph.parameters, d),
                 }
             }),
-            _ => None,
+            // A plug-in's generated list, from the parameters it listed (#679).
+            _ => report
+                .as_ref()
+                .and_then(Option::as_ref)
+                .filter(|r| r.status == PluginStatus::Running)
+                .and_then(|r| r.params.as_deref())
+                .map(|list| plugin_graph(d, list)),
         },
-        plugin: matches!(d.kind, DeviceKind::Clap { .. } | DeviceKind::Vst3 { .. } | DeviceKind::Vst2 { .. })
-            .then(|| PluginBox::from_report(plugins(id, path))),
+        plugin: report.map(PluginBox::from_report),
     }
+}
+
+/// A plug-in's parameters as its generated list draws them: every one it shows and lets be
+/// changed, in its order, with the value the project keeps for it or the one it listed, and its
+/// own text for that value. A switch is a toggle; a stepped parameter moves in its steps.
+fn plugin_graph(d: &suhina_engine::model::Device, list: &[suhina_plugins::ParamInfo]) -> GraphBox {
+    let parameters = list
+        .iter()
+        .filter(|p| !p.hidden && !p.read_only && p.min < p.max)
+        .take(suhina_device_sdk::MAX_PARAMETERS)
+        .map(|p| {
+            let id = p.id.to_string();
+            let stored = d.params.iter().find(|v| suhina_engine::param_id(&v.id) == Some(p.id)).map(|v| v.value);
+            let toggle = p.steps == 1 && p.min == 0.0 && p.max == 1.0;
+            let mut ui = suhina_device_sdk::ParameterUi { group: p.group.clone(), decimals: 2, ..Default::default() };
+            if p.steps > 1 {
+                ui.step = (p.max - p.min) / f64::from(p.steps);
+            }
+            GraphParameter {
+                text: if stored.is_none_or(|v| v == p.value) { p.text.clone() } else { String::new() },
+                default: p.default.clamp(p.min, p.max),
+                ui,
+                control: if toggle { ParameterControl::Toggle } else { ParameterControl::Slider },
+                unit: String::new(),
+                name: if p.name.is_empty() { id.clone() } else { p.name.clone() },
+                id,
+                min: p.min,
+                max: p.max,
+                value: stored.unwrap_or(p.value).clamp(p.min, p.max),
+            }
+        })
+        .collect();
+    GraphBox { canvas: None, expanded: None, linear: false, nodes: vec![], parameters }
 }
 
 /// A device group's settings and its branches with their devices.
@@ -795,10 +863,12 @@ fn chain_row(
             let authored_width = graph.map_or(authored_base, |graph| {
                 graph.canvas.as_ref().map_or_else(
                     || {
-                        parameter_layout(&graph.parameters, DEVICE_WIDTH - PAD * 2.0, &[])
+                        // The generated list is a compact panel's width, wider only where an
+                        // `.sd` file places its controls further out.
+                        parameter_layout(&graph.parameters, COMPACT_WIDTH, &[])
                             .iter()
                             .map(|cell| cell.right() + PAD * 2.0)
-                            .fold(DEVICE_WIDTH, f32::max)
+                            .fold(STACK_WIDTH, f32::max)
                     },
                     |c| c.viewport_size.map_or(DEVICE_WIDTH.max(c.size[0] + PAD * 2.0), |v| v[0] + PAD * 2.0),
                 )
@@ -896,22 +966,32 @@ fn panel_height(device: &DeviceBox, width: f32, editor: Option<Vec2>) -> f32 {
         Some(editor) => EDITOR_TOP + editor.y + PAD,
         // A NAM panel's own height (nam spec › The panels); the rest take their rows.
         None if device.file_device.is_some() => crate::detail::nam_panel::NAM_HEIGHT,
-        None => {
-            ROW + PAD * 2.0
-                + device.graph.as_ref().map_or(rows * PARAM_ROW, |graph| {
-                    parameter_layout(
-                        &graph.parameters,
-                        width,
-                        graph.canvas.as_ref().map_or(&[], |c| c.hidden_parameters.as_slice()),
-                    )
-                    .iter()
-                    .map(|r| r.bottom())
-                    .fold(0.0f32, f32::max)
-                })
-                + device.graph.as_ref().map_or(0.0, |graph| {
-                    graph.nodes.len() as f32 * NODE_ROW + graph.canvas.as_ref().map_or(0.0, |c| c.size[1])
-                })
+        // A plug-in's rows, then its generated list, within the compact panel's height.
+        None if device.plugin.is_some() => {
+            let rows = ROW + PAD * 2.0 + rows * PARAM_ROW;
+            device.graph.as_ref().map_or(rows, |graph| {
+                rows.max((EDITOR_TOP + graph_body(graph, width) + PAD).min(ROW + PAD * 2.0 + COMPACT_HEIGHT))
+            })
         }
+        None => ROW + PAD * 2.0 + device.graph.as_ref().map_or(rows * PARAM_ROW, |graph| graph_body(graph, width)),
+    }
+}
+
+/// How tall a device's parameters, nodes and canvas are. A list without a canvas is at most a
+/// compact panel's height and scrolls past it (ADR 0021 › Amendment: device panels, 5).
+fn graph_body(graph: &GraphBox, width: f32) -> f32 {
+    let cells = parameter_layout(
+        &graph.parameters,
+        width,
+        graph.canvas.as_ref().map_or(&[], |c| c.hidden_parameters.as_slice()),
+    )
+    .iter()
+    .map(|r| r.bottom())
+    .fold(0.0f32, f32::max);
+    let height = cells + graph.nodes.len() as f32 * NODE_ROW;
+    match &graph.canvas {
+        Some(canvas) => height + canvas.size[1],
+        None => height.min(COMPACT_HEIGHT),
     }
 }
 
@@ -1009,29 +1089,7 @@ fn chain_stack(
             continue;
         }
         let editor = device.plugin.as_ref().and_then(|p| p.editor_size(scale)).filter(|_| device.at.top());
-        let rows =
-            if device.plugin.is_some() { 2.0 + BUTTON_HEIGHT / PARAM_ROW } else { device.params.len().max(1) as f32 };
-        let height = match editor {
-            Some(editor) => EDITOR_TOP + editor.y + PAD,
-            // A NAM panel's own height (nam spec › The panels); the rest take their rows.
-            None if device.file_device.is_some() => crate::detail::nam_panel::NAM_HEIGHT,
-            None => {
-                ROW + PAD * 2.0
-                    + device.graph.as_ref().map_or(rows * PARAM_ROW, |graph| {
-                        parameter_layout(
-                            &graph.parameters,
-                            area.width(),
-                            graph.canvas.as_ref().map_or(&[], |c| c.hidden_parameters.as_slice()),
-                        )
-                        .iter()
-                        .map(|r| r.bottom())
-                        .fold(0.0f32, f32::max)
-                    })
-                    + device.graph.as_ref().map_or(0.0, |graph| {
-                        graph.nodes.len() as f32 * NODE_ROW + graph.canvas.as_ref().map_or(0.0, |c| c.size[1])
-                    })
-            }
-        };
+        let height = panel_height(device, area.width() - PAD * 2.0, editor);
         let height = sdk_viewport(device).map_or(height, |v| ROW + PAD * 2.0 + v[1]);
         let right = sdk_viewport(device).map_or(area.right(), |v| (area.left() + v[0] + PAD * 2.0).min(area.right()));
         let rect = Rect::from_min_max(Pos2::new(area.left(), y), Pos2::new(right, y + height));
@@ -1336,7 +1394,32 @@ fn device_panel(
         [close.center() + Vec2::new(-arm, arm), close.center() + Vec2::new(arm, -arm)],
         egui::Stroke::new(1.2, cross),
     );
-    let kind_right = close.left() - 4.0;
+    let mut kind_right = close.left() - 4.0;
+    // A device with an expanded panel has a button for it beside its X (ADR 0021 › Amendment:
+    // device panels, 6); a second click closes it again.
+    if device.graph.as_ref().is_some_and(|g| g.expanded.is_some()) {
+        let button = Rect::from_center_size(Pos2::new(kind_right - 6.0, header.center().y), Vec2::splat(12.0));
+        kind_right = button.left() - 4.0;
+        let open = expanded(ui.ctx()).is_some_and(|(t, at)| t == track && at == device.at);
+        let label =
+            if open { format!("Close {}'s expanded panel", device.name) } else { format!("Expand {}", device.name) };
+        let response = widgets::button_area(ui, button, Id::new(("device-expand", track.0, &device.at)), &label)
+            .on_hover_text(&label);
+        if response.clicked() {
+            if open {
+                close_expanded(ui.ctx());
+            } else {
+                open_expanded(ui.ctx(), track, device.at.clone());
+            }
+        }
+        let ink = if response.hovered() || open { theme::text_primary() } else { theme::text_hint() };
+        // Two corners pointing out: the panel grows.
+        let r = button.shrink(2.0);
+        for (corner, x, y) in [(r.right_top(), -1.0, 1.0), (r.left_bottom(), 1.0, -1.0)] {
+            painter.line_segment([corner, corner + Vec2::new(4.0 * x, 0.0)], egui::Stroke::new(1.2, ink));
+            painter.line_segment([corner, corner + Vec2::new(0.0, 4.0 * y)], egui::Stroke::new(1.2, ink));
+        }
+    }
     let kind_width = widgets::text_width(ui, &device.kind, theme::ui_font(theme::TEXT_TINY));
     let name = Rect::from_min_max(
         Pos2::new(switch.right() + PAD, header.top()),
@@ -1383,6 +1466,15 @@ fn device_panel(
             theme::ui_font(theme::TEXT_SMALL),
             color,
         );
+        // Its generated list under its button, while its editor is not in the panel (#679).
+        if plugin.embedded.is_none()
+            && let Some(graph) = &device.graph
+        {
+            let list = Rect::from_min_max(Pos2::new(body.left(), rect.top() + EDITOR_TOP), body.max);
+            if list.height() >= PARAM_ROW {
+                graph_controls(ui, list, graph, track, &device.at, actions);
+            }
+        }
         outline(painter);
         return clicked;
     }
@@ -1404,274 +1496,7 @@ fn device_panel(
         return clicked;
     }
     if let Some(graph) = &device.graph {
-        ui.scope_builder(egui::UiBuilder::new().max_rect(body), |ui| {
-            egui::ScrollArea::both().auto_shrink([false,false]).id_salt(("sd-controls",track.0,&device.at)).show(ui, |ui| {
-                let hidden = graph.canvas.as_ref().map_or(&[][..],|c|c.hidden_parameters.as_slice());
-                let cells = parameter_layout(&graph.parameters,body.width(),hidden);
-                let custom_size=graph.canvas.as_ref().map_or(Vec2::ZERO,|c|Vec2::new(c.size[0],c.size[1]));
-                let nodes_height = graph.nodes.len() as f32 * NODE_ROW;
-                let canvas = cells.iter().fold(Vec2::new(body.width().max(custom_size.x),0.0),|size,rect| Vec2::new(size.x.max(rect.right()),size.y.max(rect.bottom())));
-                let (_, body) = ui.allocate_space(Vec2::new(canvas.x,canvas.y+nodes_height+custom_size.y));
-                let painter = &ui.painter_at(body.intersect(ui.clip_rect()));
-                let mut row_top = body.top();
-        for (index, node) in graph.nodes.iter().enumerate() {
-            let row = Rect::from_min_size(Pos2::new(body.left(), row_top), Vec2::new(body.width(), NODE_ROW));
-            if row.bottom() > body.bottom() + 0.5 {
-                break;
-            }
-            let node_rect = Rect::from_min_size(row.min, Vec2::new((row.width() - PAD) * 0.78, NODE_ROW - PAD));
-            painter.rect_filled(node_rect, 1.0, theme::control_background());
-            widgets::text_in(
-                painter,
-                node_rect.shrink(PAD / 2.0),
-                Align2::CENTER_CENTER,
-                node,
-                theme::ui_font(theme::TEXT_TINY),
-                theme::text_secondary(),
-            );
-            if graph.linear && index + 1 < graph.nodes.len() {
-                widgets::text_in(
-                    painter,
-                    Rect::from_min_size(Pos2::new(node_rect.right(), row.top()), Vec2::new(PAD, NODE_ROW)),
-                    Align2::CENTER_CENTER,
-                    "›",
-                    theme::ui_font(theme::TEXT),
-                    theme::text_hint(),
-                );
-            }
-            row_top += NODE_ROW;
-        }
-        if let Some(canvas)=&graph.canvas {
-            let rect=Rect::from_min_size(body.min+Vec2::new(0.0,nodes_height),custom_size);
-            crate::detail::device_canvas::show(ui,rect,canvas,&graph.parameters,track,&device.at,actions);
-        }
-        for (parameter, cell) in graph.parameters.iter().filter(|p|!hidden.contains(&p.id)).zip(&cells) {
-            let row = cell.translate(Vec2::new(body.left(),body.top()+nodes_height+custom_size.y));
-            let font = egui::FontId::new(parameter.ui.font_size,if parameter.ui.monospace { egui::FontFamily::Monospace } else { egui::FontFamily::Proportional });
-            let foreground = parameter.ui.text_color.map_or_else(theme::text_secondary,|[r,g,b]| egui::Color32::from_rgb(r,g,b));
-            let radius = match parameter.ui.shape {
-                suhina_device_sdk::ControlShape::Square => 0.0,
-                suhina_device_sdk::ControlShape::Pill => 128.0,
-                suhina_device_sdk::ControlShape::Rounded => parameter.ui.corner_radius,
-            };
-            if let Some([r,g,b]) = parameter.ui.panel_color {
-                painter.rect_filled(row,radius,egui::Color32::from_rgb(r,g,b));
-            }
-            let row = row.shrink(4.0);
-            let label_height = parameter.ui.font_size+4.0;
-            let name_rect = match parameter.ui.label_position {
-                suhina_device_sdk::LabelPosition::Left => Rect::from_min_size(row.min,Vec2::new(row.width()*0.34,row.height())),
-                suhina_device_sdk::LabelPosition::Top => Rect::from_min_size(row.min,Vec2::new(row.width(),label_height)),
-                suhina_device_sdk::LabelPosition::Hidden => Rect::from_min_size(row.min,Vec2::ZERO),
-            };
-            if parameter.ui.label_position != suhina_device_sdk::LabelPosition::Hidden {
-            widgets::text_in(
-                painter,
-                name_rect,
-                if parameter.ui.label_position == suhina_device_sdk::LabelPosition::Top { Align2::CENTER_CENTER } else { Align2::LEFT_CENTER },
-                &if parameter.ui.group.is_empty() {
-                    parameter.name.clone()
-                } else {
-                    format!("{} / {}", parameter.ui.group, parameter.name)
-                },
-                font.clone(),
-                foreground,
-            );
-            }
-            let value_height = if parameter.ui.show_value && parameter.ui.label_position == suhina_device_sdk::LabelPosition::Top {
-                parameter.ui.font_size + 4.0
-            } else {
-                0.0
-            };
-            let value_width = if parameter.ui.show_value && value_height == 0.0 { (row.width()*0.24).min(80.0) } else { 0.0 };
-            let control_min = match parameter.ui.label_position {
-                suhina_device_sdk::LabelPosition::Left => Pos2::new(name_rect.right(),row.top()),
-                suhina_device_sdk::LabelPosition::Top => Pos2::new(row.left(),name_rect.bottom()),
-                suhina_device_sdk::LabelPosition::Hidden => row.min,
-            };
-            let slider_rect = Rect::from_min_max(control_min,Pos2::new(row.right()-value_width,row.bottom()-value_height));
-            let mut value = parameter.value;
-            let response = (parameter.min < parameter.max).then(|| {
-                ui.scope_builder(
-                    egui::UiBuilder::new()
-                        .max_rect(slider_rect)
-                        .layout(egui::Layout::centered_and_justified(egui::Direction::TopDown)),
-                    |ui| {
-                        ui.style_mut().override_font_id = Some(font.clone());
-                        let visuals = ui.visuals_mut();
-                        visuals.override_text_color = Some(foreground);
-                        let accent = parameter.ui.accent.map(|[r,g,b]| egui::Color32::from_rgb(r,g,b));
-                        if let Some(accent) = accent {
-                            visuals.selection.bg_fill = accent;
-                            visuals.widgets.active.bg_fill = accent;
-                            visuals.widgets.hovered.bg_stroke.color = accent;
-                            visuals.widgets.active.fg_stroke.color = accent;
-                        }
-                        for style in [&mut visuals.widgets.inactive,&mut visuals.widgets.hovered,&mut visuals.widgets.active] {
-                            style.corner_radius = egui::CornerRadius::same(radius as u8);
-                            if let Some([r,g,b]) = parameter.ui.background { style.bg_fill = egui::Color32::from_rgb(r,g,b); style.weak_bg_fill = style.bg_fill; }
-                            if let Some(accent) = accent { style.fg_stroke.color = accent; }
-                        }
-                        ui.set_clip_rect(ui.clip_rect().intersect(slider_rect));
-                        ui.spacing_mut().slider_width = if parameter.control == suhina_device_sdk::ParameterControl::VerticalSlider { slider_rect.height() } else { slider_rect.width() };
-                        ui.push_id((&parameter.id, &device.at, track.0), |ui| {
-                            let previous = value;
-                            let mut response = match parameter.control {
-                                suhina_device_sdk::ParameterControl::Toggle => {
-                                    let mut checked = value >= 0.5;
-                                    let response = ui.checkbox(&mut checked, "");
-                                    value = f64::from(checked);
-                                    response
-                                }
-                                suhina_device_sdk::ParameterControl::Button => {
-                                    let response = ui.selectable_label(value >= 0.5, &parameter.name);
-                                    if response.clicked() {
-                                        value = if value >= 0.5 { 0.0 } else { 1.0 };
-                                    }
-                                    response
-                                }
-                                suhina_device_sdk::ParameterControl::Choice => {
-                                    egui::ComboBox::from_id_salt("choice")
-                                        .selected_text(
-                                            parameter.ui.options.get(value as usize).map_or("", String::as_str),
-                                        )
-                                        .width(slider_rect.width())
-                                        .show_ui(ui, |ui| {
-                                            for (i, label) in parameter.ui.options.iter().enumerate() {
-                                                ui.selectable_value(&mut value, i as f64, label);
-                                            }
-                                        })
-                                        .response
-                                }
-                                suhina_device_sdk::ParameterControl::Radio => {
-                                    ui.vertical_centered(|ui| {
-                                        for (i, label) in parameter.ui.options.iter().enumerate() {
-                                            ui.selectable_value(&mut value, i as f64, label);
-                                        }
-                                    })
-                                    .response
-                                }
-                                suhina_device_sdk::ParameterControl::Number => ui.add(
-                                    egui::DragValue::new(&mut value)
-                                        .range(parameter.min..=parameter.max)
-                                        .speed(if parameter.ui.step > 0.0 {
-                                            parameter.ui.step
-                                        } else {
-                                            (parameter.max - parameter.min) / widgets::PARAMETER_DRAG_PIXELS
-                                        })
-                                        .max_decimals(parameter.ui.decimals),
-                                ),
-                                suhina_device_sdk::ParameterControl::Knob
-                                | suhina_device_sdk::ParameterControl::LogKnob => {
-                                    let logarithmic = parameter.control == suhina_device_sdk::ParameterControl::LogKnob;
-                                    let size = slider_rect.width().min(slider_rect.height()).max(8.0);
-                                    let (rect, mut response) =
-                                        ui.allocate_exact_size(Vec2::splat(size), egui::Sense::click_and_drag());
-                                    if response.clicked() { response.request_focus(); }
-                                    if response.double_clicked() { value = parameter.default; }
-                                    if response.has_focus() {
-                                        let direction = ui.input(|i| {
-                                            i32::from(i.key_pressed(egui::Key::ArrowUp) || i.key_pressed(egui::Key::ArrowRight))
-                                            - i32::from(i.key_pressed(egui::Key::ArrowDown) || i.key_pressed(egui::Key::ArrowLeft))
-                                        });
-                                        let step = if parameter.ui.step > 0.0 { parameter.ui.step } else { (parameter.max-parameter.min)*0.01 };
-                                        value = (value+direction as f64*step).clamp(parameter.min,parameter.max);
-                                    }
-                                    let mut position = if logarithmic {
-                                        (value / parameter.min).ln() / (parameter.max / parameter.min).ln()
-                                    } else {
-                                        (value - parameter.min) / (parameter.max - parameter.min)
-                                    };
-                                    if response.dragged() {
-                                        let fine = if ui.input(|i| i.modifiers.shift) { 0.1 } else { 1.0 };
-                                        position =
-                                            (position - response.drag_delta().y as f64 / widgets::PARAMETER_DRAG_PIXELS * fine).clamp(0.0, 1.0);
-                                        value = if logarithmic {
-                                            parameter.min * (parameter.max / parameter.min).powf(position)
-                                        } else {
-                                            parameter.min + position * (parameter.max - parameter.min)
-                                        };
-                                        response.mark_changed();
-                                    }
-                                    let center=rect.center(); let knob_radius=size*9.0/22.0;
-                                    let background=parameter.ui.background.map_or_else(theme::control_background,|[r,g,b]| egui::Color32::from_rgb(r,g,b));
-                                    if parameter.ui.shape == suhina_device_sdk::ControlShape::Square {
-                                        ui.painter().rect_filled(egui::Rect::from_center_size(center,Vec2::splat(knob_radius*2.0)),0.0,background);
-                                    } else { ui.painter().circle_filled(center,knob_radius,background); }
-                                    let border=egui::Stroke::new(1.0,accent.unwrap_or_else(theme::text_hint));
-                                    if parameter.ui.shape == suhina_device_sdk::ControlShape::Square {
-                                        ui.painter().rect_stroke(egui::Rect::from_center_size(center,Vec2::splat(knob_radius*2.0)),0.0,border,egui::StrokeKind::Inside);
-                                    } else { ui.painter().circle_stroke(center,knob_radius,border); }
-                                    let angle=(-135.0+270.0*position as f32).to_radians();
-                                    let tip=center+Vec2::new(angle.sin(),-angle.cos())*(knob_radius-1.0);
-                                    ui.painter().line_segment([center,tip],egui::Stroke::new(1.5,accent.unwrap_or_else(theme::text_primary)));
-                                    response.widget_info(|| {
-                                        egui::WidgetInfo::labeled(egui::WidgetType::DragValue, true, &parameter.name)
-                                    });
-                                    response
-                                }
-                                suhina_device_sdk::ParameterControl::VerticalSlider => {
-                                    let rect = Rect::from_center_size(slider_rect.center(), Vec2::new(ui.spacing().interact_size.y, slider_rect.height()));
-                                    let mut slider_ui = ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(egui::Layout::top_down(egui::Align::Center)));
-                                    slider_ui.add(egui::Slider::new(&mut value, parameter.min..=parameter.max)
-                                        .vertical().show_value(false)
-                                        .trailing_fill(parameter.ui.accent.is_some())
-                                        .max_decimals(parameter.ui.decimals)
-                                        .step_by(parameter.ui.step))
-                                }
-                                control => ui.add(
-                                    egui::Slider::new(&mut value, parameter.min..=parameter.max)
-                                    .show_value(false)
-                                    .trailing_fill(parameter.ui.accent.is_some())
-                                    .max_decimals(parameter.ui.decimals)
-                                    .logarithmic(control == suhina_device_sdk::ParameterControl::LogSlider)
-                                    .step_by(
-                                        if control == suhina_device_sdk::ParameterControl::Integer {
-                                            1.0
-                                        } else {
-                                            parameter.ui.step
-                                        },
-                                    ),
-                                ),
-                            };
-                            if response.double_clicked() { value = parameter.default; }
-                            if value != previous {
-                                response.mark_changed();
-                            }
-                            response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::DragValue,true,&parameter.name));
-                            response.on_hover_text(&parameter.ui.tooltip)
-                        })
-                        .inner
-                    },
-                )
-                .inner
-            });
-            if parameter.ui.show_value { widgets::text_in(
-                painter,
-                if value_height > 0.0 {
-                    Rect::from_min_max(Pos2::new(row.left(), slider_rect.bottom()), row.max)
-                } else {
-                    Rect::from_min_max(Pos2::new(slider_rect.right(), control_min.y), row.max)
-                },
-                if value_height > 0.0 { Align2::CENTER_CENTER } else { Align2::RIGHT_CENTER },
-                if matches!(parameter.control,suhina_device_sdk::ParameterControl::Choice | suhina_device_sdk::ParameterControl::Radio) {
-                    parameter.ui.options.get(value as usize).cloned().unwrap_or_default()
-                } else { format!("{:.*} {}", parameter.ui.decimals, value, parameter.unit).trim().to_owned() }.as_str(),
-                font.clone(),
-                parameter.ui.text_color.map_or_else(theme::text_value,|[r,g,b]| egui::Color32::from_rgb(r,g,b)),
-            ); }
-            if response.as_ref().is_some_and(|response| response.changed() || response.drag_stopped()) {
-                let continuous = response.as_ref().is_some_and(|response| {
-                    (response.drag_started() || response.dragged()) && !response.drag_stopped()
-                });
-                actions.push(Action::new(
-                    "device.setParam",
-                    json!({ "track": track.0, "device": device.at.value(), "param": parameter.id, "value": value, "continuous": continuous }),
-                ));
-            }
-        }
-            });
-        });
+        graph_controls(ui, body, graph, track, &device.at, actions);
         outline(painter);
         return clicked;
     }
@@ -1702,6 +1527,450 @@ fn device_panel(
     }
     outline(painter);
     clicked
+}
+
+/// Where the open expanded panel's device is, kept in the window's memory while the app runs.
+fn expanded_id() -> Id {
+    Id::new("device-expanded")
+}
+
+/// The device whose expanded panel is open, if one is.
+pub fn expanded(ctx: &egui::Context) -> Option<(TrackId, DeviceAt)> {
+    ctx.data(|d| d.get_temp::<(TrackId, DeviceAt)>(expanded_id()))
+}
+
+/// Opens the expanded panel of the device at `at` on `track`, closing any other.
+fn open_expanded(ctx: &egui::Context, track: TrackId, at: DeviceAt) {
+    ctx.data_mut(|d| d.insert_temp(expanded_id(), (track, at)));
+}
+
+/// Closes the expanded panel.
+pub fn close_expanded(ctx: &egui::Context) {
+    ctx.data_mut(|d| d.remove::<(TrackId, DeviceAt)>(expanded_id()));
+}
+
+/// The open expanded panel's device in what the detail area shows, with its track. A panel
+/// whose device is no longer shown (another track selected, the device removed) closes.
+pub fn expanded_device(ctx: &egui::Context, detail: &Detail) -> Option<(TrackId, DeviceBox)> {
+    /// The device at `at` among `devices` or inside their groups' branches.
+    fn find<'a>(devices: &'a [DeviceBox], at: &DeviceAt) -> Option<&'a DeviceBox> {
+        devices.iter().find_map(|device| {
+            if &device.at == at {
+                return Some(device);
+            }
+            device.group.as_ref()?.branches.iter().find_map(|branch| find(&branch.devices, at))
+        })
+    }
+    let (track, at) = expanded(ctx)?;
+    let chain = match detail {
+        Detail::Devices(chain) | Detail::Clip(_, chain) => Some(chain),
+        Detail::Nothing => None,
+    };
+    let found = chain
+        .filter(|chain| chain.track == track)
+        .and_then(|chain| find(&chain.devices, &at))
+        .filter(|device| device.graph.as_ref().is_some_and(|g| g.expanded.is_some()));
+    if found.is_none() {
+        close_expanded(ctx);
+    }
+    found.map(|device| (track, device.clone()))
+}
+
+/// Draws `device`'s expanded panel over `area` (the main area), on top of the views: a title
+/// row with its name and a close button, then its canvas, scrolled when the area is smaller.
+/// Its controls change the same parameters as the compact panel, through `device.setParam`.
+/// The close button and Escape close it.
+pub fn show_expanded(ui: &mut Ui, area: Rect, track: TrackId, device: &DeviceBox, actions: &mut Vec<Action>) {
+    let Some((graph, canvas)) = device.graph.as_ref().and_then(|g| Some((g, g.expanded.as_ref()?))) else {
+        return;
+    };
+    egui::Area::new(Id::new("device-expanded-area")).order(egui::Order::Foreground).fixed_pos(area.min).show(
+        ui.ctx(),
+        |ui| {
+            // The whole main area takes the pointer, so the views under it get no clicks.
+            let (rect, _) = ui.allocate_exact_size(area.size(), Sense::click());
+            let painter = ui.painter_at(rect);
+            painter.rect_filled(rect, 0.0, theme::panel_background());
+            let header = Rect::from_min_size(rect.min, Vec2::new(rect.width(), ROW + PAD));
+            painter.rect_filled(header, 0.0, theme::control_background());
+            widgets::text_in(
+                &painter,
+                header.shrink2(Vec2::new(PAD * 2.0, 0.0)),
+                Align2::LEFT_CENTER,
+                &device.name,
+                theme::ui_font(theme::TEXT),
+                theme::text_primary(),
+            );
+            let close =
+                Rect::from_min_size(Pos2::new(header.right() - 28.0, header.top() + 3.0), Vec2::new(24.0, 20.0));
+            let response = widgets::button_area(ui, close, Id::new("device-expanded-close"), "Close expanded panel")
+                .on_hover_text("Close the expanded panel (Esc)");
+            let fill = motion::mix(theme::control_background(), theme::control_hover(), widgets::hover(ui, &response));
+            painter.rect_filled(close, 0.0, fill);
+            for (from, to) in
+                [(Vec2::new(-4.0, -4.0), Vec2::new(4.0, 4.0)), (Vec2::new(-4.0, 4.0), Vec2::new(4.0, -4.0))]
+            {
+                painter.line_segment(
+                    [close.center() + from, close.center() + to],
+                    egui::Stroke::new(1.3, theme::text_primary()),
+                );
+            }
+            let escape = !ui.ctx().egui_wants_keyboard_input() && ui.input(|i| i.key_pressed(egui::Key::Escape));
+            if response.clicked() || escape {
+                close_expanded(ui.ctx());
+            }
+            let body =
+                Rect::from_min_max(Pos2::new(rect.left() + PAD, header.bottom() + PAD), rect.max - Vec2::splat(PAD));
+            let size = Vec2::new(canvas.size[0], canvas.size[1]);
+            ui.scope_builder(egui::UiBuilder::new().max_rect(body), |ui| {
+                egui::ScrollArea::both().auto_shrink([false, false]).id_salt("device-expanded-scroll").show(ui, |ui| {
+                    // Centred while it fits, from the top left when it scrolls.
+                    let room = ui.available_size();
+                    let offset = Vec2::new(((room.x - size.x) / 2.0).max(0.0), ((room.y - size.y) / 2.0).max(0.0));
+                    let (space, _) = ui.allocate_exact_size(size + offset, Sense::hover());
+                    let canvas_rect = Rect::from_min_size(space.min + offset, size);
+                    crate::detail::device_canvas::show(
+                        ui,
+                        canvas_rect,
+                        canvas,
+                        &graph.parameters,
+                        track,
+                        &device.at,
+                        actions,
+                    );
+                });
+            });
+        },
+    );
+}
+
+/// A graph's parameter list, its node list and its canvas in `body`, scrolled when they do not
+/// fit: a `.sd` device's, a built-in's (its layout or the generated list) and a plug-in's
+/// generated list. A list without a canvas is a compact panel's width wherever it is, and a
+/// narrower `body` scrolls it (ADR 0021 › Amendment: device panels, 5); stock controls under a
+/// canvas take `body`'s width. Every change is one `device.setParam`.
+fn graph_controls(ui: &mut Ui, body: Rect, graph: &GraphBox, track: TrackId, at: &DeviceAt, actions: &mut Vec<Action>) {
+    ui.scope_builder(egui::UiBuilder::new().max_rect(body), |ui| {
+        egui::ScrollArea::both().auto_shrink([false, false]).id_salt(("sd-controls", track.0, at)).show(ui, |ui| {
+            let hidden = graph.canvas.as_ref().map_or(&[][..], |c| c.hidden_parameters.as_slice());
+            let width = if graph.canvas.is_some() { body.width() } else { COMPACT_WIDTH };
+            let cells = parameter_layout(&graph.parameters, width, hidden);
+            let custom_size = graph.canvas.as_ref().map_or(Vec2::ZERO, |c| Vec2::new(c.size[0], c.size[1]));
+            let nodes_height = graph.nodes.len() as f32 * NODE_ROW;
+            let extent = cells.iter().fold(Vec2::new(body.width().max(custom_size.x), 0.0), |size, rect| {
+                Vec2::new(size.x.max(rect.right()), size.y.max(rect.bottom()))
+            });
+            let (_, body) = ui.allocate_space(Vec2::new(extent.x, extent.y + nodes_height + custom_size.y));
+            let painter = &ui.painter_at(body.intersect(ui.clip_rect()));
+            node_rows(painter, body, graph);
+            if let Some(canvas) = &graph.canvas {
+                let rect = Rect::from_min_size(body.min + Vec2::new(0.0, nodes_height), custom_size);
+                crate::detail::device_canvas::show(ui, rect, canvas, &graph.parameters, track, at, actions);
+            }
+            let origin = Vec2::new(body.left(), body.top() + nodes_height + custom_size.y);
+            for (parameter, cell) in graph.parameters.iter().filter(|p| !hidden.contains(&p.id)).zip(&cells) {
+                parameter_cell(ui, painter, cell.translate(origin), parameter, track, at, actions);
+            }
+        });
+    });
+}
+
+/// A graph's visible nodes from the top of `body`, one row each, with an arrow between them
+/// when they form a single chain.
+fn node_rows(painter: &egui::Painter, body: Rect, graph: &GraphBox) {
+    let mut row_top = body.top();
+    for (index, node) in graph.nodes.iter().enumerate() {
+        let row = Rect::from_min_size(Pos2::new(body.left(), row_top), Vec2::new(body.width(), NODE_ROW));
+        if row.bottom() > body.bottom() + 0.5 {
+            break;
+        }
+        let node_rect = Rect::from_min_size(row.min, Vec2::new((row.width() - PAD) * 0.78, NODE_ROW - PAD));
+        painter.rect_filled(node_rect, 1.0, theme::control_background());
+        widgets::text_in(
+            painter,
+            node_rect.shrink(PAD / 2.0),
+            Align2::CENTER_CENTER,
+            node,
+            theme::ui_font(theme::TEXT_TINY),
+            theme::text_secondary(),
+        );
+        if graph.linear && index + 1 < graph.nodes.len() {
+            widgets::text_in(
+                painter,
+                Rect::from_min_size(Pos2::new(node_rect.right(), row.top()), Vec2::new(PAD, NODE_ROW)),
+                Align2::CENTER_CENTER,
+                "›",
+                theme::ui_font(theme::TEXT),
+                theme::text_hint(),
+            );
+        }
+        row_top += NODE_ROW;
+    }
+}
+
+/// An `.sd` colour.
+fn rgb([r, g, b]: [u8; 3]) -> egui::Color32 {
+    egui::Color32::from_rgb(r, g, b)
+}
+
+/// One parameter in its cell `row`: its panel colour, its label, its control and its value, as
+/// its `ui` fields say. A change is one `device.setParam`.
+fn parameter_cell(
+    ui: &mut Ui,
+    painter: &egui::Painter,
+    row: Rect,
+    parameter: &GraphParameter,
+    track: TrackId,
+    at: &DeviceAt,
+    actions: &mut Vec<Action>,
+) {
+    let style = &parameter.ui;
+    let family = if style.monospace { egui::FontFamily::Monospace } else { egui::FontFamily::Proportional };
+    let font = egui::FontId::new(style.font_size, family);
+    let foreground = style.text_color.map_or_else(theme::text_secondary, rgb);
+    let radius = match style.shape {
+        ControlShape::Square => 0.0,
+        ControlShape::Pill => 128.0,
+        ControlShape::Rounded => style.corner_radius,
+    };
+    if let Some(color) = style.panel_color {
+        painter.rect_filled(row, radius, rgb(color));
+    }
+    let row = row.shrink(4.0);
+    let name_rect = match style.label_position {
+        LabelPosition::Left => Rect::from_min_size(row.min, Vec2::new(row.width() * 0.34, row.height())),
+        LabelPosition::Top => Rect::from_min_size(row.min, Vec2::new(row.width(), style.font_size + 4.0)),
+        LabelPosition::Hidden => Rect::from_min_size(row.min, Vec2::ZERO),
+    };
+    if style.label_position != LabelPosition::Hidden {
+        let align =
+            if style.label_position == LabelPosition::Top { Align2::CENTER_CENTER } else { Align2::LEFT_CENTER };
+        let name = if style.group.is_empty() {
+            parameter.name.clone()
+        } else {
+            format!("{} / {}", style.group, parameter.name)
+        };
+        widgets::text_in(painter, name_rect, align, &name, font.clone(), foreground);
+    }
+    let value_height =
+        if style.show_value && style.label_position == LabelPosition::Top { style.font_size + 4.0 } else { 0.0 };
+    let value_width = if style.show_value && value_height == 0.0 { (row.width() * 0.24).min(80.0) } else { 0.0 };
+    let control_min = match style.label_position {
+        LabelPosition::Left => Pos2::new(name_rect.right(), row.top()),
+        LabelPosition::Top => Pos2::new(row.left(), name_rect.bottom()),
+        LabelPosition::Hidden => row.min,
+    };
+    let slider_rect =
+        Rect::from_min_max(control_min, Pos2::new(row.right() - value_width, row.bottom() - value_height));
+    let mut value = parameter.value;
+    let response = (parameter.min < parameter.max).then(|| {
+        let builder = egui::UiBuilder::new()
+            .max_rect(slider_rect)
+            .layout(egui::Layout::centered_and_justified(egui::Direction::TopDown));
+        ui.scope_builder(builder, |ui| {
+            ui.style_mut().override_font_id = Some(font.clone());
+            let accent = style.accent.map(rgb);
+            let visuals = ui.visuals_mut();
+            visuals.override_text_color = Some(foreground);
+            if let Some(accent) = accent {
+                visuals.selection.bg_fill = accent;
+                visuals.widgets.active.bg_fill = accent;
+                visuals.widgets.hovered.bg_stroke.color = accent;
+                visuals.widgets.active.fg_stroke.color = accent;
+            }
+            for widget in [&mut visuals.widgets.inactive, &mut visuals.widgets.hovered, &mut visuals.widgets.active] {
+                widget.corner_radius = egui::CornerRadius::same(radius as u8);
+                if let Some(background) = style.background {
+                    widget.bg_fill = rgb(background);
+                    widget.weak_bg_fill = widget.bg_fill;
+                }
+                if let Some(accent) = accent {
+                    widget.fg_stroke.color = accent;
+                }
+            }
+            ui.set_clip_rect(ui.clip_rect().intersect(slider_rect));
+            ui.spacing_mut().slider_width = if parameter.control == ParameterControl::VerticalSlider {
+                slider_rect.height()
+            } else {
+                slider_rect.width()
+            };
+            ui.push_id((&parameter.id, at, track.0), |ui| {
+                let previous = value;
+                let mut response = parameter_widget(ui, parameter, slider_rect, accent, &mut value);
+                if response.double_clicked() {
+                    value = parameter.default;
+                }
+                if value != previous {
+                    response.mark_changed();
+                }
+                response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::DragValue, true, &parameter.name));
+                response.on_hover_text(&style.tooltip)
+            })
+            .inner
+        })
+        .inner
+    });
+    if style.show_value {
+        let (rect, align) = if value_height > 0.0 {
+            (Rect::from_min_max(Pos2::new(row.left(), slider_rect.bottom()), row.max), Align2::CENTER_CENTER)
+        } else {
+            (Rect::from_min_max(Pos2::new(slider_rect.right(), control_min.y), row.max), Align2::RIGHT_CENTER)
+        };
+        let color = style.text_color.map_or_else(theme::text_value, rgb);
+        widgets::text_in(painter, rect, align, &value_text(parameter, value), font, color);
+    }
+    if let Some(response) = response.filter(|r| r.changed() || r.drag_stopped()) {
+        let continuous = (response.drag_started() || response.dragged()) && !response.drag_stopped();
+        actions.push(Action::new(
+            "device.setParam",
+            json!({ "track": track.0, "device": at.value(), "param": parameter.id, "value": value, "continuous": continuous }),
+        ));
+    }
+}
+
+/// The text beside a parameter's control at `value`: a choice's label, the device's own text
+/// for the value it listed, or the number with its unit.
+fn value_text(parameter: &GraphParameter, value: f64) -> String {
+    if matches!(parameter.control, ParameterControl::Choice | ParameterControl::Radio) {
+        parameter.ui.options.get(value as usize).cloned().unwrap_or_default()
+    } else if !parameter.text.is_empty() && value == parameter.value {
+        parameter.text.clone()
+    } else {
+        format!("{:.*} {}", parameter.ui.decimals, value, parameter.unit).trim().to_owned()
+    }
+}
+
+/// The control `parameter.control` names, in `rect`, editing `value`.
+fn parameter_widget(
+    ui: &mut Ui,
+    parameter: &GraphParameter,
+    rect: Rect,
+    accent: Option<egui::Color32>,
+    value: &mut f64,
+) -> egui::Response {
+    let style = &parameter.ui;
+    match parameter.control {
+        ParameterControl::Toggle => {
+            let mut checked = *value >= 0.5;
+            let response = ui.checkbox(&mut checked, "");
+            *value = f64::from(checked);
+            response
+        }
+        ParameterControl::Button => {
+            let response = ui.selectable_label(*value >= 0.5, &parameter.name);
+            if response.clicked() {
+                *value = if *value >= 0.5 { 0.0 } else { 1.0 };
+            }
+            response
+        }
+        ParameterControl::Choice => {
+            egui::ComboBox::from_id_salt("choice")
+                .selected_text(style.options.get(*value as usize).map_or("", String::as_str))
+                .width(rect.width())
+                .show_ui(ui, |ui| {
+                    for (i, label) in style.options.iter().enumerate() {
+                        ui.selectable_value(&mut *value, i as f64, label);
+                    }
+                })
+                .response
+        }
+        ParameterControl::Radio => {
+            ui.vertical_centered(|ui| {
+                for (i, label) in style.options.iter().enumerate() {
+                    ui.selectable_value(&mut *value, i as f64, label);
+                }
+            })
+            .response
+        }
+        ParameterControl::Number => ui.add(
+            egui::DragValue::new(value)
+                .range(parameter.min..=parameter.max)
+                .speed(if style.step > 0.0 {
+                    style.step
+                } else {
+                    (parameter.max - parameter.min) / widgets::PARAMETER_DRAG_PIXELS
+                })
+                .max_decimals(style.decimals),
+        ),
+        ParameterControl::Knob | ParameterControl::LogKnob => knob(ui, parameter, rect, accent, value),
+        ParameterControl::VerticalSlider => {
+            let rect = Rect::from_center_size(rect.center(), Vec2::new(ui.spacing().interact_size.y, rect.height()));
+            let mut slider_ui =
+                ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(egui::Layout::top_down(egui::Align::Center)));
+            slider_ui.add(
+                egui::Slider::new(value, parameter.min..=parameter.max)
+                    .vertical()
+                    .show_value(false)
+                    .trailing_fill(style.accent.is_some())
+                    .max_decimals(style.decimals)
+                    .step_by(style.step),
+            )
+        }
+        control => ui.add(
+            egui::Slider::new(value, parameter.min..=parameter.max)
+                .show_value(false)
+                .trailing_fill(style.accent.is_some())
+                .max_decimals(style.decimals)
+                .logarithmic(control == ParameterControl::LogSlider)
+                .step_by(if control == ParameterControl::Integer { 1.0 } else { style.step }),
+        ),
+    }
+}
+
+/// A knob in `rect`, logarithmic for a `LogKnob`: dragged up and down (finer with Shift),
+/// stepped by the arrow keys once clicked, back to its default on a double click.
+fn knob(
+    ui: &mut Ui,
+    parameter: &GraphParameter,
+    rect: Rect,
+    accent: Option<egui::Color32>,
+    value: &mut f64,
+) -> egui::Response {
+    let style = &parameter.ui;
+    let (min, max) = (parameter.min, parameter.max);
+    let logarithmic = parameter.control == ParameterControl::LogKnob;
+    let size = rect.width().min(rect.height()).max(8.0);
+    let (rect, mut response) = ui.allocate_exact_size(Vec2::splat(size), Sense::click_and_drag());
+    if response.clicked() {
+        response.request_focus();
+    }
+    if response.double_clicked() {
+        *value = parameter.default;
+    }
+    if response.has_focus() {
+        let direction = ui.input(|i| {
+            i32::from(i.key_pressed(egui::Key::ArrowUp) || i.key_pressed(egui::Key::ArrowRight))
+                - i32::from(i.key_pressed(egui::Key::ArrowDown) || i.key_pressed(egui::Key::ArrowLeft))
+        });
+        let step = if style.step > 0.0 { style.step } else { (max - min) * 0.01 };
+        *value = (*value + f64::from(direction) * step).clamp(min, max);
+    }
+    let mut position = if logarithmic { (*value / min).ln() / (max / min).ln() } else { (*value - min) / (max - min) };
+    if response.dragged() {
+        let fine = if ui.input(|i| i.modifiers.shift) { 0.1 } else { 1.0 };
+        let delta = f64::from(response.drag_delta().y) / widgets::PARAMETER_DRAG_PIXELS * fine;
+        position = (position - delta).clamp(0.0, 1.0);
+        *value = if logarithmic { min * (max / min).powf(position) } else { min + position * (max - min) };
+        response.mark_changed();
+    }
+    let center = rect.center();
+    let radius = size * 9.0 / 22.0;
+    let background = style.background.map_or_else(theme::control_background, rgb);
+    let border = egui::Stroke::new(1.0, accent.unwrap_or_else(theme::text_hint));
+    let painter = ui.painter();
+    if style.shape == ControlShape::Square {
+        let square = Rect::from_center_size(center, Vec2::splat(radius * 2.0));
+        painter.rect_filled(square, 0.0, background);
+        painter.rect_stroke(square, 0.0, border, egui::StrokeKind::Inside);
+    } else {
+        painter.circle_filled(center, radius, background);
+        painter.circle_stroke(center, radius, border);
+    }
+    let angle = (-135.0 + 270.0 * position as f32).to_radians();
+    let tip = center + Vec2::new(angle.sin(), -angle.cos()) * (radius - 1.0);
+    painter.line_segment([center, tip], egui::Stroke::new(1.5, accent.unwrap_or_else(theme::text_primary)));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::DragValue, true, &parameter.name));
+    response
 }
 
 /// What a row of the clip column edits, when it edits something (#699).
@@ -1954,18 +2223,24 @@ fn clip_edit_row(
     // Dragged: shown from a draft while the drag lasts. The loop's ends keep a quarter beat
     // apart and move by quarter beats, the transpose by semitones, the gain by tenths of a dB.
     let (start, end) = info.loop_range.unwrap_or((0.0, 4.0));
+    let (min, max) = loop_bounds(edit, start, end);
     let (stored, per_point, min, max, reset) = match edit {
-        ClipEdit::LoopStart => (start, 0.0625, 0.0, end - 0.25, None),
-        ClipEdit::LoopEnd => (end, 0.0625, start + 0.25, 120_000.0, None),
+        ClipEdit::LoopStart => (start, 0.0625, min, max, None),
+        ClipEdit::LoopEnd => (end, 0.0625, min, max, None),
         ClipEdit::Gain => {
             (info.gain_db.filter(|db| db.is_finite()).unwrap_or(-70.0).max(-70.0), 0.1, -70.0, 24.0, Some(0.0))
         }
         _ => (info.transpose, 0.1, -48.0, 48.0, Some(0.0)),
     };
-    let snap = |v: f64| match edit {
-        ClipEdit::LoopStart | ClipEdit::LoopEnd => (v * 4.0).round() / 4.0,
-        ClipEdit::Transpose => v.round(),
-        _ => (v * 10.0).round() / 10.0,
+    // Rounding can step past a bound (a start of 3.85 rounds to 4.0 below an end of 4.1): kept
+    // inside after it too.
+    let snap = |v: f64| {
+        match edit {
+            ClipEdit::LoopStart | ClipEdit::LoopEnd => (v * 4.0).round() / 4.0,
+            ClipEdit::Transpose => v.round(),
+            _ => (v * 10.0).round() / 10.0,
+        }
+        .clamp(min, max)
     };
     let draft = ui.data(|d| d.get_temp::<f64>(id));
     let text = match draft.map(snap) {
@@ -2034,23 +2309,17 @@ fn parameter_height(parameter: &GraphParameter) -> f32 {
     if let Some([_, height]) = parameter.ui.size {
         return height;
     }
-    let extra = if parameter.ui.label_position == suhina_device_sdk::LabelPosition::Top {
-        parameter.ui.font_size + 4.0
-    } else {
-        0.0
-    };
+    let extra = if parameter.ui.label_position == LabelPosition::Top { parameter.ui.font_size + 4.0 } else { 0.0 };
     extra
-        + if parameter.ui.show_value && parameter.ui.label_position == suhina_device_sdk::LabelPosition::Top {
+        + if parameter.ui.show_value && parameter.ui.label_position == LabelPosition::Top {
             parameter.ui.font_size + 4.0
         } else {
             0.0
         }
         + match parameter.control {
-            suhina_device_sdk::ParameterControl::VerticalSlider => 80.0,
-            suhina_device_sdk::ParameterControl::Knob | suhina_device_sdk::ParameterControl::LogKnob => 36.0,
-            suhina_device_sdk::ParameterControl::Radio => {
-                parameter.ui.options.len().max(1) as f32 * (parameter.ui.font_size + 16.0)
-            }
+            ParameterControl::VerticalSlider => 80.0,
+            ParameterControl::Knob | ParameterControl::LogKnob => 36.0,
+            ParameterControl::Radio => parameter.ui.options.len().max(1) as f32 * (parameter.ui.font_size + 16.0),
             _ => 24.0,
         }
 }
@@ -2170,6 +2439,19 @@ fn branch_value(ui: &Ui, id: Id, stored: f64, dragged: &Dragged, min: f64, max: 
         return (value, (value != stored).then_some(value));
     }
     (draft.unwrap_or(stored), None)
+}
+
+/// Where a loop's start or end may be dragged: the start from 0 to a quarter beat before the end,
+/// the end from a quarter beat after the start. Never crossed (`max` at least `min`), so a loop
+/// shorter than that (from a command or an import) does not make `f64::clamp` panic.
+fn loop_bounds(edit: ClipEdit, start: f64, end: f64) -> (f64, f64) {
+    let (min, max) = match edit {
+        ClipEdit::LoopStart => (0.0, (end - 0.25).min(120_000.0)),
+        // Never past the longest loop, even for a start within a quarter beat of it.
+        _ => ((start + 0.25).min(120_000.0), 120_000.0),
+    };
+    let min = if min.is_finite() { min } else { 0.0 };
+    (min, if max.is_finite() { max.max(min) } else { min })
 }
 
 fn pan_text(pan: f64) -> String {
@@ -2451,6 +2733,23 @@ fn inside_group_mark(painter: &egui::Painter, rect: Rect, at: &DeviceAt) {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn a_loop_shorter_than_a_quarter_beat_gives_bounds_that_do_not_cross() {
+        use super::{ClipEdit, loop_bounds};
+        // A loop ending at beat 0.1 (from `clip.setLoop` or an import): the start's bounds were
+        // 0 to -0.15, and the first drag panicked in `f64::clamp`.
+        let (min, max) = loop_bounds(ClipEdit::LoopStart, 0.0, 0.1);
+        assert!(min <= max, "{min} > {max}");
+        assert_eq!(0.3f64.clamp(min, max), 0.0);
+        let (min, max) = loop_bounds(ClipEdit::LoopEnd, 119_999.9, 120_000.0);
+        assert!(min <= max, "{min} > {max}");
+        assert!(max <= 120_000.0 && min <= 120_000.0, "never past the longest loop: {min} to {max}");
+        // A loop ending past the limit (an import) gives a start no further than it either.
+        assert_eq!(loop_bounds(ClipEdit::LoopStart, 0.0, 130_000.0), (0.0, 120_000.0));
+        assert_eq!(loop_bounds(ClipEdit::LoopStart, 0.0, 4.0), (0.0, 3.75));
+        assert_eq!(loop_bounds(ClipEdit::LoopEnd, 1.0, 4.0), (1.25, 120_000.0));
+    }
+
+    #[test]
     fn sample_name_is_in_header_once() {
         let mut device =
             suhina_engine::model::Device::new("Sampler", suhina_engine::model::DeviceKind::Builtin("sampler".into()));
@@ -2466,6 +2765,7 @@ mod tests {
     #[test]
     fn top_label_places_value_below_control_and_reserves_height() {
         let mut parameter = GraphParameter {
+            text: String::new(),
             default: 1.0,
             control: suhina_device_sdk::ParameterControl::Knob,
             unit: String::new(),
@@ -2586,6 +2886,48 @@ mod tests {
     }
 
     #[test]
+    fn a_built_ins_generated_list_fits_the_compact_panel() {
+        let mut project = demo_project();
+        project.channels[0].devices = vec![
+            Device::new("Utility", DeviceKind::Builtin("utility".into())),
+            Device::new("Pitch", DeviceKind::Builtin("pitch".into())),
+        ];
+        let Detail::Devices(chain) = build(&project, Some(TrackId(1)), None) else { panic!() };
+        for device in &chain.devices {
+            let graph = device.graph.as_ref().unwrap_or_else(|| panic!("{} has a panel", device.name));
+            assert!(graph.canvas.is_none() && graph.nodes.is_empty(), "the generated list, no graph");
+            let height = panel_height(device, COMPACT_WIDTH, None);
+            assert!(height <= ROW + PAD * 2.0 + COMPACT_HEIGHT, "{}: {height}", device.name);
+        }
+        // Utility's thirteen parameters scroll inside the standard height.
+        assert_eq!(panel_height(&chain.devices[0], COMPACT_WIDTH, None), ROW + PAD * 2.0 + COMPACT_HEIGHT);
+        assert_eq!(STACK_WIDTH, 272.0);
+    }
+
+    #[test]
+    fn a_stacked_generated_list_keeps_its_width_in_any_column() {
+        use egui_kittest::Harness;
+        use egui_kittest::kittest::Queryable;
+        let mut project = demo_project();
+        project.channels[0].devices = vec![Device::new("Utility", DeviceKind::Builtin("utility".into()))];
+        let Detail::Devices(chain) = build(&project, Some(TrackId(1)), None) else { panic!() };
+        let detail = Detail::Devices(chain);
+        // A narrow column, the default one and a wide one: Gain's slider is in the same place
+        // each time, its row 260 px wide, scrolled past the narrow column's edge, not squeezed.
+        let gain = |column: f32| {
+            let mut harness = Harness::builder().with_size(egui::vec2(column, 220.0)).build_ui(|ui| {
+                show_stack(ui, &detail, &[], &mut Vec::new(), &mut Vec::new());
+            });
+            harness.run();
+            harness.get_by_label("Gain").rect()
+        };
+        let default = gain(STACK_WIDTH);
+        assert!(default.right() <= PAD + COMPACT_WIDTH && default.right() > STACK_WIDTH / 2.0, "{default:?}");
+        assert_eq!(gain(200.0), default, "a narrow column scrolls the list");
+        assert_eq!(gain(600.0), default, "a wide column leaves it 260 px wide");
+    }
+
+    #[test]
     fn an_audio_effect_shows_its_label_and_only_visible_nodes() {
         let mut graph = suhina_device_sdk::DeviceGraph::new(
             "org.example.gain",
@@ -2668,6 +3010,7 @@ mod tests {
     fn authored_control_positions_and_auto_flow_have_the_expected_extent() {
         use suhina_device_sdk::{ParameterControl, ParameterUi};
         let mut p = GraphParameter {
+            text: String::new(),
             default: 1.0,
             control: ParameterControl::Knob,
             unit: String::new(),
@@ -2785,6 +3128,129 @@ mod tests {
             no_time: 0,
             state_refused: None,
             ara: false,
+            params: None,
+        }
+    }
+
+    fn param(id: u32, name: &str, steps: u32, value: f64) -> suhina_plugins::ParamInfo {
+        suhina_plugins::ParamInfo {
+            id,
+            name: name.into(),
+            group: String::new(),
+            min: 0.0,
+            max: 1.0,
+            default: 0.0,
+            value,
+            text: format!("{name} at {value}"),
+            steps,
+            automatable: true,
+            read_only: false,
+            hidden: false,
+        }
+    }
+
+    /// A running plug-in that listed a mix, a bypass switch, a hidden and a read-only one.
+    fn listing(status: PluginStatus) -> PluginReport {
+        let hidden = suhina_plugins::ParamInfo { hidden: true, ..param(3, "Secret", 0, 0.0) };
+        let meter = suhina_plugins::ParamInfo { read_only: true, ..param(4, "Meter", 0, 0.0) };
+        let list = vec![param(1, "Mix", 0, 0.5), param(2, "Bypass", 1, 0.0), hidden, meter];
+        PluginReport { params: Some(list.into()), ..report(status, false) }
+    }
+
+    #[test]
+    fn a_running_plug_in_shows_the_parameters_it_lists_as_a_generated_list() {
+        let mut project = with_plugin();
+        // A value the project keeps wins over the one the plug-in listed, without its text.
+        project.channels[0].devices[0].params.push(suhina_engine::model::DeviceParam::new("1", 0.25));
+        let graph = |status: PluginStatus| {
+            let Detail::Devices(chain) = build_with(
+                &project,
+                Some(TrackId(1)),
+                None,
+                &mut |_, _| Some(listing(status.clone())),
+                crate::detail::nam_panel::Lists::default(),
+            ) else {
+                panic!()
+            };
+            chain.devices[0].graph.clone()
+        };
+        let running = graph(PluginStatus::Running).unwrap();
+        let shown: Vec<_> = running.parameters.iter().map(|p| (p.id.as_str(), p.name.as_str(), p.control)).collect();
+        assert_eq!(
+            shown,
+            [
+                ("1", "Mix", suhina_device_sdk::ParameterControl::Slider),
+                ("2", "Bypass", suhina_device_sdk::ParameterControl::Toggle)
+            ],
+            "hidden and read-only ones are left out"
+        );
+        assert_eq!((running.parameters[0].value, running.parameters[0].text.as_str()), (0.25, ""));
+        assert_eq!(running.parameters[1].text, "Bypass at 0");
+        assert!(running.canvas.is_none() && running.expanded.is_none());
+        // A plug-in that does not run has no controls to send to.
+        assert_eq!(graph(PluginStatus::Crashed("gone".into())), None);
+    }
+
+    /// While automation plays, a plug-in's list shows the automated value, kept in range, and
+    /// drops the text the plug-in gave for the value it listed.
+    #[test]
+    fn automation_replaces_a_plug_ins_listed_text_with_the_value_it_plays() {
+        use suhina_engine::model::{AutomationLane, AutomationPoint};
+        let mut project = with_plugin();
+        let point = |beat, value| AutomationPoint { beat, value, curve: 0.0 };
+        project.channels[0].devices[0].automation = vec![
+            AutomationLane { param: "1".into(), points: vec![point(0.0, 0.75), point(8.0, 0.75)], enabled: true },
+            AutomationLane { param: "2".into(), points: vec![point(0.0, 3.0), point(8.0, 3.0)], enabled: true },
+        ];
+        let mut detail = build_with(
+            &project,
+            Some(TrackId(1)),
+            None,
+            &mut |_, _| Some(listing(PluginStatus::Running)),
+            crate::detail::nam_panel::Lists::default(),
+        );
+        detail.follow_automation(&project, 4.0);
+        let Detail::Devices(chain) = detail else { panic!() };
+        let graph = chain.devices[0].graph.as_ref().unwrap();
+        let shown: Vec<_> = graph.parameters.iter().map(|p| (p.value, p.text.as_str())).collect();
+        assert_eq!(shown, [(0.75, ""), (1.0, "")]);
+        assert_eq!(value_text(&graph.parameters[0], 0.75), "0.75");
+    }
+
+    #[test]
+    fn a_plug_ins_generated_list_sets_its_parameters_by_id() {
+        use egui_kittest::Harness;
+        use egui_kittest::kittest::Queryable;
+        let project = with_plugin();
+        let Detail::Devices(chain) = build_with(
+            &project,
+            Some(TrackId(1)),
+            None,
+            &mut |_, _| Some(listing(PluginStatus::Running)),
+            crate::detail::nam_panel::Lists::default(),
+        ) else {
+            panic!()
+        };
+        let detail = Detail::Devices(chain);
+        for stacked in [false, true] {
+            let mut harness = Harness::builder().with_size(egui::vec2(600.0, 220.0)).build_ui_state(
+                |ui, actions: &mut Vec<Action>| {
+                    let mut places = Vec::new();
+                    if stacked {
+                        show_stack(ui, &detail, &[], actions, &mut places);
+                    } else {
+                        show_row(ui, &detail, &[], actions, &mut places);
+                    }
+                },
+                Vec::new(),
+            );
+            harness.get_by_label("Bypass").click();
+            harness.run();
+            let actions = harness.state();
+            let set: Vec<_> = actions.iter().filter(|a| a.id == "device.setParam").collect();
+            assert_eq!(set.len(), 1, "stacked {stacked}: {actions:?}");
+            assert_eq!((&set[0].params["param"], &set[0].params["value"]), (&json!("2"), &json!(1.0)));
+            assert!(harness.query_by_label("Open editor Verb").is_some(), "the editor button stays");
         }
     }
 

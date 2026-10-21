@@ -180,24 +180,28 @@ CHAPTERS = [
      "Roadmap item (Demucs candidate, weights unaudited). The pipeline around a model (chunking, "
      "resampling) exists in crates/separation with a test backend; no model and nothing a user "
      "can run yet."),
-    (23, "Working with Instruments and Effects (Device View)", 34, 0.36, "partial",
+    (23, "Working with Instruments and Effects (Device View)", 34, 0.40, "partial",
      "Device chains per track and bus, parameters through device.* commands and the detail area, "
      "the devices one click from a MIDI clip's editor (a Clip / Devices switch, Ctrl+Shift+D) and "
      "a double-click on a track header or channel strip that shows its devices, "
      "DX7 voices, stock-preset ADR, latency compensation, plug-in state in the panel. "
+     "Every built-in device, .sd device and running plug-in has editable controls in its panel "
+     "(a layout, or a generated parameter list), and a device may open a larger expanded panel "
+     "over the main area. "
      "SDK-authored .sd effects and instruments load onto tracks, embed in projects, expose parameters, "
      "graphs and custom panels, and support explicit revision updates. Missing A/B, "
      "hot-swap, preset browser depth, defaults, device delay review."),
-    (24, "Using Plug-Ins", 12, 0.72, "partial",
+    (24, "Using Plug-Ins", 12, 0.74, "partial",
      "CLAP and VST3 hosted out of process, sandboxed, VST3 bundles on Windows, macOS and Linux, "
      "editors (Windows/X11), scans that try failures again and settle files built for another "
      "processor, a plug-in manager (plug-ins switched off, several picked with Ctrl, Cmd or Shift and turned off or on from the right-click menu, folders per format and switched off), latency "
      "compensation (followed when a plug-in changes its latency while it plays), saved state "
      "(a change in an editor counts as unsaved), VST2 read and matched to VST3, parameters set "
-     "and automated from the engine, the song's tempo, transport, position, bar, time signature and loop "
-     "given to every plug-in, ARA plug-ins on audio tracks (arrangement clips, edits saved, "
-     "clip changes followed live, the editor in the clip's place, one document a plug-in and project "
-     "so its editor shows every track; warped and looped clips not yet). Missing AU, VST2 hosting, "
+     "and automated from the engine and shown as a generated list in the device panel, the song's tempo, "
+     "transport, position, bar, time signature and loop given to every plug-in, ARA plug-ins on audio "
+     "tracks (arrangement clips, edits saved, clip changes followed live, the editor in the clip's place, "
+     "one document a plug-in and project so its editor shows every track; warped and looped clips not "
+     "yet). Missing AU, VST2 hosting, "
      "configure mode, VST preset banks, sidechain parameters."),
     (25, "Instrument, Drum and Effect Racks", 20, 0.25, "partial",
      "Device groups: Ctrl+G groups picked devices, parallel branches with volume, pan, mute and "

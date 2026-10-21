@@ -155,20 +155,22 @@ fn midi_prefix(devices: &[Device]) -> usize {
     devices.iter().take_while(|device| chain_role(device) == Some(Role::MidiEffect)).count()
 }
 
-/// The first position an audio effect may take: after the MIDI effects that lead the chain and
-/// the instrument right after them, whether or not there is one.
-fn first_effect_position(devices: &[Device]) -> usize {
+/// The first position an audio effect may take on the channel `params` names: after the MIDI
+/// effects that lead the chain and the instrument right after them, whether or not there is one.
+/// An instrument group and a plug-in instrument count as the instrument, as a built-in one does.
+fn first_effect_position(session: &Session, params: &Value) -> Result<usize, CommandError> {
+    use crate::device_groups::{Kind, kind_of};
+    let devices = &channel_read(session, params)?.devices;
     let prefix = midi_prefix(devices);
-    prefix + usize::from(devices.get(prefix).and_then(chain_role) == Some(Role::Instrument))
+    Ok(prefix + usize::from(devices.get(prefix).is_some_and(|d| kind_of(session, d) == Kind::Instrument)))
 }
 
-/// Refuses an audio effect at `position` before the track's MIDI effects or its instrument.
-fn check_effect_position(devices: &[Device], position: usize) -> Result<(), CommandError> {
-    let first = first_effect_position(devices);
+/// Refuses an audio effect at `position` before the track's MIDI effects or its instrument
+/// (`first`, from [`first_effect_position`]), in a chain of `len` devices.
+fn check_effect_position(first: usize, len: usize, position: usize) -> Result<(), CommandError> {
     if position < first {
         return Err(format!(
-            "an effect goes after the track's MIDI effects and instrument (position {first} to {})",
-            devices.len()
+            "an effect goes after the track's MIDI effects and instrument (position {first} to {len})"
         )
         .into());
     }
@@ -448,6 +450,7 @@ pub(crate) fn add(session: &mut Session, params: &Value) -> Result<Value, Comman
         }
     }
     let replaced = if instrument { instrument_in(session, params)? } else { None };
+    let first_effect = first_effect_position(session, params)?;
     let channel = channel_param(session, params)?;
     if suhina_model::count_devices(&channel.devices) >= MAX_DEVICES && replaced.is_none() {
         return Err(format!("a track holds at most {MAX_DEVICES} devices").into());
@@ -477,7 +480,7 @@ pub(crate) fn add(session: &mut Session, params: &Value) -> Result<Value, Comman
         .into());
     }
     if !instrument && !midi_effect {
-        check_effect_position(&channel.devices, position)?;
+        check_effect_position(first_effect, channel.devices.len(), position)?;
     }
     let position = take_out(&mut channel.devices, replaced.as_ref(), position);
     channel.devices.insert(position, device);
@@ -490,29 +493,6 @@ pub(crate) fn add(session: &mut Session, params: &Value) -> Result<Value, Comman
 pub(crate) fn add_sd(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let path = params.get("path").and_then(Value::as_str).ok_or("path must be a .sd file path")?;
     let graph = suhina_device_sdk::DeviceGraph::read_file(std::path::Path::new(path)).map_err(|e| e.to_string())?;
-    if let Some(id) = graph.native_device_id().map_err(|e| e.to_string())? {
-        let _prepared = graph.prepare_native_at(48000., &suhina_device_registry::create).map_err(|e| e.to_string())?;
-        let mut request = params.clone();
-        let object = request.as_object_mut().ok_or("parameters must be an object")?;
-        object.remove("path");
-        object.insert("id".into(), json!(id));
-        let result = add(session, &request)?;
-        let index =
-            result["device"].as_u64().and_then(|i| usize::try_from(i).ok()).ok_or("missing inserted device index")?;
-        let device = channel_param(session, params)?.devices.get_mut(index).ok_or("inserted device is missing")?;
-        device.name = graph.name.clone();
-        device.params = graph
-            .parameters
-            .iter()
-            .filter(|p| {
-                suhina_device_registry::info(id)
-                    .and_then(|info| info.params.iter().find(|native| native.id == p.id))
-                    .is_some_and(|native| native.default != p.default)
-            })
-            .map(|p| DeviceParam::new(&p.id, p.default))
-            .collect();
-        return Ok(json!({"device":index,"id":graph.id,"name":graph.name,"kind":"sd","implementation":id}));
-    }
     let values: Vec<DeviceParam> =
         graph.parameters.iter().map(|parameter| DeviceParam::new(parameter.id.clone(), parameter.default)).collect();
     let state = graph.to_sd().map_err(|e| e.to_string())?.into_bytes();
@@ -528,6 +508,7 @@ pub(crate) fn add_sd(session: &mut Session, params: &Value) -> Result<Value, Com
     }
     let instrument = graph.role == suhina_device_sdk::DeviceRole::Instrument;
     let replaced = if instrument { instrument_in(session, params)? } else { None };
+    let first_effect = first_effect_position(session, params)?;
     let channel = channel_param(session, params)?;
     if suhina_model::count_devices(&channel.devices) >= MAX_DEVICES && replaced.is_none() {
         return Err(format!("a track holds at most {MAX_DEVICES} devices").into());
@@ -557,7 +538,7 @@ pub(crate) fn add_sd(session: &mut Session, params: &Value) -> Result<Value, Com
             )
             .into());
         }
-        suhina_device_sdk::DeviceRole::Effect => check_effect_position(&channel.devices, position)?,
+        suhina_device_sdk::DeviceRole::Effect => check_effect_position(first_effect, channel.devices.len(), position)?,
         _ => {}
     }
     let position = take_out(&mut channel.devices, replaced.as_ref(), position);
@@ -751,15 +732,20 @@ pub(crate) fn move_to_track(session: &mut Session, params: &Value) -> Result<Val
         .or_else(|| device_at(devices, &path))
         .cloned()
         .ok_or("the device is missing")?;
-    let instrument = match chain_role(&device) {
-        Some(role) => role == Role::Instrument,
-        None => session
-            .plugins
-            .env()
-            .and_then(|env| crate::device_plugin(&env.catalog, &device))
-            .is_some_and(|(found, _)| crate::is_instrument(found.plugin)),
-    };
-    let midi_effect = chain_role(&device) == Some(Role::MidiEffect);
+    // A group is what its branches start with (`kind_of`); a single device is its own role, or a
+    // plug-in's in the catalog.
+    let grouped = crate::device_groups::kind_of(session, &device);
+    let instrument = grouped == crate::device_groups::Kind::Instrument
+        || match chain_role(&device) {
+            Some(role) => role == Role::Instrument,
+            None => session
+                .plugins
+                .env()
+                .and_then(|env| crate::device_plugin(&env.catalog, &device))
+                .is_some_and(|(found, _)| crate::is_instrument(found.plugin)),
+        };
+    let midi_effect = !instrument
+        && (grouped == crate::device_groups::Kind::MidiEffect || chain_role(&device) == Some(Role::MidiEffect));
     let plays_notes = session.project.tracks.iter().find(|t| t.id == to).is_some_and(|t| t.content.notes);
     if (instrument || midi_effect) && !plays_notes {
         let what = if instrument { "an instrument" } else { "a MIDI effect" };
@@ -1180,6 +1166,7 @@ pub(crate) fn add_plugin(session: &mut Session, params: &Value) -> Result<Value,
         }
     }
     let replaced = if instrument { instrument_in(session, params)? } else { None };
+    let first_effect = first_effect_position(session, params)?;
     let channel = channel_param(session, params)?;
     if suhina_model::count_devices(&channel.devices) >= MAX_DEVICES && replaced.is_none() {
         return Err(format!("a track holds at most {MAX_DEVICES} devices").into());
@@ -1203,7 +1190,7 @@ pub(crate) fn add_plugin(session: &mut Session, params: &Value) -> Result<Value,
         .into());
     }
     if !instrument {
-        check_effect_position(&channel.devices, position)?;
+        check_effect_position(first_effect, channel.devices.len(), position)?;
     }
     // A plug-in that edits clips (ARA, ADR 0028) plays the clips from their files, so a device
     // before it would not be heard: it goes first, wherever it was asked for.

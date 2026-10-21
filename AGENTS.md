@@ -39,9 +39,14 @@ that describe them (*Code and its documents*). Read only the documents that matc
    params and tests. The UI, CLI and MCP all dispatch the same commands.
 7. **Tests are the gate.** Every change comes with tests: round-trip and malformed-input tests for
    formats, golden-file renders for DSP and engine behaviour.
-8. **Build every device on the SDK.** Every built-in MIDI effect, instrument and audio effect
-   must use `device-sdk` shared nodes and its UI/panel system. When a device needs DSP that the
-   shared nodes cannot provide, add it as a native SDK node and use that node in the device graph
+8. **Build every device's panel on the SDK, and its DSP from shared blocks.** Every built-in MIDI
+   effect, instrument and audio effect is native code, never an `.sd` graph, and gets its panel
+   from the `device-sdk` UI system: the generated parameter list, or a layout (the `.sd` UI part
+   only) loaded by its id, whose parameters come from the device's `DeviceInfo`
+   ([ADR 0021](docs/decisions/0021-device-graph-files.md) › Amendment: device panels). Its DSP is
+   built from blocks in `crates/dsp` that the SDK's nodes share: when a device needs DSP the shared
+   blocks cannot provide, add it to `crates/dsp`, with an SDK node over it when `.sd` authors need
+   it too, so each block exists once
    ([issue #406](https://github.com/suhina-daw/suhina-daw/issues/406)).
 9. **Other DAWs are named only where a format is handled.** Product names such as Ableton,
    Live or FL Studio may appear in format crates (`crates/als`), their tests, `docs/spec/` and
@@ -103,9 +108,10 @@ crates/
   ui       L3 the main window, the browser and the views (egui, ADR 0009); every change is a command
   dsp      L0 signal-processing blocks for built-in effects and instruments: smoothing, filters, crossovers, LFOs, shapers, oversampling, delay lines (ADR 0004)
   device-api L0 the Device trait, parameter descriptions, contract tests every device runs
-  device-sdk L0 builds and validates data-only `.sd` effect graphs, compiles DSP primitives and delayed feedback for real-time execution; shared node contracts and embedded custom UI canvases/images for authors and agents; native sampler tempo synchronisation uses stretch
-  device-bundle L1 generates, validates and embeds stock `.sd` definitions at build time
-  device-registry L1 every built-in effect, instrument or MIDI effect by its stable id: makes and lists them (ADR 0004)
+  device-sdk L0 builds and validates data-only `.sd` effect graphs, compiles DSP primitives and delayed feedback for real-time execution; shared node contracts and embedded custom UI canvases/images for authors and agents; the layouts of
+           built-in devices (`builtin`: the UI part only, no graph); native sampler tempo synchronisation uses stretch
+  device-registry L1 every built-in effect, instrument or MIDI effect by its stable id: makes and lists them (ADR 0004),
+           and gives its panel: parameters from DeviceInfo and its layout, or the generated list (ADR 0021)
   ipc      L0 audio blocks to a plug-in host process: shared memory, block sync with a deadline (ADR 0006; may use unsafe)
   realtime L0 real-time priority for audio threads: MMCSS Pro Audio on Windows, SCHED_FIFO or rtkit on Linux
   plugins  L1 the engine's side of plug-in hosting: start a host process, control protocol, health, state, restart; scanning; offline runs
@@ -306,11 +312,12 @@ cargo deny check   # when Cargo.lock changed (CONTRIBUTING.md › Dependencies)
 
 Keep the tree building at every step.
 
-**Build and verify built-in devices.** When building the desktop app, build every built-in device
-as an `.sd` definition and bundle it into the app so it is available to users. After changing a
-built-in device, its SDK runtime, parameters or panel, rebuild the affected device and desktop app;
-verify the app contains current `.sd` definitions for all built-in devices and report the app and
-definition paths. Do this automatically without waiting for a separate rebuild request.
+**Build and verify built-in devices.** Built-in devices are compiled into the app and are not
+`.sd` files; nothing is bundled beside it. After changing a built-in device, its parameters or its
+layout, run `cargo test -p suhina-device-registry` (it fails on a layout that names a parameter its
+device lacks or that does not load), rebuild the desktop app, and check the device's panel in it:
+its layout, or the generated parameter list. Report the app's path. Do this automatically without
+waiting for a separate rebuild request.
 
 
 **A change in what Suhina does comes with steps to check it.** When a pull request changes

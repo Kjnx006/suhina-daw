@@ -902,6 +902,34 @@ fn a_device_moves_or_copies_to_another_track_in_one_step() {
     );
 }
 
+#[test]
+fn an_instrument_group_moved_to_another_track_takes_its_instrument_s_place() {
+    let mut session = Session::new(project());
+    run(&mut session, "device.add", json!({ "track": "Keys", "id": "fm-synth" })).unwrap();
+    run(&mut session, "device.group", json!({ "track": "Keys", "device": 0, "name": "Layer" })).unwrap();
+    run(&mut session, "track.add", json!({ "kind": "midi", "name": "Lead" })).unwrap();
+    run(&mut session, "device.add", json!({ "track": "Lead", "id": "fm-synth" })).unwrap();
+    run(&mut session, "device.add", json!({ "track": "Lead", "id": "delay" })).unwrap();
+    let chain = |s: &Session, name: &str| {
+        let p = s.project();
+        let channel = p.tracks.iter().find(|t| t.name == name).and_then(|t| t.channel).unwrap();
+        p.channels.iter().find(|c| c.id == channel).unwrap().devices.iter().map(|d| d.name.clone()).collect::<Vec<_>>()
+    };
+    let lead = chain(&session, "Lead");
+    // A group whose branches start with an instrument is an instrument: it goes where Lead's
+    // instrument was, before its effects, and takes its place.
+    run(&mut session, "device.moveToTrack", json!({ "track": "Keys", "device": 0, "to_track": "Lead" })).unwrap();
+    let moved = chain(&session, "Lead");
+    assert_eq!(moved.len(), lead.len(), "{moved:?}");
+    assert_eq!(moved.first().map(String::as_str), Some("Layer"));
+    assert_eq!(moved.last(), lead.last(), "the effect stays after it");
+    // The group is the track's instrument for an effect added after it too: none goes before it.
+    let before = run(&mut session, "device.add", json!({ "track": "Lead", "id": "utility", "position": 0 }));
+    assert!(before.is_err(), "{before:?}");
+    run(&mut session, "device.add", json!({ "track": "Lead", "id": "utility", "position": 1 })).unwrap();
+    assert_eq!(chain(&session, "Lead").first().map(String::as_str), Some("Layer"));
+}
+
 /// A track plays one instrument: one added to a track that has one takes its place, with the
 /// effects after it kept, as one undo step; built-in and plug-in instruments alike.
 #[test]
@@ -934,4 +962,23 @@ fn an_added_instrument_replaces_the_one_on_the_track() {
     assert_eq!(names(&session), ["Pitch", "Synth", "Utility"]);
     run(&mut session, "edit.undo", json!({})).unwrap();
     assert_eq!(names(&session), ["Pitch", "Sampler", "Utility"]);
+}
+
+/// What a built-in device's old `.sd` wrapper looked like: one `native_device` node between the
+/// input and the output.
+const UTILITY_WRAPPER: &str = r#"{"format":"suhina-device","version":4,
+  "device":{"id":"utility","name":"Utility","role":"effect","parameters":[]},
+  "nodes":[{"id":"in","kind":"audio_input"},{"id":"device","kind":"native_device","device":"utility"},
+           {"id":"out","kind":"audio_output"}],
+  "connections":[{"from":"in","to":"device"},{"from":"device","to":"out"}]}"#;
+
+#[test]
+fn a_wrapper_file_is_no_longer_a_device_to_add() {
+    let path = std::env::temp_dir().join(format!("suhina-wrapper-{}.sd", std::process::id()));
+    std::fs::write(&path, UTILITY_WRAPPER).unwrap();
+    let mut session = Session::new(project());
+    let refused = run(&mut session, "device.addSd", json!({ "track": 1, "path": path }));
+    std::fs::remove_file(&path).unwrap();
+    assert!(refused.is_err(), "{refused:?}");
+    assert!(session.project().channels[0].devices.is_empty());
 }

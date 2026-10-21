@@ -3,8 +3,12 @@ description: Self-contained device canvases, image assets, drawing expressions a
 read_when: custom SDK control, device background, icon, photo, texture, XY pad, drawing API, image asset
 type: spec
 status: current
-last_verified: 2026-10-19
+last_verified: 2026-10-21
 covers:
+  - crates/device-sdk/src/builtin.rs
+  - crates/device-registry/src/lib.rs
+  - crates/session/src/rack.rs
+  - crates/ui/src/app.rs
   - crates/device-sdk/src/ui/author.rs
   - crates/device-sdk/src/ui/widgets.rs
   - crates/device-sdk/src/ui.rs
@@ -15,6 +19,59 @@ covers:
 ---
 
 # Custom device panels
+
+## Compact and expanded panels
+
+Every device has a compact panel in the device chain, at most 168 px high (the detail area's
+default 200 px less the 20 px header and 6 px padding above and below). Its width is the
+author's, 260 px by default. A device without a canvas shows its generated parameter list,
+always 260 px wide and as tall as its rows up to 168 px; a longer list scrolls. In a row a device
+is as wide as its canvas plus 12 px (220 px at least, 272 px for a generated list); the stacked
+column is 272 px wide by default. A smaller detail area or column scrolls the panel.
+
+A device may also have an expanded panel: one larger fixed-size canvas (`device.expanded` in a
+`.sd` file, `expanded` in a built-in's layout), with the same fields and limits as the compact one.
+A device with one has a button beside the X in its header, labelled **Expand** *name* (and
+**Close** *name*'s **expanded panel** while it is open). The panel opens over the main area with
+the device's name and a close button (**Close expanded panel**) along its top; its canvas is
+centred, and scrolls when the main area is smaller. The close button, Escape or a second click on
+the header button closes it, and it closes by itself when its device is no longer shown (another
+track selected, the device removed). Its controls send the same `device.setParam` as the compact
+panel's, so undo, automation and presets do not depend on which is open. No zoom: canvases
+scroll and never scale.
+
+## Layouts for built-in devices
+
+A built-in effect, instrument or MIDI effect has no `.sd` file. Its panel comes from
+`suhina_device_registry::panel(id)`: its parameters from the device's `DeviceInfo`, in order,
+and its layout (`suhina_device_sdk::builtin::Layout`) when it has one. A layout holds only:
+
+- `ui`: the compact canvas (`null` keeps the generated list in the chain);
+- `expanded`: the expanded canvas;
+- `parameters`: by parameter id, how each is presented: `control` and the `.sd` parameter `ui`
+  fields. A choice keeps the device's labels unless the layout gives its own.
+
+It never declares a parameter: name, range, unit, scale and default are the device's. A layout
+is refused when it names a parameter its device lacks, gives one a control its range does not allow
+(a logarithmic slider below zero, a toggle outside 0..1), or draws a canvas the rules here refuse;
+the registry then shows the generated list. The registry's tests fail on such a layout, so a
+shipped one cannot drift from its device. A device crate gives its layout in Rust (the Sampler's
+`layout()`) or as `devices/<name>/panel.json`, listed in `suhina_device_registry::LAYOUT_FILES`:
+
+```json
+{
+  "ui": { "size": [260, 168], "controls": [ ... ] },
+  "parameters": { "gain": { "control": "knob", "ui": { "decimals": 1 } } }
+}
+```
+
+The generated list gives a continuous parameter a slider (logarithmic on a logarithmic scale), a
+toggle a check box, a whole number a stepped slider and a choice a menu of its labels. A plug-in
+gets the same list from the parameters its host lists, under its editor button while its editor is
+not inside the panel: hidden and read-only parameters are left out, a switch is a check box and a
+stepped parameter moves in its steps; the value shows as the plug-in writes it until it is changed
+here. The list is read again every two seconds while the panel shows, in the background, so a
+change in the plug-in's own editor reaches it.
 
 ## Rust control constructors
 
@@ -110,7 +167,7 @@ canvas, including node rows and stock controls. Both dimensions use logical pixe
 The host adds a 20-pixel header and 6-pixel padding on each side. Available host space clips the
 viewport; oversized contents scroll without scaling. This works in row and stacked layouts.
 Omitted or null `viewport_size` preserves automatic sizing: row width is at least 220 or canvas
-width plus 12, row height fills the detail area; stacked width fills the column (normally 260),
+width plus 12, row height fills the detail area; stacked width fills the column (normally 272),
 and height fits node rows, canvas and stock controls. Setting `size` does not scale artwork.
 
 Canvas size is 24..8192 logical pixels per axis. Up to 128 custom controls and 1024 total drawing
