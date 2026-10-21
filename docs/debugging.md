@@ -96,8 +96,8 @@ The parts, in the order the frame draws them: `input` (keys, polls, the sample m
 `detail` (the detail area: clip column, devices, piano roll), `view setup`, `timeline` (the
 Arrangement's lanes and clips, rebuilt only after the project changed: `timeline rebuilt`),
 `arrangement view` or `session view` (drawing it), `views`, `drags`, `dialogs`, `commands`
-(running what the frame asked for), `quit check` (the plug-ins whose editor was open read once
-more when the window is closed, before it asks whether to save) and `rest`. The part that stands
+(running what the frame asked for), `quit check` (advancing all projects' nonblocking plug-in state checks
+before asking whether to save on quit) and `rest`. The part that stands
 out is where to look.
 
 A closed project's plug-ins are unloaded on a thread of their own, so the window goes on drawing

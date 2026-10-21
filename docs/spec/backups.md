@@ -45,7 +45,9 @@ A setting, **Backups** in Settings › General, says when:
 
 - A backup is written only when the project has **changes since its last backup and since it was
   last saved** (`project.info`'s `unsaved_changes`). A project that is saved, or unchanged since
-  the last backup, is not written again; an untouched project never gets one.
+  the last backup, is not written again; an untouched project never gets one. Confirmed plug-in
+  state changes have their own revision, so a change from processing or MIDI can require a
+  first or later backup without a project command.
 - Every open project is backed up, not only the active tab.
 - With an interval, the clock runs from when the project was opened or last backed up; a project
   that has been changed is written when the interval has passed since then. Changes after that
@@ -90,11 +92,13 @@ undo or risky is added there and to this list.
 
 - The project is copied with each plug-in's state as it was last read, without asking the
   plug-ins again: asking waited up to a second for a busy plug-in on the window's thread at every
-  backup. A plug-in is read every 30 seconds while its editor is open or until its state settles
-  after it closed (nothing else changes it outside the project), and at each save. An ARA
+  backup. Every running plug-in is read on background control workers every 30 seconds,
+  including one whose editor has never opened: processing or MIDI may change state without a
+  dirty notification. Two matching changed reads establish an unsaved change (ADR 0010). An ARA
   plug-in (Melodyne) is not read while its editor is open, since storing its edits held the editor
   up for seconds: its edits reach backups once the editor closes or the project is saved. A save
-  still asks every running plug-in.
+  still asks every running plug-in. The last completed state remains available while a control
+  worker is reading a newer one, so a concurrent backup does not fall back to the opened state.
 - The copy is turned into JSON and written on a background thread (`suhina-backup`), never on
   the window's thread or the audio thread. It is written to a temporary file beside the backup
   (`… .suhina.saving`) that is then renamed to the backup's name, so a crash while writing leaves

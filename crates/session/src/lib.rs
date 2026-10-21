@@ -1020,9 +1020,16 @@ impl Session {
 
     /// Reads the running plug-ins' states now, so a change made in a plug-in's editor since
     /// the last read shows in [`Session::has_unsaved_changes`]: before asking whether to save
-    /// on close or quit. Waits at most a second or two for plug-ins that do not answer.
+    /// on close or quit. Waits at most one second for plug-ins that do not answer.
     pub fn check_plugin_edits(&mut self) {
         self.plugins.check_edits();
+    }
+
+    /// Advances a two-read check of all running plug-ins without waiting. Call each frame
+    /// until true before deciding whether to offer saving; processing and MIDI count too.
+    /// All rounds share one second, after which the last known states are used.
+    pub fn poll_plugin_edits(&mut self) -> bool {
+        self.plugins.poll_edits()
     }
 
     /// Saves the project as a Suhina project at `path` (`.suhina` is added when it does not end

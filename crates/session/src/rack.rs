@@ -687,6 +687,8 @@ struct Instance {
     info: PluginSlotInfo,
     /// `None` while it starts, or while a thread of its own talks to it.
     control: Option<Plugin>,
+    /// Last completed state read, retained while the control half is on a worker.
+    last_state: Option<SavedState>,
     generation: u64,
     state_refused: Option<String>,
     /// Whether its editor is open, as last known.
@@ -695,12 +697,6 @@ struct Instance {
     /// come, 0 to 1, while it runs ([`Rack::ara_activity`]).
     track: Option<suhina_model::TrackId>,
     ara_progress: Option<f32>,
-    /// Reads of its state still to come before a change made in its editor shows
-    /// ([`PluginEdits`] counts a change once two reads agree): 2 while the editor is open, one
-    /// less with each read after it closed. Only these plug-ins are read before the window asks
-    /// whether to save ([`Rack::check_edits`]): nothing else changes a plug-in's state outside
-    /// the project.
-    unsettled_reads: u8,
     /// How the editor was opened: embedded in the session's window, or in a window of its
     /// own. Set when it is asked to open, so a placement that comes while it opens is kept.
     editor_embedded: bool,
@@ -757,10 +753,10 @@ impl Instance {
             info: PluginSlotInfo::default(),
             ranges: None,
             control: None,
+            last_state: None,
             generation,
             state_refused: None,
             editor_open: false,
-            unsettled_reads: 0,
             track: None,
             ara_progress: None,
             editor_embedded: false,
@@ -840,6 +836,8 @@ pub struct Rack {
     receiver: Receiver<Started>,
     next_generation: u64,
     checked: Instant,
+    /// Deadline and read rounds left for a nonblocking quit check.
+    edit_check: Option<(Instant, u8)>,
     saved: Instant,
     /// The window editors open over (owned by it), when the session runs in one.
     owner: Option<u64>,
@@ -896,6 +894,7 @@ impl Default for Rack {
             receiver,
             next_generation: 0,
             checked: Instant::now(),
+            edit_check: None,
             saved: Instant::now(),
             owner: None,
             embed: false,
@@ -951,7 +950,8 @@ impl Rack {
     pub(crate) fn known_states(&self) -> HashMap<u64, SavedState> {
         let mut states = self.kept.clone();
         for (key, instance) in &self.instances {
-            if let Some(state) = instance.control.as_ref().and_then(Plugin::last_state) {
+            if let Some(state) = instance.control.as_ref().and_then(Plugin::last_state).or(instance.last_state.as_ref())
+            {
                 states.insert(*key, state.clone());
             }
         }
@@ -962,12 +962,11 @@ impl Rack {
     /// answers: at most [`SAVE_WAIT`] in all, with the time it takes a plug-in lent out for
     /// something else (a read just after it started) to come back first.
     fn read_states(&mut self) {
-        self.read_states_of(|_| true);
+        self.read_states_until(Instant::now() + SAVE_WAIT);
     }
 
-    /// [`Rack::read_states`] for the running plug-ins `wanted` picks by key.
-    fn read_states_of(&mut self, wanted: impl Fn(u64) -> bool) {
-        let deadline = Instant::now() + SAVE_WAIT;
+    /// Concurrent reads share a deadline, including control halves already lent out.
+    fn read_states_until(&mut self, deadline: Instant) {
         let mut notices = Vec::new();
         let lent = |rack: &Self, keys: Option<&[u64]>| {
             rack.instances.iter().any(|(key, i)| {
@@ -978,8 +977,7 @@ impl Rack {
             std::thread::sleep(Duration::from_millis(2));
             self.take_returned(&mut notices);
         }
-        let running: Vec<u64> =
-            self.instances.iter().filter(|(k, i)| i.control.is_some() && wanted(**k)).map(|(k, _)| *k).collect();
+        let running: Vec<u64> = self.instances.iter().filter(|(_, i)| i.control.is_some()).map(|(k, _)| *k).collect();
         let asked: Vec<u64> = running.into_iter().filter(|key| self.lend(*key, read_state).is_ok()).collect();
         while lent(self, Some(&asked)) && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(2));
@@ -988,19 +986,40 @@ impl Rack {
         self.notices.extend(notices);
     }
 
-    /// Reads twice in a row the states of the running plug-ins whose editor is open or was
-    /// since their state last settled, so a change made in an editor counts now, not after the
-    /// next two reads ([`SAVE_EVERY`] apart): before the window asks whether to save. Only those:
-    /// reading every plug-in held the window up to two seconds in a large project. Waits at
-    /// most [`SAVE_WAIT`] for each read.
+    /// Reads every running plug-in twice before asking whether to save: processing and MIDI
+    /// can change state without an editor or a host dirty notification. Both rounds share one
+    /// deadline, so a busy host cannot add a second wait to leaving the project. Reads run on
+    /// control workers concurrently; stopped plug-ins keep their last state.
     pub(crate) fn check_edits(&mut self) {
-        let edited: std::collections::HashSet<u64> =
-            self.instances.iter().filter(|(_, i)| i.editor_open || i.unsettled_reads > 0).map(|(k, _)| *k).collect();
-        if edited.is_empty() {
-            return;
+        while !self.poll_edits() {
+            std::thread::sleep(Duration::from_millis(2));
         }
-        self.read_states_of(|key| edited.contains(&key));
-        self.read_states_of(|key| edited.contains(&key));
+    }
+
+    /// Advances the quit check without waiting for any host. The caller pumps frames until
+    /// true; every project can make progress together under its own one-second deadline.
+    pub(crate) fn poll_edits(&mut self) -> bool {
+        let mut notices = Vec::new();
+        self.take_returned(&mut notices);
+        self.notices.extend(notices);
+        let (deadline, rounds) = *self.edit_check.get_or_insert((Instant::now() + SAVE_WAIT, 2));
+        if Instant::now() >= deadline {
+            self.edit_check = None;
+            return true;
+        }
+        if self.instances.values().any(|i| i.status == PluginStatus::Running && i.control.is_none()) {
+            return false;
+        }
+        if rounds == 0 || self.instances.is_empty() {
+            self.edit_check = None;
+            return true;
+        }
+        let keys: Vec<u64> = self.instances.iter().filter(|(_, i)| i.control.is_some()).map(|(k, _)| *k).collect();
+        for key in keys {
+            let _busy = self.lend(key, read_state);
+        }
+        self.edit_check = Some((deadline, rounds - 1));
+        false
     }
 
     /// Whether a plug-in's state changed since the project was last saved or opened, without
@@ -1058,14 +1077,6 @@ impl Rack {
     fn take_returned(&mut self, notices: &mut Vec<String>) {
         while let Ok(returned) = self.returned.try_recv() {
             let Returned { key, generation, control, done } = returned;
-            if let Done::Saved(Some(state)) = &done {
-                self.edits.read(key, state);
-                if let Some(instance) = self.instances.get_mut(&key)
-                    && !instance.editor_open
-                {
-                    instance.unsettled_reads = instance.unsettled_reads.saturating_sub(1);
-                }
-            }
             if let Done::Stopped(state) = done {
                 // A plug-in loaded again with new clips starts with this state.
                 self.rebinding.remove(&key);
@@ -1090,7 +1101,6 @@ impl Rack {
                     match done {
                         Done::Opened(Ok(size)) => {
                             instance.editor_open = true;
-                            instance.unsettled_reads = 2;
                             instance.editor_size = Some(size);
                         }
                         Done::Opened(Err(why)) => {
@@ -1119,7 +1129,11 @@ impl Rack {
                             ));
                             instance.ara_failed = true;
                         }
-                        Done::Saved(_) | Done::Stopped(_) => {}
+                        Done::Saved(Some(state)) => {
+                            self.edits.read(key, &state);
+                            instance.last_state = Some(state);
+                        }
+                        Done::Saved(None) | Done::Stopped(_) => {}
                     }
                     instance.control = Some(control);
                 }
@@ -1182,7 +1196,6 @@ impl Rack {
         if let Some(control) = instance.control.as_mut() {
             if control.editor_open() {
                 instance.editor_open = true;
-                instance.unsettled_reads = 2;
                 instance.editor_size = control.editor_size();
             } else {
                 instance.editor_gone();
@@ -1508,8 +1521,6 @@ impl Rack {
                 instance.ara_layout = Some(now);
                 // The regions may be new: the editor is told the selection again.
                 instance.ara_selection_sent = None;
-                // Its archive may change with the clips (a copy's edits): read it again.
-                instance.unsettled_reads = 2;
                 updates.push((found.key, document));
                 continue;
             }
@@ -1551,8 +1562,9 @@ impl Rack {
             if instance.generation != started.generation {
                 continue;
             }
-            if let Some(state) = &started.first_state {
-                self.edits.read(started.key, state);
+            if let Some(state) = started.first_state {
+                self.edits.read(started.key, &state);
+                instance.last_state = Some(state);
             }
             let name = instance.plugin.as_ref().map_or_else(String::new, |p| p.0.clone());
             match started.result {
@@ -1725,14 +1737,11 @@ impl Rack {
             let name = instance.plugin.as_ref().map_or("A plug-in", |p| p.0.as_str());
             match control.health() {
                 Health::Running => {
-                    // Nothing outside the project changes a plug-in's state but its editor (and an
-                    // ARA plug-in's clips, which mark it too): one read since then is current. An
-                    // ARA plug-in is not read while its editor is open: storing its archive held
-                    // the editor up for seconds (2.5 s for a 9 MB one), so it is read once the
-                    // editor closes, and at a save or a close as every plug-in is.
-                    let edited = instance.editor_open || instance.unsettled_reads > 0;
+                    // Processing and MIDI can change state even without an editor, and not
+                    // every format/plug-in sends dirty notifications. Refresh all states for
+                    // backups. Defer an open ARA editor's expensive archive until it closes.
                     let editing_ara = instance.editor_open && instance.ara_layout.is_some();
-                    if save && edited && !editing_ara {
+                    if save && !editing_ara {
                         to_save.push(*key);
                     }
                 }
@@ -2179,6 +2188,42 @@ pub fn device_kind(plugin: &PluginInfo) -> DeviceKind {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_backup_keeps_the_last_completed_state_while_a_worker_has_the_control_half() {
+        let mut rack = Rack::default();
+        let mut instance = Instance::new(PluginStatus::Running, None, 0);
+        let state = SavedState::from(vec![3, 2, 1]);
+        instance.last_state = Some(state.clone());
+        rack.instances.insert(1, instance);
+        assert_eq!(rack.known_states().get(&1), Some(&state));
+    }
+
+    #[test]
+    fn polling_a_busy_host_returns_without_waiting_and_finishes_at_the_deadline() {
+        let mut rack = Rack::default();
+        rack.instances.insert(1, Instance::new(PluginStatus::Running, None, 0));
+        let started = Instant::now();
+        assert!(!rack.poll_edits());
+        assert!(started.elapsed() < Duration::from_millis(100));
+        rack.edit_check = Some((Instant::now(), 2));
+        assert!(rack.poll_edits());
+        assert!(rack.edit_check.is_none());
+        assert!(!rack.poll_edits(), "the next quit starts a fresh check");
+    }
+
+    #[test]
+    fn checking_a_busy_host_has_one_shared_deadline() {
+        let mut rack = Rack::default();
+        // The control half is on a worker that never returns. This must not cost a wait
+        // per read, per plug-in, or per host when the window is leaving the project.
+        for key in 1..=8 {
+            rack.instances.insert(key, Instance::new(PluginStatus::Running, None, 0));
+        }
+        let started = Instant::now();
+        rack.check_edits();
+        assert!(started.elapsed() < SAVE_WAIT + Duration::from_millis(800));
+    }
 
     #[test]
     fn progress_counts_each_state() {

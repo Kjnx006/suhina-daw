@@ -290,6 +290,8 @@ pub struct App {
     quit_confirmed: bool,
     /// Close the window on the next frame.
     quit_now: bool,
+    /// Projects whose state checks are still on control workers before the save prompt.
+    quit_checks: Option<Vec<ProjectId>>,
     /// The window is closing: the projects being let go of and since when; it closes once they
     /// are, or after [`QUIT_WAIT`].
     quitting: Option<(std::time::Instant, LettingGo)>,
@@ -499,6 +501,7 @@ impl App {
             save_then: None,
             quit_confirmed: false,
             quit_now: false,
+            quit_checks: None,
             quitting: None,
             missing: crate::app::missing_files::MissingFiles::default(),
             remember_choice: false,
@@ -878,15 +881,23 @@ impl App {
             self.start_quitting(ctx);
             return;
         }
-        if !ctx.input(|i| i.viewport().close_requested()) || self.quit_confirmed {
+        if self.quit_confirmed {
             return;
         }
-        if !self.unsaved_prompt_open() {
-            for id in self.projects.ids() {
-                self.check_plugin_edits(id);
-            }
+        let requested = ctx.input(|i| i.viewport().close_requested());
+        if !requested && self.quit_checks.is_none() {
+            return;
         }
         ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+        if !self.unsaved_prompt_open() {
+            let mut pending = self.quit_checks.take().unwrap_or_else(|| self.projects.ids());
+            pending.retain(|id| self.projects.get_mut(*id).is_some_and(|s| !s.poll_plugin_edits()));
+            if !pending.is_empty() {
+                self.quit_checks = Some(pending);
+                ctx.request_repaint_after(std::time::Duration::from_millis(10));
+                return;
+            }
+        }
         let Some(first) = self.unsaved_projects().first().copied() else {
             self.start_quitting(ctx);
             return;
@@ -6674,6 +6685,21 @@ fn bar_menu<R>(ui: &mut Ui, title: &str, content: impl FnOnce(&mut Ui) -> R) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_pending_quit_check_continues_after_the_close_event_is_gone() {
+        let mut app = App::new();
+        app.set_session(Session::new(crate::demo::demo_project()), &[]);
+        let id = app.projects.active().unwrap();
+        app.projects.get_mut(id).unwrap().execute("track.delete", &json!({ "track": 1 })).unwrap();
+        app.quit_checks = Some(vec![id]);
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| app.guard_quit(ui.ctx()));
+        output.textures_delta.clear();
+        assert!(app.quit_checks.is_none());
+        assert!(matches!(app.unsaved_prompt, Some(Leaving { then: AfterLeaving::Quit(_), .. })));
+        assert!(app.quitting.is_none(), "the save prompt must precede releasing the project");
+    }
 
     /// One frame with the main window's content at `main` on the desktop; returns where a drag
     /// is in the main window.
