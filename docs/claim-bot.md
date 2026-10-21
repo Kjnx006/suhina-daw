@@ -115,15 +115,11 @@ do about them. It never refuses a claim for an overlap: two pieces of work on th
 often fine, and only the people doing them can tell. A claim without the line is answered with a
 sentence saying what the line does. A lookup that fails leaves its part out of the answer.
 
-A bug fix or a small change needs no claim, so the same lookup also runs on pull requests: the
-[Overlap](../.github/workflows/overlap.yml) workflow compares a pull request's changed files with
-the other open pull requests' files and with the claims' `Touches:` lines, read as above. When
-something overlaps it comments on the pull request, and it updates that one comment with every push
-(to say nothing overlaps any more, when that is so). It leaves out the pull requests in the same
-stack, the claims of the issues the pull request closes, and the files every pull request may meet
-(`Cargo.lock` and the generated documents). It never fails. It runs as `pull_request_target`, as on
-`main`, so a fork's pull request gets the comment too, and it never checks out the pull request's
-code.
+A bug fix or a small change needs no issue and no claim, so the same lookup runs on pull requests
+too: the [Overlap](../.github/workflows/overlap.yml) workflow comments on a pull request when
+another open pull request or a claim's `Touches:` line covers its files, and keeps that one comment
+current with each push. It skips pull requests in the same stack and `Cargo.lock` and the generated
+documents, and it never fails.
 
 ## The Depends on check
 

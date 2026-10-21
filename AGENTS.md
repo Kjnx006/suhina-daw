@@ -198,7 +198,7 @@ board keep their old key in the title (`(LOOP-27)`); a pull request for one name
 Before starting a feature or a piece of an epic, claim it the way [`CONTRIBUTING.md`](CONTRIBUTING.md) › *Working on an issue*
 describes, for a person and for an agent alike: no assignee and no open pull request for it,
 `Backlog` or `Ready` on the board (`Ready` for a feature, unless you are a trusted contributor), and a `/claim` comment with the plan.
-A bug or a small change needs no claim: the [Overlap](.github/workflows/overlap.yml) notice on the
+A bug or a small change needs no issue and no claim: the [Overlap](.github/workflows/overlap.yml) notice on the
 pull request lists other open work on the same files.
 
 **What belongs in one pull request.** A fix found while working that is small and in the same code
