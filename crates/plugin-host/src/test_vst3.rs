@@ -145,7 +145,7 @@ impl IComponentTrait for Processor {
         static ONCE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
         let delay = std::env::var("SUHINA_TEST_PLUGIN_SAVE_DELAY_MS").ok().and_then(|v| v.parse::<u64>().ok());
         if let Some(ms) = delay
-            && PROCESSED.load(Ordering::Relaxed)
+            && PROCESSED.load(Ordering::Acquire)
             && ONCE.compare_exchange(0, 1, Ordering::Relaxed, Ordering::Relaxed).is_ok()
         {
             std::thread::sleep(std::time::Duration::from_millis(ms));
@@ -199,7 +199,7 @@ impl IAudioProcessorTrait for Processor {
     }
 
     unsafe fn process(&self, data: *mut ProcessData) -> tresult {
-        PROCESSED.store(true, Ordering::Relaxed);
+        PROCESSED.store(true, Ordering::Release);
         // SAFETY: the host passes its process data for the call.
         let Some(data) = (unsafe { data.as_ref() }) else { return kInvalidArgument };
         if data.numInputs < 1 || data.numOutputs < 1 {
