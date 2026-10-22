@@ -2998,6 +2998,9 @@ impl App {
         suhina_plugins::trace::timed("drop poll", || self.poll_drop(ui.ctx()));
         self.frame_trace.mark("drags");
 
+        // Actions collected above wait for a dialog that asks something, as the keys and the menu
+        // bar's queue do: they are dropped while one is open, and once an action opens one.
+        let actions_held = self.dialog_holds_actions();
         self.plugin_dialog(ui, window);
         self.project_dialogs(ui, window);
         if self.settings_open {
@@ -3010,6 +3013,9 @@ impl App {
         let actions: Vec<Action> = actions.into_iter().map(|action| self.remove_every_pick(action)).collect();
         let ran = actions.len();
         for action in &actions {
+            if actions_held || self.dialog_holds_actions() {
+                break;
+            }
             // Closing a project with unsaved changes asks first (Save, Don't save, Cancel).
             let closing = (action.id == "projects.close")
                 .then(|| action.params["project"].as_u64().and_then(|n| u32::try_from(n).ok()).map(ProjectId))
