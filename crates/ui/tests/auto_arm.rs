@@ -144,3 +144,19 @@ fn selecting_a_track_in_the_arrangement_arms_it_too() {
     select(&mut harness, "Drums");
     assert_eq!(armed(&harness), [DRUMS]);
 }
+
+#[test]
+fn selecting_a_clip_slot_empty_or_not_arms_its_track() {
+    let mut renderer = engine();
+    let mut harness = app(&mut renderer, true);
+    // Keys' first slot is empty (in the demo it holds a stop button), Bass's holds a clip.
+    harness.get_by_label("Stop Keys (scene 1)").click();
+    harness.run_steps(3);
+    assert_eq!(armed(&harness), [KEYS], "an empty slot");
+    harness.get_by_label("Select Root on Bass (scene 1)").click();
+    harness.run_steps(3);
+    assert_eq!(armed(&harness), [BASS], "a slot with a clip");
+    harness.get_by_label("Stop Keys (scene 1)").click_secondary();
+    harness.run_steps(3);
+    assert_eq!(armed(&harness), [KEYS], "a right-click on a slot");
+}

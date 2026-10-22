@@ -79,7 +79,7 @@ engine code.
    next key, not that one.
    *Auto-arm (#834):* with Settings › MIDI › Auto-arm the selected track on (off by default, a
    setting of the app, not the project), selecting a track (the one the detail area shows, in
-   either view) arms it through `track.setArm`, and disarms the track auto-arm armed before. A
+   either view; a clip slot, empty or not, selects its track) arms it through `track.setArm`, and disarms the track auto-arm armed before. A
    track armed by hand is never disarmed by it, and selecting one already armed leaves it as it
    is. Only a track that takes notes and plays through a regular channel is armed: a return,
    the main track or a group leaves the arm where it is. While a take records, the selection

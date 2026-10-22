@@ -794,12 +794,13 @@ fn column_body(
                     state.track_focus = false;
                 }
                 // An empty slot is selected by a click, any slot by a right-click: Ctrl+C and
-                // Ctrl+V act on it.
+                // Ctrl+V act on it. A slot selects its track with it, as a clip's does, so the
+                // detail area and auto-arm (#834) follow it.
                 if (!has_clip && response.clicked()) || response.secondary_clicked() {
-                    state.selected_slot = Some(key);
+                    state.select_slot(column.track, scene);
                 }
                 if has_clip && response.drag_started_by(egui::PointerButton::Primary) {
-                    state.selected_slot = Some(key);
+                    state.select_slot(column.track, scene);
                     state.slot_drag = Some(key);
                 }
                 // The slot's menu, and a clip's launch settings under it.
