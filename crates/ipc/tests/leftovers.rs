@@ -8,8 +8,17 @@
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdout, Command, Stdio};
+use std::sync::{Mutex, MutexGuard};
 
 use suhina_ipc::{Link, sweep_leftovers};
+
+/// One test at a time: the sweep a test's peer runs when it starts would remove another test's
+/// leftovers before that test looks at them, or hold their lock while it does, so that the
+/// test's own sweep takes them for a live process's.
+fn one_at_a_time() -> MutexGuard<'static, ()> {
+    static TURN: Mutex<()> = Mutex::new(());
+    TURN.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
 
 /// A `suhina-ipc-peer` in `mode` (`make` or `idle`), and the lines it printed.
 fn peer(mode: &str, lines: usize) -> (Child, Vec<String>) {
@@ -37,6 +46,7 @@ fn lock_of(child: &Child) -> PathBuf {
 
 #[test]
 fn a_killed_processs_files_go() {
+    let _turn = one_at_a_time();
     let (mut child, made) = peer("make", 2);
     let lock = lock_of(&child);
     assert!(lock.exists());
@@ -51,6 +61,7 @@ fn a_killed_processs_files_go() {
 
 #[test]
 fn a_live_processs_files_stay_until_it_ends() {
+    let _turn = one_at_a_time();
     let (mut child, made) = peer("make", 2);
     sweep_leftovers();
     // As a second instance starting would.
@@ -70,6 +81,7 @@ fn a_live_processs_files_stay_until_it_ends() {
 
 #[test]
 fn a_reused_pid_does_not_keep_a_gone_owners_files() {
+    let _turn = one_at_a_time();
     // A live process that is not a Suhina one: it holds no lock, so files named after its pid
     // are an earlier, gone owner's.
     let (mut idle, printed) = peer("idle", 1);

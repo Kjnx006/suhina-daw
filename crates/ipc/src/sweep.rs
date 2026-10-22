@@ -130,7 +130,8 @@ enum Owner {
     Gone,
     /// Its lock was free, and is held now: the lock file goes with its files.
     GoneLocked(File),
-    /// A live process holds the lock, or it could not be told.
+    /// A live process holds the lock (or another sweep, removing the files itself), or it could
+    /// not be told.
     Alive,
 }
 
