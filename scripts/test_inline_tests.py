@@ -37,6 +37,14 @@ class InlineTests(unittest.TestCase):
         assert result is not None
         self.assertIn('#[path = "foo_tests.rs"]\npub(crate) mod tests;\n', result[0])
 
+    def test_a_module_inside_a_block_comment_or_a_raw_string_is_not_one(self):
+        module = source(200).split("\n\nfn after()")[0]
+        commented = f"fn code() {{}}\n/*\n{module}\n*/\n"
+        quoted = f'const TEXT: &str = r#"\n{module}\n"#;\n'
+        for text in [commented, quoted]:
+            self.assertEqual(inline_tests.test_modules(text), [], text[:40])
+            self.assertIsNone(inline_tests.moved(text, "foo_tests.rs"))
+
     def test_braces_in_strings_comments_and_chars_do_not_end_the_module(self):
         tricky = [
             '    const RAW: &str = r#"',

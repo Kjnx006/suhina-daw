@@ -96,21 +96,26 @@ def word_before(text: str, i: int) -> bool:
     return i > 0 and (text[i - 1].isalnum() or text[i - 1] == "_")
 
 
-def closing_line(lines: list[str], opening: int) -> int | None:
-    """The index of the line where the block opened by the last `{` on line `opening` closes.
-    Braces inside comments, string, raw string, byte string and character literals do not
-    count."""
-    text = "\n".join(lines[opening:])
-    i = text.rfind("{", 0, len(lines[opening]))
-    depth, line = 0, opening
+class Lexed(NamedTuple):
+    """What a scan of Rust source finds outside comments and string, raw string, byte string and
+    character literals: the lines that start in code, and each brace, as (line, `{` or `}`)."""
+
+    code_lines: set[int]
+    braces: list[tuple[int, str]]
+
+
+def lex(text: str) -> Lexed:
+    """Scans `text` once, skipping comments (nested block comments included) and literals."""
+    code_lines, braces = {0}, []
+    i, line = 0, 0
     while i < len(text):
         c = text[i]
         if c == "\n":
             line += 1
+            code_lines.add(line)
         elif text.startswith("//", i):
-            i = text.find("\n", i)
-            if i < 0:
-                return None
+            end = text.find("\n", i)
+            i = len(text) if end < 0 else end
             continue
         elif text.startswith("/*", i):
             nested, i = 1, i + 2
@@ -125,8 +130,7 @@ def closing_line(lines: list[str], opening: int) -> int | None:
             continue
         elif not word_before(text, i) and (raw := re.match(r'b?r(#*)"', text[i:])):
             close = text.find('"' + raw.group(1), i + raw.end())
-            if close < 0:
-                return None
+            close = len(text) if close < 0 else close
             line += text.count("\n", i, close)
             i = close + 1 + len(raw.group(1))
             continue
@@ -139,31 +143,43 @@ def closing_line(lines: list[str], opening: int) -> int | None:
         elif c == "'" and (char := re.match(r"'(?:\\(?:x[0-9a-fA-F]{2}|u\{[0-9a-fA-F]+\}|.)|[^\\'\n])'", text[i:])):
             i += char.end()
             continue
-        elif c == "{":
-            depth += 1
-        elif c == "}":
-            depth -= 1
-            if depth == 0:
-                return line
+        elif c in "{}":
+            braces.append((line, c))
         i += 1
+    return Lexed(code_lines, braces)
+
+
+def closing_line(lexed: Lexed, opening: int) -> int | None:
+    """The index of the line where the block opened by the last `{` on line `opening` closes."""
+    starts = [k for k, (line, brace) in enumerate(lexed.braces) if line == opening and brace == "{"]
+    if not starts:
+        return None
+    depth = 0
+    for line, brace in lexed.braces[starts[-1] :]:
+        depth += 1 if brace == "{" else -1
+        if depth == 0:
+            return line
     return None
 
 
 def test_modules(text: str) -> list[Module]:
     """Each inline test module in `text`: a `#[cfg(test)]` line, then any more attributes, each
-    on a line of its own, then `mod name {`, which closes at its matching brace."""
+    on a line of its own, then `mod name {`, which closes at its matching brace. Only lines that
+    start in code count, so text in a block comment or a raw string that looks like a module is
+    left alone."""
     lines = text.split("\n")
+    lexed = lex(text)
     found = []
     for i, line in enumerate(lines):
-        if line.strip() != "#[cfg(test)]":
+        if line.strip() != "#[cfg(test)]" or i not in lexed.code_lines:
             continue
         opening = i + 1
         while opening < len(lines) and ATTRIBUTE.match(lines[opening]) and not OPENING.match(lines[opening]):
             opening += 1
         matched = OPENING.match(lines[opening]) if opening < len(lines) else None
-        if not matched:
+        if not matched or any(k not in lexed.code_lines for k in range(i, opening + 1)):
             continue
-        end = closing_line(lines, opening)
+        end = closing_line(lexed, opening)
         if end is not None:
             indent, visibility, name = matched.groups()
             found.append(Module(i, opening, end, indent, visibility, name))
