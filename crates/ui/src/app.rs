@@ -728,10 +728,11 @@ impl App {
             }
         };
         // Opening is no command (ADR 0007), so it has a line of its own beside the `action`
-        // lines; one opened in place of another says which it closed (#821).
+        // lines; one opened in place of another says which it closed (#821). The name is quoted
+        // and escaped: a file name may hold a line break, which would start a line of its own.
         match replaced {
-            Some(old) => suhina_plugins::trace!("project opened {} {name} in place of {}", id.0, old.0),
-            None => suhina_plugins::trace!("project opened {} {name} in a new tab", id.0),
+            Some(old) => suhina_plugins::trace!("project opened {} {name:?} in place of {}", id.0, old.0),
+            None => suhina_plugins::trace!("project opened {} {name:?} in a new tab", id.0),
         }
         self.restore(id, Stash::default());
         self.plugin_dialog_hidden = false;

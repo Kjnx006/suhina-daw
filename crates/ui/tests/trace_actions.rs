@@ -38,9 +38,9 @@ fn projects_commands_are_written_to_the_trace() {
     assert_eq!(
         opened,
         [
-            format!("{} the project in a new tab", first.0),
-            format!("{} the project in a new tab", second.0),
-            format!("{} the project in place of {}", third.0, first.0),
+            format!("{} \"the project\" in a new tab", first.0),
+            format!("{} \"the project\" in a new tab", second.0),
+            format!("{} \"the project\" in place of {}", third.0, first.0),
         ],
         "opening is traced too:\n{text}"
     );
