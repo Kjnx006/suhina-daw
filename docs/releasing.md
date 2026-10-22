@@ -170,7 +170,10 @@ The build has a read-only token and no secrets, and for a fork GitHub runs `test
 fork has it; so `test-build-links.yml`, which runs from `main` and never runs pull request code,
 links only runs a maintainer started or a `suhina-bot[bot]` run with a bot-authored authorization
 for that exact commit, written before the run started. It rechecks the original human comment
-and current `TRUSTED_CONTRIBUTORS` membership. Both workflows perform the authorization check;
+and current `TRUSTED_CONTRIBUTORS` membership. The build checks the App's proof without relying
+on repository variables, which may be unavailable in fork PR runs; the default-branch gateway
+and linker check membership. A rerun retains the original run actor's authorization, not the
+rerunner's. Both workflows verify the commit-bound proof;
 a forged or stale proof, removed trusted user, edited/deleted request or another PR's comment
 cannot authorize a link. The maintainers are listed in both workflows.
 

@@ -32,7 +32,8 @@ const comment = {id: 12, body: '/close', user, updated_at: '2026-10-22T10:00:00Z
   issue_url: 'https://api.github.com/repos/owner/repo/issues/4', ...input.comment};
 const context = {repo: {owner: 'owner', repo: 'repo'}, actor: 'suhina-bot[bot]',
   eventName: 'pull_request', payload: {action: 'labeled', comment,
-    issue: {number: 4, ...input.issue}, pull_request: {number: 4, head: {sha}}}};
+    issue: {number: 4, ...input.issue}, pull_request: {number: 4, head: {sha}},
+    workflow_run: input.run}};
 const outputs = {}, calls = [];
 const core = {setOutput: (k,v) => outputs[k]=v, info: () => {}};
 process.env.TRUSTED_CONTRIBUTORS = input.trusted ?? 'other, @TRUSTED';
@@ -157,6 +158,18 @@ class TrustedRequests(unittest.TestCase):
         self.assertIsNotNone(self.run_script(source)['error'])
         proof = {'body':'<!-- trusted-build '+'a'*40+' Trusted 12 -->','created_at':'2026-10-22T10:01:00Z'}
         self.assertIsNone(self.run_script(source, comment={'body':'/test-build'}, comments=[proof])['error'])
+        # Fork PRs may receive no repository vars. The bot proof still admits the build;
+        # the default-branch linker independently rejects revoked membership (tested above).
+        self.assertIsNone(self.run_script(source, trusted='', comment={'body':'/test-build'}, comments=[proof])['error'])
+        self.assertIsNotNone(self.run_script(source, trusted='', comment={'body':'/test-build'}, comments=[])['error'])
+
+    def test_linker_does_not_borrow_rerunner_authority(self):
+        source = script('test-build-links.yml', 'id: link')
+        result = self.run_script(source, run={'id': 1, 'actor': {'login':'outsider'},
+                                              'triggering_actor': {'login':'juhamikael'}})
+        # Reject before reading jobs/artifacts or making any write.
+        self.assertIsNone(result['error'])
+        self.assertEqual(result['calls'], [])
 
 
 if __name__ == '__main__':

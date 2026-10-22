@@ -78,13 +78,11 @@ jobs:
     steps:
       - name: Authorize the labelled commit
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
-        env:
-          TRUSTED_CONTRIBUTORS: ${{ vars.TRUSTED_CONTRIBUTORS }}
         with:
           script: |
             const trusted = ['juhamikael', ...String(process.env.TRUSTED_CONTRIBUTORS || '')
               .split(/[\s,]+/).map(s => s.replace(/^@/, '').toLowerCase())];
-            const authorizedBuild = async (actor, number, sha, at) => {
+            const authorizedBuild = async (actor, number, sha, at, checkMembership = true) => {
               if (String(actor).toLowerCase() === 'juhamikael') return true;
               if (actor !== 'suhina-bot[bot]') return false;
               const comments = await github.paginate(github.rest.issues.listComments, {
@@ -93,7 +91,7 @@ jobs:
               for (const c of comments) {
                 if (c.user?.login !== 'suhina-bot[bot]' || c.user?.type !== 'Bot') continue;
                 const proof = String(c.body || '').match(/<!-- trusted-build ([a-f0-9]{40}) ([a-zA-Z0-9-]+) ([0-9]+) -->$/);
-                if (!proof || proof[1] !== sha || !trusted.includes(proof[2].toLowerCase()) ||
+                if (!proof || proof[1] !== sha || (checkMembership && !trusted.includes(proof[2].toLowerCase())) ||
                     Date.parse(c.created_at) > Date.parse(at)) continue;
                 try {
                   const { data: source } = await github.rest.issues.getComment({ ...context.repo, comment_id: Number(proof[3]) });
@@ -107,7 +105,9 @@ jobs:
             };
             if (context.eventName !== 'pull_request' || context.payload.action !== 'labeled') return;
             const pr = context.payload.pull_request;
-            if (!(await authorizedBuild(context.actor, pr.number, pr.head.sha, new Date().toISOString()))) {
+            // Fork pull_request runs may not receive repository variables. Trust the App's
+            // commit-bound proof here; the default-branch gateway and linker check membership.
+            if (!(await authorizedBuild(context.actor, pr.number, pr.head.sha, new Date().toISOString(), false))) {
               throw new Error('No authorized test-build request for this commit.');
             }
       # Every branch and the pull request's merge commit, whose second parent is its head; no
