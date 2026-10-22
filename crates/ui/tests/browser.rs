@@ -1262,6 +1262,16 @@ fn an_items_tag_menu_ticks_its_tags_with_painted_boxes_and_toggles_them() {
     harness.run();
     let tags = harness.state_mut().projects_mut().file_library_mut().item_tags(&item);
     assert!(tags.contains(&"Orange".to_string()) && tags.contains(&"Red".to_string()), "{tags:?}");
+    // A click on a ticked entry takes its tag off.
+    harness.get_by_label(&row("Loop 120bpm.wav")).click_secondary();
+    harness.run();
+    let at = harness.get_by_label("Tag ⏵").rect().center();
+    harness.hover_at(at);
+    harness.run();
+    harness.get_by_label("Red").click();
+    harness.run();
+    let tags = harness.state_mut().projects_mut().file_library_mut().item_tags(&item);
+    assert!(!tags.contains(&"Red".to_string()) && tags.contains(&"Orange".to_string()), "{tags:?}");
     let _ = std::fs::remove_dir_all(&settings);
     let _ = std::fs::remove_dir_all(&folder);
 }
