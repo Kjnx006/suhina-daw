@@ -66,7 +66,7 @@ after every merge; do not edit by hand. Find a document by what you are about to
 | [Device groups](spec/device-groups.md) | spec | current | device group, group effects, group devices, parallel processing, parallel chain, branch, macro, macro control, mix, dry/wet, group preset, nested devices, layering instruments | Planned device groups - several devices on a track as one unit, with parallel branches, per-branch volume, pan, mute and solo, a mix, macros, group presets, latency compensation, the model and the commands |
 | [Importing devices from Live Sets](spec/device-import.md) | spec | current | device import, importing devices, importing MIDI effects, device mapping, placeholder device, Operator, Live device to Suhina device, which device imports into what, golden renders of imported sets | How a device stored in a Live Set is brought into Suhina: the three import levels, how each Suhina device is learnt and mapped, and which Live device maps to which Suhina device |
 | [DX7 voice data](spec/dx7-voice-format.md) | spec | current | DX7, sysex, syx, voice, bank, cartridge, FM synth patch, patch format, fm-synth | DX7 voice data as system-exclusive messages (one voice, a bank of 32), the voice layout and what the FM synth does with bad data |
-| [Export](spec/export.md) | spec | draft | export, export dialog, mixdown, bounce, render to a file, render the mix, WAV, AIFF, FLAC, Ogg Vorbis, MP3, bit depth, 32-bit float, 24-bit, 16-bit, dither, normalize, sample rate, tail, range, loop region, project.export, overwrite, PickField, export a project, check it renders | Rendering the mix to an audio file the user chose: the File › Export command in the app, the shared project.export command, the formats (WAV, FLAC, Ogg Vorbis) and their encoders, bit depths and dithering, ranges, and progress with a cancel |
+| [Export](spec/export.md) | spec | draft | export, export dialog, mixdown, bounce, render to a file, render the mix, render a track, render a group, stems, premaster, source, node, WAV, AIFF, FLAC, Ogg Vorbis, MP3, bit depth, 32-bit float, 24-bit, 16-bit, dither, normalize, sample rate, tail, range, loop region, project.export, overwrite, PickField, export a project, parallel rendering, thread count, pre-roll, deterministic, check it renders | Rendering the mix to an audio file the user chose: the File › Export command in the app, the shared project.export command, the formats (WAV, FLAC, Ogg Vorbis) and their encoders, bit depths and dithering, ranges, rendering one node of the track tree (a track or a group, the foundation of the render matrix), and progress with a cancel |
 | [Extensions](spec/extensions.md) | spec | planned | extension, add-on, optional component, extension manifest, extension.json, model weights, licence shown to the user, extensions.add, extensions.list, missing extension, inference runtime | How Suhina uses an optional component it does not ship — the manifest and the licence it must carry, adding and listing one, what the user sees, and what happens when an extension is missing, crashes or hangs |
 | [FL Studio project (`.flp`) format](spec/flp-format.md) | spec | draft | reading .flp, FL Studio project, FLhd, FLdt, event stream, event id, varint, LEB128, UTF-16 strings, version event 199, flp reader errors | The FL Studio project (.flp) container and event stream as read by crates/flp, a draft spec where most statements are hypotheses |
 | [Level meters](spec/level-meters.md) | spec | current | level meter, meters, peak, RMS, clip indicator, clipping, peak hold, mixer.levels, mixer.resetClip, MeterMonitor, track header meter, mixer strip meter, dBFS | What the level meters measure (tracks, groups, returns, the main output), their ballistics, the clip indicator, where the window shows them and the commands that read and reset them |
@@ -204,7 +204,7 @@ Change this code, and check these documents.
 | `crates/engine/src/automation.rs` | [Automation](spec/automation.md) |
 | `crates/engine/src/automation_render_tests.rs` | [Automation](spec/automation.md) |
 | `crates/engine/src/automation_tests.rs` | [Automation](spec/automation.md) |
-| `crates/engine/src/buses.rs` | [0004: Built-in effects and instruments](decisions/0004-built-in-devices.md), [Automation](spec/automation.md), [Cue output](spec/cue-output.md), [Key inputs and plug-in buses](spec/sidechain.md) |
+| `crates/engine/src/buses.rs` | [0004: Built-in effects and instruments](decisions/0004-built-in-devices.md), [Automation](spec/automation.md), [Cue output](spec/cue-output.md), [Export](spec/export.md), [Key inputs and plug-in buses](spec/sidechain.md) |
 | `crates/engine/src/chain.rs` | [0004: Built-in effects and instruments](decisions/0004-built-in-devices.md), [0005: Edits while playing](decisions/0005-edits-while-playing.md), [0006: Plug-in hosting](decisions/0006-plug-in-hosting.md), [Automation](spec/automation.md), [Device groups](spec/device-groups.md), [The NAM Amp Modeler and NAM Cab Loader](spec/nam-amp-and-cab.md), [Suhina device graph (`.sd`)](spec/sd-device-format.md), [Key inputs and plug-in buses](spec/sidechain.md) |
 | `crates/engine/src/chain_tests.rs` | [Suhina device graph (`.sd`)](spec/sd-device-format.md) |
 | `crates/engine/src/count_in.rs` | [Recording](spec/recording.md) |
@@ -220,7 +220,7 @@ Change this code, and check these documents.
 | `crates/engine/src/input_tests.rs` | [0017: Inputs, arming and live latency](decisions/0017-inputs-and-latency.md) |
 | `crates/engine/src/launcher.rs` | [Architecture](architecture.md), [0005: Edits while playing](decisions/0005-edits-while-playing.md), [Arrangement editing](spec/arrangement-editing.md), [Clip launching](spec/clip-launching.md) |
 | `crates/engine/src/launcher/modes.rs` | [Clip launching](spec/clip-launching.md) |
-| `crates/engine/src/lib.rs` | [0005: Edits while playing](decisions/0005-edits-while-playing.md), [0024: Musical time and tempo over the song](decisions/0024-musical-time-and-tempo.md) |
+| `crates/engine/src/lib.rs` | [0005: Edits while playing](decisions/0005-edits-while-playing.md), [0024: Musical time and tempo over the song](decisions/0024-musical-time-and-tempo.md), [Export](spec/export.md) |
 | `crates/engine/src/live.rs` | [0017: Inputs, arming and live latency](decisions/0017-inputs-and-latency.md) |
 | `crates/engine/src/live_tests.rs` | [0017: Inputs, arming and live latency](decisions/0017-inputs-and-latency.md) |
 | `crates/engine/src/loop_tests.rs` | [Arrangement editing](spec/arrangement-editing.md) |
@@ -231,7 +231,7 @@ Change this code, and check these documents.
 | `crates/engine/src/preview.rs` | [0011: Previewing, and audio added to a playing project](decisions/0011-preview-and-added-audio.md), [Browser](spec/browser.md) |
 | `crates/engine/src/record.rs` | [0017: Inputs, arming and live latency](decisions/0017-inputs-and-latency.md), [Recording](spec/recording.md) |
 | `crates/engine/src/record_tests.rs` | [Recording](spec/recording.md) |
-| `crates/engine/src/sends.rs` | [0004: Built-in effects and instruments](decisions/0004-built-in-devices.md), [Sends and returns](spec/sends-and-returns.md) |
+| `crates/engine/src/sends.rs` | [0004: Built-in effects and instruments](decisions/0004-built-in-devices.md), [Export](spec/export.md), [Sends and returns](spec/sends-and-returns.md) |
 | `crates/engine/src/sends_tests.rs` | [Sends and returns](spec/sends-and-returns.md) |
 | `crates/engine/src/stretch.rs` | [0003: Time-stretching and stretch modes](decisions/0003-time-stretching.md) |
 | `crates/engine/src/swap.rs` | [Architecture](architecture.md), [0005: Edits while playing](decisions/0005-edits-while-playing.md), [0011: Previewing, and audio added to a playing project](decisions/0011-preview-and-added-audio.md) |
@@ -257,6 +257,7 @@ Change this code, and check these documents.
 | `crates/media/src/stems.rs` | [Stems files](spec/stems-format.md) |
 | `crates/media/src/stems_tests.rs` | [Stems files](spec/stems-format.md) |
 | `crates/media/src/tempo.rs` | [Browser](spec/browser.md) |
+| `crates/media/src/write.rs` | [Export](spec/export.md) |
 | `crates/media/tests/data/**` | [Stems files](spec/stems-format.md) |
 | `crates/midi/src/lib.rs` | [0017: Inputs, arming and live latency](decisions/0017-inputs-and-latency.md) |
 | `crates/model/src/automation.rs` | [Automation](spec/automation.md) |
@@ -300,6 +301,7 @@ Change this code, and check these documents.
 | `crates/session/src/device_groups.rs` | [Device groups](spec/device-groups.md) |
 | `crates/session/src/devices.rs` | [0002: Every action is a command](decisions/0002-commands.md), [0004: Built-in effects and instruments](decisions/0004-built-in-devices.md), [0006: Plug-in hosting](decisions/0006-plug-in-hosting.md), [0028: ARA hosting](decisions/0028-ara-hosting.md), [Author a data-only SDK device](device-sdk.md), [Device groups](spec/device-groups.md), [The NAM Amp Modeler and NAM Cab Loader](spec/nam-amp-and-cab.md), [Suhina device graph (`.sd`)](spec/sd-device-format.md), [Suhina device graph (`.sd`)](spec/sd-device-format.md), [Key inputs and plug-in buses](spec/sidechain.md) |
 | `crates/session/src/editing.rs` | [Arrangement editing](spec/arrangement-editing.md), [Export](spec/export.md) |
+| `crates/session/src/export.rs` | [Export](spec/export.md) |
 | `crates/session/src/files.rs` | [0003: Time-stretching and stretch modes](decisions/0003-time-stretching.md), [0011: Previewing, and audio added to a playing project](decisions/0011-preview-and-added-audio.md), [Arrangement editing](spec/arrangement-editing.md), [Browser](spec/browser.md), [Stems files](spec/stems-format.md) |
 | `crates/session/src/follow.rs` | [Clip launching](spec/clip-launching.md) |
 | `crates/session/src/launch.rs` | [Clip launching](spec/clip-launching.md) |
