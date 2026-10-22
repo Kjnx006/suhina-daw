@@ -17,7 +17,8 @@
 //!
 //! A plug-in is named `vst3:<bundle or file>` (the first audio class in it) or
 //! `vst3:<bundle or file>#<class id>`, the class id as 32 hex digits; `test:vst3` is a gain
-//! built into the host for tests ([`crate::test_vst3`]).
+//! built into the host for tests ([`crate::test_vst3`]), and `test:vst3-mix` the same gain mixing
+//! its first two channels into the first.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -193,8 +194,8 @@ impl ModuleFile {
         Ok(Self { factory: Some(factory), library: Some(library) })
     }
 
-    fn test() -> Self {
-        Self { factory: crate::test_vst3::factory(), library: None }
+    fn test(mix: bool) -> Self {
+        Self { factory: crate::test_vst3::factory(mix), library: None }
     }
 
     fn factory(&self) -> Result<&ComPtr<IPluginFactory>, String> {
@@ -377,8 +378,9 @@ fn shared_module(key: PathBuf, open: impl FnOnce() -> Result<ModuleFile, String>
 
 /// The module and class a plug-in name points at.
 fn open(spec: &str) -> Result<(Module, Option<TUID>), String> {
-    if spec == "test:vst3" {
-        return Ok((shared_module(PathBuf::from(spec), || Ok(ModuleFile::test()))?, None));
+    if spec == "test:vst3" || spec == "test:vst3-mix" {
+        let mix = spec == "test:vst3-mix";
+        return Ok((shared_module(PathBuf::from(spec), || Ok(ModuleFile::test(mix)))?, None));
     }
     let file = spec.strip_prefix("vst3:").ok_or_else(|| format!("not a VST3 plug-in: {spec:?}"))?;
     let (path, cid) = match file.rsplit_once('#') {
@@ -1455,12 +1457,7 @@ impl crate::audio::Block for Vst3Block {
             }
         }
         if let Some(main) = self.in_buffers.first_mut() {
-            for (index, channel) in main.iter_mut().enumerate() {
-                let source = index.min(link_channels.saturating_sub(1));
-                for (frame, sample) in channel.iter_mut().take(frames).enumerate() {
-                    *sample = input.get(frame * link_channels + source).copied().unwrap_or(0.0);
-                }
-            }
+            crate::audio::feed_main(input, link_channels, frames, main);
         }
         follow_song(&mut self.context, events);
         let mapping = &self.mapping;
@@ -1489,14 +1486,7 @@ impl crate::audio::Block for Vst3Block {
             return;
         }
         if let Some(main) = self.out_buffers.first() {
-            for channel in 0..link_channels {
-                let Some(source) = main.get(channel.min(main.len().saturating_sub(1))) else { break };
-                for (frame, sample) in source.iter().take(frames).enumerate() {
-                    if let Some(out) = output.get_mut(frame * link_channels + channel) {
-                        *out = *sample;
-                    }
-                }
-            }
+            crate::audio::collect_main(main, link_channels, frames, output);
         }
         self.watch_output(output, frames);
     }
