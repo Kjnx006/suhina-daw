@@ -191,7 +191,9 @@ fn confine_autosave(workspace: &Workspace, params: &Value, source: Option<&Path>
 fn confine_collect(workspace: &Workspace, params: &mut Value, source: Option<&Path>) -> Result<(), String> {
     let folder = match params.get("folder") {
         Some(Value::String(folder)) if !folder.trim().is_empty() => workspace.writable_new_folder(folder.trim())?,
-        Some(Value::String(_)) | None | Some(Value::Null) => match source {
+        // The command would read a blank folder as the working folder, which nothing checked.
+        Some(Value::String(_)) => return Err("folder must not be blank".into()),
+        None | Some(Value::Null) => match source {
             Some(source) => {
                 let folder = source.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
                 workspace.writable_folder(folder)?
@@ -368,6 +370,11 @@ mod from_the_tool_lists {
         assert!(ok["folder"].as_str().unwrap().ends_with("fresh"));
         assert!(collect(&workspace, json!({ "folder": "song" }), None).is_ok());
         assert!(collect(&workspace, json!({ "folder": 3 }), None).is_err());
+        // A blank folder is refused, with or without a project file.
+        for blank in ["", "  "] {
+            assert!(collect(&workspace, json!({ "folder": blank }), None).is_err());
+            assert!(collect(&workspace, json!({ "folder": blank }), Some(&source)).is_err());
+        }
         #[cfg(unix)]
         {
             // A Samples folder or a folder that leads outside is refused.
