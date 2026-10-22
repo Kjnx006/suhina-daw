@@ -41,12 +41,16 @@ const UNCHANGED: u64 = u64::MAX;
 pub(crate) struct Shown {
     table: Arc<[Option<ParamID>; CONTROLLERS]>,
     values: Arc<[AtomicU64; CONTROLLERS]>,
+    /// Each controller's slot in `values`: the first controller mapped to the same parameter,
+    /// so two controllers moving one parameter keep one latest value, the last one sent.
+    slot_of: Arc<[usize; CONTROLLERS]>,
 }
 
 impl Shown {
-    /// Notes `value` as the latest of controller `number`. Real-time safe.
+    /// Notes `value` as the latest of controller `number`'s parameter. Real-time safe.
     fn set(&self, number: usize, value: ParamValue) {
-        if let Some(slot) = self.values.get(number) {
+        let at = self.slot_of.get(number).copied().unwrap_or(number);
+        if let Some(slot) = self.values.get(at) {
             slot.store(value.to_bits(), Ordering::Release);
         }
     }
@@ -97,7 +101,11 @@ impl MidiMapping {
     fn with(table: Box<[Option<ParamID>; CONTROLLERS]>) -> Self {
         let table: Arc<[Option<ParamID>; CONTROLLERS]> = Arc::from(table);
         let values = Arc::new(std::array::from_fn(|_| AtomicU64::new(UNCHANGED)));
-        Self { shown: Shown { table: Arc::clone(&table), values }, table }
+        let slot_of = Arc::new(std::array::from_fn(|number| match table.get(number).copied().flatten() {
+            Some(id) => table.iter().position(|other| *other == Some(id)).unwrap_or(number),
+            None => number,
+        }));
+        Self { shown: Shown { table: Arc::clone(&table), values, slot_of }, table }
     }
 
     /// Where the main thread finds the values it sent, to show them in the editor.
@@ -254,4 +262,34 @@ fn note(event: &LinkEvent) -> Option<Event> {
         | EventKind::CycleSeconds { .. } => return None,
     }
     Some(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn event(kind: EventKind) -> LinkEvent {
+        LinkEvent { frame: 0, note: -1, kind }
+    }
+
+    #[test]
+    fn two_controllers_on_one_parameter_show_the_last_value_sent() {
+        // Aftertouch (128) and the volume controller (7) both move parameter 5.
+        let mut table = Box::new([None; CONTROLLERS]);
+        table[7] = Some(5);
+        table[128] = Some(5);
+        table[1] = Some(9);
+        let mapping = MidiMapping::with(table);
+        let shown = mapping.shown();
+        // Pressure first, then CC7: the editor ends at CC7's value, as the processor does.
+        mapping.change(&event(EventKind::Pressure { channel: 0, value: 0.2 }));
+        mapping.change(&event(EventKind::Controller { channel: 0, number: 7, value: 0.9 }));
+        mapping.change(&event(EventKind::Controller { channel: 0, number: 1, value: 0.5 }));
+        let taken: Vec<(ParamID, ParamValue)> = shown.take().collect();
+        assert_eq!(taken.len(), 2, "{taken:?}");
+        assert!(taken.contains(&(5, f64::from(0.9f32))), "{taken:?}");
+        assert!(taken.contains(&(9, 0.5)), "{taken:?}");
+        // Taken once: nothing is left for the next look.
+        assert_eq!(shown.take().count(), 0);
+    }
 }

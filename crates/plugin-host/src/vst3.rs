@@ -24,7 +24,7 @@ use std::collections::HashMap;
 use std::ffi::{OsStr, c_void};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -602,6 +602,9 @@ pub(crate) struct Vst3Plugin {
     /// The values the audio thread gave mapped MIDI controllers, given to the controller too
     /// on the main thread ([`Vst3Plugin::tick`]) so the editor shows them.
     shown: Option<Shown>,
+    /// With a trace, what the audio thread gave the plug-in, written here on the main thread
+    /// ([`Vst3Plugin::tick`]) so the audio thread never formats or writes.
+    midi_watch: Option<Arc<MidiWatch>>,
     /// The plug-in's name, for its editor's window.
     name: String,
     editor: Option<crate::vst3_editor::Editor>,
@@ -681,6 +684,7 @@ impl Vst3Plugin {
             separate_controller,
             pending,
             shown: None,
+            midi_watch: None,
             name,
             editor: None,
             ara: None,
@@ -740,6 +744,8 @@ impl Vst3Plugin {
         let pending = self.pending.clone();
         let mapping = MidiMapping::of(self.controller.as_ref());
         self.shown = Some(mapping.shown());
+        self.midi_watch = suhina_plugins::trace::on().then(|| Arc::new(MidiWatch::default()));
+        let midi_watch = self.midi_watch.clone();
         let (buses, sample_rate, instance) = (self.buses.clone(), self.sample_rate, self.instance);
         // An ARA-bound instance's output is traced with its track's name.
         let bound = self.ara.as_ref().map(|ara| ara.track().to_string());
@@ -748,7 +754,16 @@ impl Vst3Plugin {
             .name("plug-in audio".into())
             .spawn(move || {
                 let _realtime = crate::real_time_thread();
-                serve(instance, audio, served, buses, sample_rate, (pending, mapping), (&stop, &flush), bound)
+                serve(
+                    instance,
+                    audio,
+                    served,
+                    buses,
+                    sample_rate,
+                    (pending, mapping, midi_watch),
+                    (&stop, &flush),
+                    bound,
+                )
             })
             .map_err(|e| e.to_string())?;
         self.audio = Some(thread);
@@ -997,6 +1012,9 @@ impl Vst3Plugin {
                 let _ = unsafe { controller.setParamNormalized(id, value) };
             }
         }
+        if let Some(watch) = &self.midi_watch {
+            watch.write(self.instance);
+        }
     }
 
     /// How far the analysis of a bound ARA document's track has come, when it changed.
@@ -1244,7 +1262,7 @@ fn serve(
     mut served: Served,
     buses: (Vec<usize>, Vec<usize>),
     sample_rate: f64,
-    (pending, mapping): (Pending, MidiMapping),
+    (pending, mapping, midi_watch): (Pending, MidiMapping, Option<Arc<MidiWatch>>),
     (stop, flush): (&AtomicBool, &AtomicBool),
     ara_track: Option<String>,
 ) -> Served {
@@ -1256,9 +1274,7 @@ fn serve(
     if let Some(track) = ara_track.filter(|_| suhina_plugins::trace::on()) {
         block.watch = Some(Watch { instance, track, frames: 0, peak: 0.0 });
     }
-    if suhina_plugins::trace::on() {
-        block.midi_watch = Some(MidiWatch { instance, ..MidiWatch::default() });
-    }
+    block.midi_watch = midi_watch;
     if let Some(mut block) = crate::audio::serve(instance, block, &mut served, stop) {
         if flush.load(Ordering::Acquire) && waiting.lock().is_ok_and(|w| !w.is_empty()) {
             block.flush();
@@ -1291,23 +1307,68 @@ struct Vst3Block {
     context: ProcessContext,
     /// With a trace, an ARA-bound plug-in's output summed up once a second (`docs/debugging.md`).
     watch: Option<Watch>,
-    /// With a trace, the notes, controllers and parameter changes it was given, summed up once
-    /// a second (`docs/debugging.md`).
-    midi_watch: Option<MidiWatch>,
+    /// With a trace, the notes, controllers and parameter changes it was given, counted for
+    /// the main thread to write once a second of audio (`docs/debugging.md`).
+    midi_watch: Option<Arc<MidiWatch>>,
+    /// The frames played since the last second of audio was marked for [`MidiWatch`].
+    midi_frames: u64,
 }
 
 /// What a plug-in was given since the last trace line: events by kind, and the parameter
-/// changes the controllers, pitch bend and pressure became through its MIDI mapping.
-#[derive(Default)]
+/// changes the controllers, pitch bend and pressure became through its MIDI mapping. Counted
+/// on the audio thread without a lock; the main thread writes and clears it when a second of
+/// audio has passed ([`MidiWatch::write`]).
 struct MidiWatch {
-    instance: u32,
-    frames: u64,
-    notes: u32,
-    controllers: u32,
-    bends: u32,
-    pressures: u32,
-    mapped: u32,
-    last: Option<(ParamID, ParamValue)>,
+    notes: AtomicU32,
+    controllers: AtomicU32,
+    bends: AtomicU32,
+    pressures: AtomicU32,
+    mapped: AtomicU32,
+    /// The last mapped change's parameter, [`NO_PARAM`] for none, and its value's bits.
+    last_id: AtomicU64,
+    last_value: AtomicU64,
+    /// A second of audio has passed since the last line.
+    due: AtomicBool,
+}
+
+/// No mapped change since the last line: not any `ParamID`, which is 32 bits.
+const NO_PARAM: u64 = u64::MAX;
+
+impl Default for MidiWatch {
+    fn default() -> Self {
+        Self {
+            notes: AtomicU32::new(0),
+            controllers: AtomicU32::new(0),
+            bends: AtomicU32::new(0),
+            pressures: AtomicU32::new(0),
+            mapped: AtomicU32::new(0),
+            last_id: AtomicU64::new(NO_PARAM),
+            last_value: AtomicU64::new(0),
+            due: AtomicBool::new(false),
+        }
+    }
+}
+
+impl MidiWatch {
+    /// On the main thread: when a second of audio has passed and anything came, writes the
+    /// trace line, and starts the next second's count.
+    fn write(&self, instance: u32) {
+        if !self.due.swap(false, Ordering::AcqRel) {
+            return;
+        }
+        let take = |count: &AtomicU32| count.swap(0, Ordering::AcqRel);
+        let (notes, controllers, bends, pressures, mapped) =
+            (take(&self.notes), take(&self.controllers), take(&self.bends), take(&self.pressures), take(&self.mapped));
+        let last = match self.last_id.swap(NO_PARAM, Ordering::AcqRel) {
+            NO_PARAM => None,
+            id => Some((id as ParamID, f64::from_bits(self.last_value.load(Ordering::Acquire)))),
+        };
+        if notes + controllers + bends + pressures > 0 {
+            suhina_plugins::trace!(
+                "vst3 events {instance}: notes {notes}, controllers {controllers}, bends {bends}, pressure {pressures}; mapped {mapped}, last {last:?}"
+            );
+        }
+    }
 }
 
 /// What an ARA-bound plug-in played since the last trace line: its instance, the frames and the
@@ -1376,6 +1437,7 @@ impl Vst3Block {
             context,
             watch: None,
             midi_watch: None,
+            midi_frames: 0,
         }
     }
 }
@@ -1480,43 +1542,34 @@ impl Vst3Block {
         watch.peak = 0.0;
     }
 
-    /// With a trace, counts what the block gives the plug-in, and once a second of audio writes
-    /// it when anything came: whether a wheel moved on a controller reaches the plug-in, and as
-    /// which parameter. Formats only on the second it writes, and only with a trace.
+    /// With a trace, counts what the block gives the plug-in, and marks each second of audio
+    /// for the main thread to write ([`MidiWatch::write`]): whether a wheel moved on a
+    /// controller reaches the plug-in, and as which parameter. Atomics only: real-time safe.
     fn watch_events(&mut self, events: &[suhina_ipc::Event], frames: usize) {
         use suhina_ipc::EventKind;
         let rate = self.context.sampleRate;
-        let Some(watch) = self.midi_watch.as_mut() else { return };
+        let Some(watch) = self.midi_watch.as_deref() else { return };
+        let count = |counter: &AtomicU32| counter.fetch_add(1, Ordering::Relaxed);
         for event in events {
             match event.kind {
-                EventKind::NoteOn { .. } | EventKind::NoteOff { .. } => watch.notes += 1,
-                EventKind::Controller { .. } => watch.controllers += 1,
-                EventKind::PitchBend { .. } => watch.bends += 1,
-                EventKind::Pressure { .. } => watch.pressures += 1,
+                EventKind::NoteOn { .. } | EventKind::NoteOff { .. } => count(&watch.notes),
+                EventKind::Controller { .. } => count(&watch.controllers),
+                EventKind::PitchBend { .. } => count(&watch.bends),
+                EventKind::Pressure { .. } => count(&watch.pressures),
                 _ => continue,
-            }
+            };
             if let Some((_, id, value)) = self.mapping.controller(event) {
-                watch.mapped += 1;
-                watch.last = Some((id, value));
+                count(&watch.mapped);
+                watch.last_value.store(value.to_bits(), Ordering::Release);
+                watch.last_id.store(u64::from(id), Ordering::Release);
             }
         }
-        watch.frames += frames as u64;
-        if rate <= 0.0 || (watch.frames as f64) < rate {
+        self.midi_frames += frames as u64;
+        if rate <= 0.0 || (self.midi_frames as f64) < rate {
             return;
         }
-        if watch.notes + watch.controllers + watch.bends + watch.pressures > 0 {
-            suhina_plugins::trace!(
-                "vst3 events {}: notes {}, controllers {}, bends {}, pressure {}; mapped {}, last {:?}",
-                watch.instance,
-                watch.notes,
-                watch.controllers,
-                watch.bends,
-                watch.pressures,
-                watch.mapped,
-                watch.last
-            );
-        }
-        *watch = MidiWatch { instance: watch.instance, ..MidiWatch::default() };
+        self.midi_frames = 0;
+        watch.due.store(true, Ordering::Release);
     }
 }
 
