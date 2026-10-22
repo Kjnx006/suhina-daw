@@ -109,7 +109,9 @@ jobs:
                   repo = open.repository || {};
                   const page = repo.pullRequests || {};
                   pulls.push(...(page.nodes || []));
-                  cursor = page.pageInfo && page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
+                  const next = page.pageInfo && page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
+                  if (next && next === cursor) throw new Error("the page cursor did not advance");
+                  cursor = next;
                 } catch (error) {
                   incomplete = true;
                   core.warning(`Could not finish reading open pull requests: ${error.message}`);
