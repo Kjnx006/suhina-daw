@@ -97,6 +97,12 @@ fn this_process_keeps_its_own_files_and_loses_an_earlier_versions() {
 }
 
 #[test]
+fn a_start_time_reads_back_the_same() {
+    let own = std::process::id();
+    assert_eq!(started(own), started(own));
+}
+
+#[test]
 fn a_pid_no_process_has_is_gone() {
     // Above the largest pid the systems this runs on give out.
     let unused = 4_000_001;
