@@ -14,8 +14,8 @@ name: Test build links
 # as one run instead of one per platform: the runners are a shared, limited resource
 # (docs/releasing.md › Test builds).
 #
-# test-build.yml from a fork runs as the fork has it, so a build is linked only when a maintainer
-# started its run: their own push, or the label they added. See docs/releasing.md › Test builds.
+# test-build.yml from a fork runs as the fork has it, so a build is linked only for a maintainer
+# or an App run backed by a verified trusted request for its exact head. See docs/releasing.md.
 #
 # Each linked build is also posted to the Discord testing forum (scripts/discord_test_build.py):
 # the bot (secret DISCORD_BOT_TOKEN, variables DISCORD_GUILD_ID and DISCORD_TESTING_FORUM_ID) finds

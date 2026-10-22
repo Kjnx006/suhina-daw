@@ -152,6 +152,12 @@ class TrustedRequests(unittest.TestCase):
                          {'comment':{'body':'/close'}} ]:
             self.assertFalse(self.run_script(code,**(valid|changes))['result'])
 
+    def test_build_gate_rejects_missing_authorization(self):
+        source = script('test-build.yml', '- name: Authorize the labelled commit')
+        self.assertIsNotNone(self.run_script(source)['error'])
+        proof = {'body':'<!-- trusted-build '+'a'*40+' Trusted 12 -->','created_at':'2026-10-22T10:01:00Z'}
+        self.assertIsNone(self.run_script(source, comment={'body':'/test-build'}, comments=[proof])['error'])
+
 
 if __name__ == '__main__':
     unittest.main()

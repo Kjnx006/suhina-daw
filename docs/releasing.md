@@ -140,7 +140,8 @@ binary to try.
 
 The build is of the pull request's head merged with `main`, as the event saw it, so a push after
 the label is not what gets built. A push by anyone but a maintainer takes the label off, and the
-new commits are built when a maintainer has read them and adds the label again; the comment on such
+new commits are built when a maintainer adds the label again or a trusted contributor posts a new
+`/test-build` after reading the diff; the comment on such
 a build says it is a contributor's. A first-time contributor's run also waits for a maintainer's
 *Approve and run*.
 
