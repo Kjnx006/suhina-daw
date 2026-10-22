@@ -125,6 +125,12 @@ A rejected request fails in **Actions → Trusted requests** without changing th
 the log explains the refusal. Workflow dispatch still requires GitHub write access; trusted
 contributors use the comment commands instead.
 
+Agents post those commands using the user's existing GitHub connection. They need no admin
+access, App key or broader token scopes. The workflow-dispatch posting convention applies to
+callers who already have write access; other contributors may post ordinary issues and PR
+comments as themselves. See CONTRIBUTING's *No elevated access just to post* rule. A connector's
+own restrictions still apply and must not be bypassed to reach the bot.
+
 Merge, hold and claim-for-others policies are unchanged. The ordinary **Open issue** workflow
 also attributes new issues to its authenticated actor.
 

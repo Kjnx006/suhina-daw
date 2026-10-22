@@ -189,6 +189,14 @@ is the bot's comment and not that person's; it is a comment, not a GitHub review
 blocks nothing (`AGENTS.md` › Tasks has the commands). The rules in
 [AI-assisted contributions](#ai-assisted-contributions) apply to what the agent wrote.
 
+**No elevated access just to post.** These bot workflows require existing repository write
+access, not admin access. Without it, an agent uses the user's authenticated account to post
+ordinary issues and PR comments, within the user's authorization, and identifies agent-written
+feedback as AI-assisted. Trusted contributors may use the comment commands below. Agents must
+not request admin/write access, broader token scopes or App secrets to follow the bot posting
+convention. Connector restrictions still apply: if no authorized posting route is available,
+explain the limit and give the user the prepared text.
+
 **Trusted bot actions.** Contributors listed in `TRUSTED_CONTRIBUTORS` may ask `suhina-bot`
 to create issues with `/open-issue`, close/reopen issues with `/close` and `/reopen`, and request
 a PR test build with `/test-build`. Each action records **On behalf of @login**, taken from
