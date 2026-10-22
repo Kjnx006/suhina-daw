@@ -23,6 +23,7 @@
 //!
 //! A plug-in is named `clap:<file>` (the first plug-in in the file) or `clap:<file>#<id>`, or
 //! `test:clap` for the gain plug-in built into the host for tests ([`crate::test_clap`]), or
+//! `test:clap-mix` for the same gain mixing its first two channels into the first, or
 //! `test:clap-delay` for the delay whose latency is a parameter ([`crate::test_clap_delay`]), or
 //! `test:clap-ports` for the one with a rack's port layout ([`crate::test_clap_ports`]).
 
@@ -331,6 +332,11 @@ pub(crate) struct ClapPlugin {
 fn entry(spec: &str) -> Result<(PluginEntry, Option<String>), String> {
     if spec == "test:clap" {
         let entry = PluginEntry::load_from_clack::<crate::test_clap::Entry>(c"suhina-test-clap")
+            .map_err(|e| format!("test plug-in: {e}"))?;
+        return Ok((entry, None));
+    }
+    if spec == "test:clap-mix" {
+        let entry = PluginEntry::load_from_clack::<crate::test_clap::MixEntry>(c"suhina-test-clap-mix")
             .map_err(|e| format!("test plug-in: {e}"))?;
         return Ok((entry, None));
     }
