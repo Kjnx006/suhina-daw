@@ -431,7 +431,7 @@ fn render_the_strip() {
 fn drums_devices(harness: &Harness<'static, App>) -> Vec<String> {
     let p = harness.state().session().unwrap().project();
     let channel = p.tracks.iter().find(|t| t.name == "Drums").and_then(|t| t.channel).unwrap();
-    p.channels.iter().find(|c| c.id == channel).unwrap().devices.iter().map(|d| d.name.clone()).collect()
+    p.channel(channel).unwrap().devices.iter().map(|d| d.name.clone()).collect()
 }
 
 #[test]
@@ -468,7 +468,7 @@ fn devices_picked_in_the_strip_are_copied_pasted_and_deleted_together() {
 fn drums(harness: &Harness<'static, App>) -> Vec<Device> {
     let p = harness.state().session().unwrap().project();
     let channel = p.tracks.iter().find(|t| t.name == "Drums").and_then(|t| t.channel).unwrap();
-    p.channels.iter().find(|c| c.id == channel).unwrap().devices.clone()
+    p.channel(channel).unwrap().devices.clone()
 }
 
 #[test]
@@ -523,7 +523,7 @@ fn ctrl_g_groups_the_picked_devices_and_the_group_panel_edits_its_branches() {
 fn chain_of(harness: &Harness<'static, App>, track: &str) -> Vec<String> {
     let project = harness.state().session().unwrap().project();
     let channel = project.tracks.iter().find(|t| t.name == track).and_then(|t| t.channel).unwrap();
-    project.channels.iter().find(|c| c.id == channel).unwrap().devices.iter().map(|d| d.name.clone()).collect()
+    project.channel(channel).unwrap().devices.iter().map(|d| d.name.clone()).collect()
 }
 
 fn drag_device(harness: &mut Harness<'static, App>, from: Pos2, to: Pos2) {

@@ -1202,7 +1202,7 @@ impl App {
         if let Some(session) = self.session() {
             let project = session.project();
             for track in project.tracks.iter() {
-                let channel = track.channel.and_then(|ch| project.channels.iter().find(|c| c.id == ch));
+                let channel = track.channel.and_then(|ch| project.channel(ch));
                 for device in channel.iter().flat_map(|c| c.devices.iter()) {
                     if let Some(path) = device_file_path(device) {
                         names.insert(path.clone(), session.device_asset_name(&path).unwrap_or_default());
@@ -1219,7 +1219,7 @@ impl App {
         if let Some(session) = self.session() {
             let project = session.project();
             for track in project.tracks.iter() {
-                let channel = track.channel.and_then(|ch| project.channels.iter().find(|c| c.id == ch));
+                let channel = track.channel.and_then(|ch| project.channel(ch));
                 for device in channel.iter().flat_map(|c| c.devices.iter()) {
                     if let Some(path) =
                         device_file_path(device).filter(|path| session.device_asset_note(path).is_some())
@@ -1997,8 +1997,8 @@ impl App {
                 return None;
             }
             let device = session.ara_device(track)?;
-            let channel = project.tracks.iter().find(|t| t.id == track)?.channel?;
-            let channel = project.channels.iter().find(|c| c.id == channel)?;
+            let channel = project.track(track)?.channel?;
+            let channel = project.channel(channel)?;
             channel.devices.get(device).map(|d| d.name.clone())
         })
     }
@@ -2260,7 +2260,7 @@ impl App {
                 .iter()
                 .find(|t| t.id == track)
                 .and_then(|t| t.channel)
-                .and_then(|c| session.project().channels.iter().find(|ch| ch.id == c))
+                .and_then(|c| session.project().channel(c))
                 .map_or(0, |c| c.devices.len());
             (0..chain)
                 .filter_map(|index| Some((index, session.plugin_report(track, index)?)))
@@ -2283,7 +2283,7 @@ impl App {
                 .iter()
                 .find(|t| t.id == track)
                 .and_then(|t| t.channel)
-                .and_then(|c| s.project().channels.iter().find(|ch| ch.id == c))
+                .and_then(|c| s.project().channel(c))
                 .map(|ch| ch.devices.len())
         })
     }
@@ -2811,7 +2811,7 @@ impl App {
                                 .into_iter()
                                 .filter_map(|(track, device)| {
                                     let project = s.project();
-                                    let channel = project.tracks.iter().find(|t| t.id == track)?.channel?;
+                                    let channel = project.track(track)?.channel?;
                                     let name = project
                                         .channels
                                         .iter()
@@ -3259,7 +3259,7 @@ impl App {
                 .iter()
                 .find(|t| t.id == track)
                 .and_then(|t| t.channel)
-                .and_then(|c| project.channels.iter().find(|ch| ch.id == c))
+                .and_then(|c| project.channel(c))
                 .is_some_and(|c| c.devices.iter().any(|d| d.name == name))
         });
         if on_track {
@@ -3303,7 +3303,7 @@ impl App {
                 .iter()
                 .find(|t| t.id == shown_track)
                 .and_then(|t| t.channel)
-                .and_then(|c| session.project().channels.iter().find(|ch| ch.id == c))
+                .and_then(|c| session.project().channel(c))
                 .map_or_else(Vec::new, |c| {
                     suhina_engine::model::walk_devices(&c.devices).into_iter().map(|(path, _)| path).collect()
                 });
@@ -5111,7 +5111,7 @@ impl App {
                 if let Some(track) = focused_track {
                     let name = self
                         .session()
-                        .and_then(|s| s.project().tracks.iter().find(|t| t.id == track))
+                        .and_then(|s| s.project().track(track))
                         .map(|t| t.name.clone())
                         .unwrap_or_default();
                     self.rename = Some((json!({ "rename_track": track.0 }), name, false));
@@ -5194,8 +5194,8 @@ impl App {
                     && let Some((track, index)) = self.selected_device
                     && let Some(enabled) = self.session().and_then(|s| {
                         let p = s.project();
-                        let channel = p.tracks.iter().find(|t| t.id == track).and_then(|t| t.channel)?;
-                        p.channels.iter().find(|c| c.id == channel)?.devices.get(index).map(|d| d.enabled)
+                        let channel = p.track(track).and_then(|t| t.channel)?;
+                        p.channel(channel)?.devices.get(index).map(|d| d.enabled)
                     })
                 {
                     actions.push(Action::new(
@@ -5836,15 +5836,13 @@ impl App {
         };
         let session = self.session();
         let name = |track: TrackId| {
-            session
-                .and_then(|s| s.project().tracks.iter().find(|t| t.id == track))
-                .map_or_else(String::new, |t| t.name.clone())
+            session.and_then(|s| s.project().track(track)).map_or_else(String::new, |t| t.name.clone())
         };
         let device = session
             .and_then(|s| {
                 let p = s.project();
-                let channel = p.tracks.iter().find(|t| t.id == from)?.channel?;
-                p.channels.iter().find(|c| c.id == channel)?.devices.get(index).map(|d| d.name.clone())
+                let channel = p.track(from)?.channel?;
+                p.channel(channel)?.devices.get(index).map(|d| d.name.clone())
             })
             .unwrap_or_default();
         if !released {
@@ -6035,7 +6033,7 @@ impl App {
     /// `copy`: Ctrl is held — a slot-to-slot drag says Copy instead of its move or swap.
     fn carry_label(&self, carry: &Carry, target: DropTarget, copy: bool) -> Option<String> {
         let project = self.session()?.project();
-        let name = |t: TrackId| project.tracks.iter().find(|x| x.id == t).map_or_else(String::new, |x| x.name.clone());
+        let name = |t: TrackId| project.track(t).map_or_else(String::new, |x| x.name.clone());
         let clip = if carry.name.is_empty() { "clip" } else { carry.name.as_str() };
         match target {
             DropTarget::Slot { track, scene } => {
@@ -6087,7 +6085,7 @@ impl App {
     /// A track's name, or its id when the project has none by that id.
     fn track_name(&self, track: TrackId) -> String {
         self.session()
-            .and_then(|s| s.project().tracks.iter().find(|t| t.id == track).map(|t| t.name.clone()))
+            .and_then(|s| s.project().track(track).map(|t| t.name.clone()))
             .unwrap_or_else(|| track.0.to_string())
     }
 
@@ -6173,8 +6171,7 @@ impl App {
 
     fn plan_drop(&self, items: &[BrowserItem], target: DropTarget, separate: bool) -> Option<drop::DropPlan> {
         let project = self.session()?.project();
-        let name =
-            |t: TrackId| project.tracks.iter().find(|x| x.id == t).map_or_else(|| t.0.to_string(), |x| x.name.clone());
+        let name = |t: TrackId| project.track(t).map_or_else(|| t.0.to_string(), |x| x.name.clone());
         if let [sample] = items
             && sample.kind == drop::ItemKind::Sample
             && sample.path().is_some_and(|path| !suhina_media::stems::is_stems_path(&path))
@@ -6182,7 +6179,7 @@ impl App {
                 DropTarget::Track(t) | DropTarget::Lane { track: t, .. } | DropTarget::Slot { track: t, .. } => Some(t),
                 _ => None,
             }
-            && let Some(track) = project.tracks.iter().find(|t| t.id == track_id)
+            && let Some(track) = project.track(track_id)
             && track.content.notes
             && !track.content.audio
             && let Some(channel) = project.channels.iter().find(|c| Some(c.id) == track.channel)
@@ -7298,7 +7295,7 @@ mod tests {
         harness.run();
         let project = harness.state().session().map(|s| s.project().clone()).unwrap();
         let channel = project.tracks.iter().find(|t| t.name == "A Reverb").and_then(|t| t.channel).unwrap();
-        let devices = &project.channels.iter().find(|c| c.id == channel).unwrap().devices;
+        let devices = &project.channel(channel).unwrap().devices;
         assert!(devices.iter().any(|d| d.name == "Delay"), "{devices:?}");
     }
 

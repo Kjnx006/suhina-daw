@@ -1650,7 +1650,7 @@ fn parent_name(h: &Harness<'static, App>, name: &str) -> Option<String> {
     let session = h.state().session()?;
     let p = session.project();
     let parent = p.tracks.iter().find(|t| t.name == name)?.parent?;
-    p.tracks.iter().find(|t| t.id == parent).map(|t| t.name.clone())
+    p.track(parent).map(|t| t.name.clone())
 }
 
 #[test]
@@ -3578,7 +3578,7 @@ fn bass_send(harness: &Harness<'static, App>) -> Option<(f64, bool)> {
     let project = harness.state().session()?.project();
     let bass = project.tracks.iter().find(|t| t.name == "Bass")?.channel?;
     let reverb = project.tracks.iter().find(|t| t.name == "A Reverb")?.channel?;
-    let send = project.channels.iter().find(|c| c.id == bass)?.sends.iter().find(|s| s.target == reverb)?;
+    let send = project.channel(bass)?.sends.iter().find(|s| s.target == reverb)?;
     Some((send.level, send.pre_fader))
 }
 

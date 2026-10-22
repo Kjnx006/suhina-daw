@@ -824,7 +824,7 @@ impl Session {
     /// Tells the plug-ins on `track` that edit clips (ARA, ADR 0028) which of its arrangement
     /// clips is selected, so their editors show it; `None` selects none. Never waits for a host.
     pub fn select_ara_clip(&mut self, track: suhina_model::TrackId, clip: Option<suhina_model::ClipId>) {
-        let Some(channel) = self.project.tracks.iter().find(|t| t.id == track).and_then(|t| t.channel) else {
+        let Some(channel) = self.project.track(track).and_then(|t| t.channel) else {
             return;
         };
         let region = clip.map(|c| format!("clip-{}", c.0));
@@ -1364,7 +1364,7 @@ impl Session {
         // Paths still attached to devices, by kind.
         let mut need: HashMap<String, String> = HashMap::new();
         for track in &self.project.tracks {
-            let Some(channel) = track.channel.and_then(|ch| self.project.channels.iter().find(|c| c.id == ch)) else {
+            let Some(channel) = track.channel.and_then(|ch| self.project.channel(ch)) else {
                 continue;
             };
             for device in &channel.devices {
@@ -1523,7 +1523,7 @@ pub(crate) fn plugin_key_at(project: &Project, track: suhina_model::TrackId, dev
 
 /// The key of the plug-in device at `path` on `track`'s channel, inside device groups too.
 pub(crate) fn plugin_key_at_path(project: &Project, track: suhina_model::TrackId, path: &[usize]) -> Option<u64> {
-    let channel = project.tracks.iter().find(|t| t.id == track)?.channel?;
+    let channel = project.track(track)?.channel?;
     suhina_engine::plugin_devices(project).into_iter().find(|d| d.channel == channel && d.path == path).map(|d| d.key)
 }
 
@@ -1541,7 +1541,7 @@ fn unknown_command(id: &str) -> CommandError {
 fn live_filter(project: &Project, track: suhina_model::TrackId) -> suhina_engine::LiveFilter {
     use suhina_engine::{LiveFilter, LivePorts};
     use suhina_model::MidiPort;
-    let Some(input) = project.tracks.iter().find(|t| t.id == track).map(|t| &t.midi_input) else {
+    let Some(input) = project.track(track).map(|t| &t.midi_input) else {
         return LiveFilter::default();
     };
     let ports = match &input.port {
