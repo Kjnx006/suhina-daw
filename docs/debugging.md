@@ -65,6 +65,8 @@ host process have their own id, so `grep "\[12345\]"` shows one process. To foll
 | `placement sent …` / `placement waits` | app | an embedded editor's placement going to its host |
 | `app gets ara notes for clip-N: count` | app | notes an ARA plug-in found, taken in |
 | `app: ara position S -> beat B` | app | an ARA plug-in's click in its timeline, as the transport takes it |
+| `midi in <port>: [bytes] read as …` | app (`crates/midi`) | every MIDI message from a controller but notes (wheels, knobs, pedals, pressure), and what it was read as (`None`: ignored) |
+| `vst3 midi mapping: …` | host (`vst3_events.rs`) | a VST3 plug-in starting: how many controllers its `IMidiMapping` maps and to which parameter the mod wheel, aftertouch and pitch bend go, or that it has none (then it cannot be sent controllers at all) |
 | `host up, connecting` / `host connected` | host | the host process starting |
 | `host gets <message>` / `host sends <message>` | host (`plugin-host/src/main.rs`) | every control message in and out, cut to 300–400 characters |
 | `host unloads N` / `host unloaded N in …` | host | an instance let go of, and how long it took |

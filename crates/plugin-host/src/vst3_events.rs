@@ -28,16 +28,30 @@ impl MidiMapping {
     /// Asks `controller` for its assignments; a plug-in without a mapping maps nothing.
     pub(crate) fn of(controller: Option<&ComPtr<IEditController>>) -> Self {
         let mut table = Box::new([None; CONTROLLERS]);
-        if let Some(mapping) = controller.and_then(|c| c.cast::<IMidiMapping>()) {
-            for (number, slot) in table.iter_mut().enumerate() {
-                let mut id: ParamID = 0;
-                // SAFETY: a live controller writing one id.
-                let found = unsafe { mapping.getMidiControllerAssignment(0, 0, number as CtrlNumber, &mut id) };
-                if found == kResultOk {
-                    *slot = Some(id);
-                }
+        let Some(mapping) = controller.and_then(|c| c.cast::<IMidiMapping>()) else {
+            // Without it a VST3 plug-in cannot be sent controllers or pitch bend at all.
+            suhina_plugins::trace!(
+                "vst3 midi mapping: {}",
+                if controller.is_some() { "the controller has no IMidiMapping" } else { "no controller" }
+            );
+            return Self(table);
+        };
+        for (number, slot) in table.iter_mut().enumerate() {
+            let mut id: ParamID = 0;
+            // SAFETY: a live controller writing one id.
+            let found = unsafe { mapping.getMidiControllerAssignment(0, 0, number as CtrlNumber, &mut id) };
+            if found == kResultOk {
+                *slot = Some(id);
             }
         }
+        let mapped = table.iter().filter(|s| s.is_some()).count();
+        let at = |number: usize| table.get(number).copied().flatten();
+        suhina_plugins::trace!(
+            "vst3 midi mapping: {mapped} of {CONTROLLERS} mapped; mod wheel {:?}, aftertouch {:?}, pitch bend {:?}",
+            at(1),
+            at(128),
+            at(129)
+        );
         Self(table)
     }
 

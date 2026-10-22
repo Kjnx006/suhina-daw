@@ -132,6 +132,7 @@ impl MidiSystem for Midi {
             .ok_or_else(|| format!("{name} is not there"))?;
         let sink = Arc::clone(&input);
         let id = port_id(name);
+        let port_name = name.to_string();
         // The live clock starts before the first message, so its first stamp is not at 0.
         let _started = live_now();
         let mut clock = StampClock::default();
@@ -140,7 +141,13 @@ impl MidiSystem for Midi {
                 &port,
                 &format!("{CLIENT} input"),
                 move |stamp, message, _| {
-                    if let Some((channel, event)) = parse(message) {
+                    let parsed = parse(message);
+                    // Everything but notes, which a player sends many of: whether a wheel or a
+                    // knob arrives at all, and what it was read as (docs/debugging.md).
+                    if !matches!(parsed, Some((_, LiveEvent::NoteOn { .. } | LiveEvent::NoteOff { .. }))) {
+                        suhina_plugins::trace!("midi in {port_name}: {message:02x?} read as {parsed:?}");
+                    }
+                    if let Some((channel, event)) = parsed {
                         let time = clock.time(stamp, live_now());
                         sink.send_at(LiveSource { port: id, channel }, event, time);
                     }
