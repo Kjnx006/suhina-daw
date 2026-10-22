@@ -12,8 +12,9 @@
 //! live process's files are never taken for a gone one's.
 //!
 //! Earlier versions named their files `suhina-<kind>-<pid>-<n>-<nanos>`, in the temporary folder
-//! (`/dev/shm` on Linux) on every system, and left them after a crash. Those go when no process
-//! has their pid; one that reused it keeps them, until it ends.
+//! (`/dev/shm` on Linux) on every system, and left them after a crash; test builds of a first fix
+//! left `suhina-ipc-<pid>.lock` files. Those go when no process has their pid; one that reused it
+//! keeps them, until it ends.
 //!
 //! The first shared memory a process makes sweeps once; [`sweep_leftovers`] sweeps again.
 //! Nothing here returns an error: a file that cannot be removed is left for the next sweep. Never
@@ -62,6 +63,13 @@ enum Name {
 
 /// Only names this crate makes; anything else in the folder is never touched.
 fn parse(name: &str) -> Option<Name> {
+    // The lock files of test builds of the first fix for #805.
+    if let Some(pid) = name
+        .strip_prefix("suhina-ipc-")
+        .and_then(|rest| rest.strip_suffix(".lock").or_else(|| rest.strip_suffix(".locking")).and_then(number))
+    {
+        return Some(Name::Earlier { pid });
+    }
     let rest = name.strip_prefix("suhina-ipc-").or_else(|| name.strip_prefix("suhina-ara-"))?;
     if let Some((pid, rest)) = rest.split_once('@') {
         let (start, n) = rest.split_once('-')?;

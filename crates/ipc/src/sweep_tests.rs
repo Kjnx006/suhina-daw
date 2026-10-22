@@ -37,6 +37,8 @@ fn only_the_names_this_crate_makes_are_read() {
     assert_eq!(parse("suhina-ara-12@0-3"), Some(Name::Owned { pid: 12, start: 0 }));
     assert_eq!(parse("suhina-ipc-12-0-345"), Some(Name::Earlier { pid: 12 }));
     assert_eq!(parse("suhina-ara-12-3-0"), Some(Name::Earlier { pid: 12 }));
+    assert_eq!(parse("suhina-ipc-12.lock"), Some(Name::Earlier { pid: 12 }));
+    assert_eq!(parse("suhina-ipc-12.locking"), Some(Name::Earlier { pid: 12 }));
     for other in [
         "suhina-ipc-short-12",
         "suhina-ipc-12-0",
@@ -49,7 +51,9 @@ fn only_the_names_this_crate_makes_are_read() {
         "suhina-ipc-12@-0",
         "suhina-ipc-12@3-x",
         "suhina-ipc-@3-0",
-        "suhina-ipc-12.lock",
+        "suhina-ara-12.lock",
+        "suhina-ipc-x.lock",
+        "suhina-ipc-12.lock.old",
         "suhina-ipc-sweep-12-0",
         "suhina-relink-12",
         "notes.txt",
