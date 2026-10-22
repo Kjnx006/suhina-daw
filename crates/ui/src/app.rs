@@ -6,6 +6,8 @@
 //! Every change goes through `Session::execute` (AGENTS.md rule 6); the window only reads the
 //! project and the engine's monitor to draw them.
 
+pub mod closing_dialog;
+pub mod export_dialog;
 pub mod loading_dialog;
 pub mod missing_files;
 pub mod project_dialog;
@@ -19,8 +21,9 @@ use std::path::{Path, PathBuf};
 use egui::{Align2, Id, Key, Pos2, Rect, Sense, Ui, Vec2};
 use serde_json::json;
 use suhina_engine::model::{ClipId, TrackId};
-use suhina_session::{CommandKind, PluginStatus, ProjectId, Projects, Session};
+use suhina_session::{CommandKind, ExportGather, PluginStatus, ProjectId, Projects, Session};
 
+use crate::app::export_dialog::{ExportChoice, ExportDialog, ExportJob};
 use crate::app::project_dialog::{
     AboutChoice, AgentChoice, AraEditsChoice, Choice, DialogState, Lists, RecoveryChoice, SaveChoice, SavePrompt,
     UnsavedChoice,
@@ -60,6 +63,12 @@ const DEFAULT_QUANTIZATION: &str = "1 bar";
 const TABS: f32 = 22.0;
 /// How many recent projects File › Open recent lists.
 const RECENT_IN_MENU: usize = 10;
+/// The projects a closing window is letting go of: their names and threads.
+type LettingGo = Vec<(String, std::thread::JoinHandle<()>)>;
+
+/// How long a closing window waits for its projects' plug-ins to be let go of before it closes
+/// anyway ([`closing_dialog`]).
+const QUIT_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
 /// The detail area's height in a row, by default, and the splitter between it and the view.
 const DETAIL_HEIGHT: f32 = 200.0;
 /// How long the browser takes to slide in or out, with animations on (#708).
@@ -283,6 +292,11 @@ pub struct App {
     quit_confirmed: bool,
     /// Close the window on the next frame.
     quit_now: bool,
+    /// Projects whose state checks are still on control workers before the save prompt.
+    quit_checks: Option<Vec<ProjectId>>,
+    /// The window is closing: the projects being let go of and since when; it closes once they
+    /// are, or after [`QUIT_WAIT`].
+    quitting: Option<(std::time::Instant, LettingGo)>,
     /// The active project's missing audio files, their bar and panel.
     missing: crate::app::missing_files::MissingFiles,
     remember_choice: bool,
@@ -406,6 +420,18 @@ pub struct App {
     pick_request: Option<PickRequest>,
     /// The name and folder asked for when a project is saved under a new name or as a template.
     save_prompt: Option<SavePrompt>,
+    /// The export dialog (File › Export…) while it shows.
+    export_dialog: Option<ExportDialog>,
+    /// The export running on its worker (ADR 0011's previews, the scan's thread): the result
+    /// lands here, and the dialog stays up showing Exporting… until it does.
+    export: Option<std::sync::mpsc::Receiver<Result<serde_json::Value, String>>>,
+    /// The project the running export belongs to, its name as it stood at the launch: the
+    /// feedback names it whatever tab shows after, and once it is closed, too.
+    export_project: Option<(ProjectId, String)>,
+    /// An export whose plug-in states are being gathered over frames ([`App::gather_export`]):
+    /// the project's id, the job, the deadline the one-second read wait keeps, and the
+    /// project's name at the launch, for the feedback that outlives the tab.
+    export_gather: Option<(suhina_session::ProjectId, ExportJob, std::time::Instant, String)>,
     /// Help › About Suhina is open.
     about_open: bool,
     /// The update check, Help › Check for updates… and the start panel's update line.
@@ -435,6 +461,9 @@ pub struct App {
     pending_drop: Option<PendingDrop>,
     /// Where the detail area is this frame and the track it shows, for drops on its devices.
     detail_drop: Option<(Rect, TrackId)>,
+    /// The device whose expanded panel is open over the main area this frame, as the detail
+    /// area found it (ADR 0021 › Amendment: device panels, 6).
+    expanded_panel: Option<(TrackId, detail_view::DeviceBox)>,
     sample_drops: Vec<crate::detail::device_canvas::SampleTarget>,
     /// The piano roll a selected MIDI clip shows in the detail area.
     piano_roll: PianoRollState,
@@ -489,6 +518,8 @@ impl App {
             save_then: None,
             quit_confirmed: false,
             quit_now: false,
+            quit_checks: None,
+            quitting: None,
             missing: crate::app::missing_files::MissingFiles::default(),
             remember_choice: false,
             player_request: None,
@@ -551,6 +582,10 @@ impl App {
             forget_request: None,
             pick_request: None,
             save_prompt: None,
+            export_dialog: None,
+            export: None,
+            export_project: None,
+            export_gather: None,
             about_open: false,
             updates: crate::app::updates::Updates::default(),
             restart: false,
@@ -565,6 +600,7 @@ impl App {
             map_window: MapWindow::default(),
             pending_drop: None,
             detail_drop: None,
+            expanded_panel: None,
             sample_drops: Vec::new(),
             piano_roll: PianoRollState::default(),
             recovery: Vec::new(),
@@ -843,25 +879,69 @@ impl App {
     /// Before the window closes: when projects have unsaved changes, keeps it open and asks about
     /// each, then closes it once every one was answered.
     fn guard_quit(&mut self, ctx: &egui::Context) {
+        if let Some((started, going)) = &self.quitting {
+            // The dialog stays until the window is gone: the frames before that would show the
+            // window without its projects (the start panel).
+            if going.iter().all(|(_, g)| g.is_finished()) || started.elapsed() >= QUIT_WAIT {
+                if !self.quit_confirmed {
+                    let gone = going.iter().all(|(_, g)| g.is_finished());
+                    suhina_plugins::trace!(
+                        "quit: projects {} {:?}",
+                        if gone { "let go in" } else { "not let go, closing anyway after" },
+                        started.elapsed()
+                    );
+                }
+                self.quit_confirmed = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            } else {
+                ctx.request_repaint_after(std::time::Duration::from_millis(50));
+            }
+            return;
+        }
         if self.quit_now {
             self.quit_now = false;
-            self.quit_confirmed = true;
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            self.start_quitting(ctx);
             return;
         }
-        if !ctx.input(|i| i.viewport().close_requested()) || self.quit_confirmed {
+        if self.quit_confirmed {
             return;
         }
+        let requested = ctx.input(|i| i.viewport().close_requested());
+        if !requested && self.quit_checks.is_none() {
+            return;
+        }
+        ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
         if !self.unsaved_prompt_open() {
-            for id in self.projects.ids() {
-                self.check_plugin_edits(id);
+            let mut pending = self.quit_checks.take().unwrap_or_else(|| self.projects.ids());
+            pending.retain(|id| self.projects.get_mut(*id).is_some_and(|s| !s.poll_plugin_edits()));
+            if !pending.is_empty() {
+                self.quit_checks = Some(pending);
+                ctx.request_repaint_after(std::time::Duration::from_millis(10));
+                return;
             }
         }
-        let Some(first) = self.unsaved_projects().first().copied() else { return };
-        ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+        let Some(first) = self.unsaved_projects().first().copied() else {
+            self.start_quitting(ctx);
+            return;
+        };
         if !self.unsaved_prompt_open() {
             self.unsaved_prompt = Some(Leaving { project: first, then: AfterLeaving::Quit(Vec::new()) });
         }
+    }
+
+    /// Every project was answered for: their backups are written, and they are let go of while
+    /// the window says so ([`closing_dialog`]); it closes once they are, or after [`QUIT_WAIT`].
+    fn start_quitting(&mut self, ctx: &egui::Context) {
+        let _finished_in_time = self.finish_backups();
+        // Embedded plug-in editors are windows of their own and would cover the dialog.
+        self.place_editors(&[]);
+        self.quitting = Some((std::time::Instant::now(), self.projects.let_go_all()));
+        ctx.request_repaint();
+    }
+
+    /// Whether the window is closing ([`App::start_quitting`]).
+    pub fn quitting(&self) -> bool {
+        self.quitting.is_some()
     }
 
     /// Saves the project being left, then leaves it; asks for a name first when it has no file
@@ -986,6 +1066,12 @@ impl App {
     /// be written. Returns whether they were.
     pub fn finish_backups(&mut self) -> bool {
         self.projects.finish_backups(std::time::Duration::from_secs(5))
+    }
+
+    /// Quitting, after [`App::finish_backups`]: lets go of the projects still open (the window
+    /// let go of them already when it was closed from itself), and waits up to [`QUIT_WAIT`].
+    pub fn let_go_of_projects(&mut self) -> bool {
+        self.projects.close_all(QUIT_WAIT)
     }
 
     /// Takes in finished backups and writes the timed ones that are due; a failed one is shown in
@@ -1337,7 +1423,14 @@ impl App {
             PickField::IrFolder => Some(self.ir_folder()),
             PickField::TemplatesFolder | PickField::StartTemplate => Some(self.templates_folder()),
             PickField::SaveFolder => self.save_prompt.as_ref().and_then(|p| folder_of(&p.folder)),
-            PickField::BrowserFolder => None,
+            // The export dialog's file, opening in the folder its text names.
+            PickField::ExportFile => self
+                .export_dialog
+                .as_ref()
+                .map(|d| d.path.trim().to_string())
+                .filter(|text| !text.is_empty())
+                .and_then(|text| Path::new(&text).parent().map(Path::to_path_buf)),
+            PickField::BrowserFolder | PickField::McpWriteFolder => None,
         };
         self.pick_request = Some(PickRequest { field, start });
     }
@@ -1354,6 +1447,11 @@ impl App {
         let text = path.display().to_string();
         match field {
             PickField::ProjectsFolder => self.settings.projects_folder = text,
+            PickField::McpWriteFolder => {
+                if !self.settings.mcp_write_folders.contains(&text) {
+                    self.settings.mcp_write_folders.push(text);
+                }
+            }
             PickField::NamModelsFolder => self.settings.nam_models_folder = text,
             PickField::IrFolder => self.settings.irs_folder = text,
             PickField::TemplatesFolder => self.settings.templates_folder = text,
@@ -1361,6 +1459,12 @@ impl App {
             PickField::SaveFolder => {
                 if let Some(prompt) = self.save_prompt.as_mut() {
                     prompt.folder = text;
+                }
+                return;
+            }
+            PickField::ExportFile => {
+                if let Some(dialog) = self.export_dialog.as_mut() {
+                    dialog.accept_pick(&path);
                 }
                 return;
             }
@@ -1459,6 +1563,177 @@ impl App {
         self.save_prompt = Some(SavePrompt { template: true, name, folder, focus: true, collect: false });
     }
 
+    /// File › Export…: the dialog filled with the project's own name and folder, a .wav beside
+    /// its .suhina file.
+    fn open_export(&mut self) {
+        let Some(id) = self.projects.active() else { return };
+        let name = self.projects.name(id).unwrap_or("Untitled").to_string();
+        let folder = self
+            .own_file(id)
+            .and_then(|path| path.parent().map(Path::to_path_buf))
+            .unwrap_or_else(|| self.projects_folder());
+        self.settings_open = false;
+        let mut export = ExportDialog::new(folder.join(format!("{name}.wav")));
+        // A restarted dialog over an export the worker is still running shows it, Exporting…;
+        // over one still gathering its states the Cancel works (its close cancels the gather).
+        export.busy = self.export.is_some() || self.export_gather.is_some();
+        export.gathering = self.export_gather.is_some();
+        self.export_dialog = Some(export);
+    }
+
+    /// Runs `project.export` on a worker, so the window keeps living while it renders and a
+    /// plug-in that answers slowly cannot freeze it. The dialog stays up showing Exporting…;
+    /// [`App::poll_export`] takes the result in.
+    fn start_export(&mut self, job: ExportJob) {
+        let Some(id) = self.projects.active() else { return };
+        // One export at a time: starting another would replace the one running's receiver and
+        // its result would be lost. The guard holds whatever the dialog says — even one the
+        // user closed while its worker was still rendering — and shows the running job again.
+        if self.export.is_some() || self.export_gather.is_some() {
+            self.status = Status::Error("an export is already running".into());
+            if let Some(dialog) = self.export_dialog.as_mut() {
+                dialog.busy = true;
+            }
+            return;
+        }
+        // The running plug-ins' states are gathered over this window's frames, never waited
+        // for on its thread ([`App::gather_export`]): a plug-in that answers slowly keeps the
+        // window drawing, and the export starts once the states are in, at most a second out.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        let Some(session) = self.projects.get_mut(id) else { return };
+        match session.begin_export_gather(deadline) {
+            Err(e) => self.status = Status::Error(e.0),
+            Ok(ExportGather::Ready(data)) => {
+                let name = self.projects.name(id).unwrap_or("the mix").to_string();
+                self.launch_export(id, name, job, *data);
+            }
+            Ok(ExportGather::Pending) => {
+                let name = self.projects.name(id).unwrap_or("the mix").to_string();
+                self.export_gather = Some((id, job, deadline, name.clone()));
+                if let Some(dialog) = self.export_dialog.as_mut() {
+                    dialog.busy = true;
+                    dialog.gathering = true;
+                }
+                self.status = Status::Hint(format!("Exporting {name}…"));
+            }
+        }
+    }
+
+    /// Pumps the gathering export once a frame: when the state reads are in (or their bounded
+    /// wait is out), the export's worker starts with the whole data. The frames carry on the
+    /// whole time; the waits the state read once made on the window's thread are gone.
+    fn gather_export(&mut self) {
+        let Some((id, job, deadline, name)) =
+            self.export_gather.as_ref().map(|(id, job, deadline, name)| (*id, job.clone(), *deadline, name.clone()))
+        else {
+            return;
+        };
+        let Some(session) = self.projects.get_mut(id) else {
+            // The project was closed while the export gathered: the job stops, said with the
+            // name it set out under, and nothing is lost silently. A later export starts over.
+            self.export_gather = None;
+            self.export_dialog = None;
+            self.status = Status::Error(format!("the export of {name} stopped: the project closed"));
+            return;
+        };
+        if let ExportGather::Ready(data) = session.gather_export_data(deadline) {
+            self.export_gather = None;
+            self.launch_export(id, name, job, *data);
+        }
+    }
+
+    /// The export dialog closed: over a gathering export the close cancels the gather — its
+    /// reads stand where they are, the late replies change nothing and start nothing; over a
+    /// rendering one the worker goes on, its result still taken ([`App::poll_export`]).
+    fn cancel_export_gather(&mut self) {
+        let Some((id, _, _, name)) = self.export_gather.take() else { return };
+        if let Some(session) = self.projects.get_mut(id) {
+            session.cancel_export_gather();
+        }
+        self.status = Status::Hint(format!("the export of {name} was cancelled"));
+    }
+
+    /// Spawns the export's worker with already gathered data ([`ExportData`]), so the render,
+    /// the encoding and every plug-in's part run off the window's thread. The dialogs stay up
+    /// showing Exporting…; [`App::poll_export`] takes the result in. The feedback names the
+    /// project the export belongs to, whatever tab shows after.
+    fn launch_export(
+        &mut self,
+        id: suhina_session::ProjectId,
+        name: String,
+        job: ExportJob,
+        data: suhina_session::ExportData,
+    ) {
+        let params = job.params();
+        let (done, receive) = std::sync::mpsc::channel();
+        let spawned = std::thread::Builder::new().name("suhina-export".into()).spawn(move || {
+            let _unheard = done.send(suhina_session::export_from(&data, &params).map_err(|e| e.0));
+        });
+        match spawned {
+            Ok(_) => {
+                self.export = Some(receive);
+                self.export_project = Some((id, name.clone()));
+                if let Some(dialog) = self.export_dialog.as_mut() {
+                    dialog.busy = true;
+                    dialog.gathering = false;
+                }
+                self.status = Status::Hint(format!("Exporting {name}…"));
+            }
+            Err(e) => self.status = Status::Error(format!("could not start the export: {e}")),
+        }
+    }
+
+    /// Picks up a finished export.
+    fn poll_export(&mut self, ctx: &egui::Context) {
+        self.gather_export();
+        if self.export_gather.is_some() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(16));
+        }
+        let Some((_, name)) = self.export_project.as_ref().map(|(id, name)| (*id, name.clone())) else { return };
+        let Some(receive) = self.export.take() else { return };
+        match receive.try_recv() {
+            Ok(result) => {
+                self.status = match result {
+                    Ok(summary) => {
+                        self.export_dialog = None;
+                        let where_to = summary["path"].as_str().unwrap_or("the file").to_string();
+                        let warnings = summary["warnings"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter_map(serde_json::Value::as_str)
+                            .collect::<Vec<_>>()
+                            .join("; ");
+                        if warnings.is_empty() {
+                            Status::Done(format!("Exported {name} to {where_to}"))
+                        } else {
+                            Status::Hint(format!("Exported {name} to {where_to}. Warnings: {warnings}"))
+                        }
+                    }
+                    // A failed export keeps the dialog open with its settings.
+                    Err(e) => {
+                        if let Some(dialog) = self.export_dialog.as_mut() {
+                            dialog.busy = false;
+                            dialog.gathering = false;
+                        }
+                        Status::Error(format!("{name}: {e}"))
+                    }
+                };
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                self.export = Some(receive);
+                ctx.request_repaint_after(std::time::Duration::from_millis(100))
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                if let Some(dialog) = self.export_dialog.as_mut() {
+                    dialog.busy = false;
+                    dialog.gathering = false;
+                }
+                self.status = Status::Error(format!("the export of {name} stopped without a result"));
+            }
+        }
+    }
+
     /// Runs `project.save` on the active project; a template is a copy. Returns whether it was
     /// saved.
     fn save_to(&mut self, path: &Path, template: bool) -> bool {
@@ -1517,6 +1792,24 @@ impl App {
                     self.ask_pick(PickField::SaveFolder);
                 }
                 None => self.save_prompt = Some(prompt),
+            }
+        }
+        if let Some(mut state) = self.export_dialog.take() {
+            match export_dialog::show_export(ui, window, &mut state) {
+                // The dialog stays up while the export runs on its worker (Exporting…), and a
+                // failure keeps it with its settings.
+                Some(ExportChoice::Export(job)) => {
+                    self.export_dialog = Some(state);
+                    self.start_export(job);
+                }
+                Some(ExportChoice::Browse) => {
+                    self.export_dialog = Some(state);
+                    self.ask_pick(PickField::ExportFile);
+                }
+                // The dialog closed: over a gathering export the close cancels the gather;
+                // over a rendering one the worker goes on, its result still taken.
+                Some(ExportChoice::Cancel) => self.cancel_export_gather(),
+                None => self.export_dialog = Some(state),
             }
         }
         let other_dialog = self.unsaved_prompt.is_some() || self.save_prompt.is_some() || self.project_dialog.is_some();
@@ -2173,6 +2466,16 @@ impl App {
     /// Draws the window into `ui` and runs what the user asked for.
     pub fn ui(&mut self, ui: &mut Ui) {
         self.frame_trace.start();
+        self.frame_trace.causes(ui.ctx());
+        // Closing: the dialog alone, so nothing of the window without its projects shows behind.
+        if let Some((_, going)) = &self.quitting {
+            let waiting: Vec<String> =
+                going.iter().filter(|(_, g)| !g.is_finished()).map(|(name, _)| name.clone()).collect();
+            closing_dialog::show(ui, ui.max_rect(), &waiting);
+            self.guard_quit(ui.ctx());
+            self.frame_trace.finish();
+            return;
+        }
         if self.projects.active().is_some() {
             // The start panel reads its lists again when it next appears.
             self.start_lists = false;
@@ -2198,6 +2501,8 @@ impl App {
         self.frame_trace.mark("follow project");
         self.poll_scan(ui.ctx());
         self.frame_trace.mark("plug-in scan");
+        self.poll_export(ui.ctx());
+        self.frame_trace.mark("export");
         self.poll_plugins(ui.ctx());
         self.frame_trace.mark("plug-ins");
         self.tick_backups(ui.ctx());
@@ -2364,6 +2669,7 @@ impl App {
                 self.detail_showing = detail_view::Showing::Clip;
             }
             self.last_clip = shown_clip;
+            self.expanded_panel = None;
             let inner = if grid.is_some() && self.detail_open {
                 self.detail_area(ui, inner, &mut actions)
             } else {
@@ -2422,7 +2728,7 @@ impl App {
             // blocks that can be longer than a frame. An engine that stopped rendering leaves
             // the window at rest.
             let now = ui.input(|i| i.time);
-            if meters != self.view.meters {
+            if !meters.shows_same(&self.view.meters) {
                 self.meters_moved_at = now;
                 ui.ctx().request_repaint();
             } else if meters.moving() && now - self.meters_moved_at < METERS_SETTLE_SECONDS {
@@ -2586,6 +2892,16 @@ impl App {
                                 .filter(|c| c.audio)
                                 .filter_map(|c| Some((c.id, session.clip_notes(c.id)?.clone())))
                                 .collect();
+                            timeline.ara_activity = timeline
+                                .lanes
+                                .iter()
+                                .filter(|l| l.clips.iter().any(|c| c.audio))
+                                .filter_map(|l| Some((l.track, session.ara_activity(l.track)?)))
+                                .collect();
+                            if !timeline.ara_activity.is_empty() {
+                                // Its progress moves without input.
+                                ui.ctx().request_repaint_after(std::time::Duration::from_millis(250));
+                            }
                             timeline.input_channels = session
                                 .player()
                                 .and_then(suhina_session::Player::output_info)
@@ -2656,6 +2972,10 @@ impl App {
                     }
                     (None, _) => self.start_panel(ui),
                 });
+            }
+            // A device's expanded panel, over the views (and the large sample map).
+            if let Some((track, device)) = self.expanded_panel.take() {
+                detail_view::show_expanded(ui, inner, track, &device, &mut actions);
             }
             drop_overlay(ui, view_area);
         });
@@ -2775,6 +3095,8 @@ impl App {
         self.frame_trace.mark("commands");
         self.frame_trace.note(|| format!("{ran} commands"));
         self.guard_quit(ui.ctx());
+        // Reading the plug-ins' states before asking whether to save, when the window is closed.
+        self.frame_trace.mark("quit check");
         // The views drew before the actions and drops of this frame ran: when the project changed,
         // ask for a frame at once, so what the user just did (a moved clip, a file that landed)
         // is on screen without waiting for another click or pointer move.
@@ -2986,6 +3308,8 @@ impl App {
                     suhina_engine::model::walk_devices(&c.devices).into_iter().map(|(path, _)| path).collect()
                 });
             for path in paths {
+                // Its generated panel follows the parameters it lists (#679).
+                session.list_plugin_params_at(shown_track, &path);
                 if let Some(report) = session.plugin_report_at(shown_track, &path) {
                     reports.insert((shown_track, path), report);
                 }
@@ -3193,6 +3517,7 @@ impl App {
         {
             shown.follow_automation(session.project(), monitor.beat());
         }
+        self.expanded_panel = detail_view::expanded_device(ui.ctx(), &shown);
         if let Some(session) = self.session() {
             for channel in session.project().channels.iter().filter(|channel| {
                 session
@@ -3551,6 +3876,7 @@ impl App {
             || self.updates.open
             || self.project_dialog.is_some()
             || self.save_prompt.is_some()
+            || self.export_dialog.is_some()
             || self.unsaved_prompt.is_some()
             || self.recovery_open.is_some()
             || !self.recovery.is_empty()
@@ -4005,6 +4331,8 @@ impl App {
         self.about.templates_default = self.default_folders.1.display().to_string();
         self.about.nam_models_default = self.nam_default_folders.0.display().to_string();
         self.about.irs_default = self.nam_default_folders.1.display().to_string();
+        self.about.mcp_project_folder =
+            self.session().and_then(Session::source).and_then(std::path::Path::parent).map(|p| p.display().to_string());
         self.about.last_backup = match self.session().and_then(Session::last_backup) {
             Some(backup) => {
                 format!("{} to {}", suhina_session::backup::date_time(backup.written), backup.path.display())
@@ -4118,6 +4446,9 @@ impl App {
                     .clicked()
                 {
                     self.save_template();
+                }
+                if ui.add_enabled(has_project, egui::Button::new("Export…")).clicked() {
+                    self.open_export();
                 }
                 ui.separator();
                 if ui.button("Quit").clicked() {
@@ -4304,6 +4635,7 @@ impl App {
     fn launch_keys(&mut self, ui: &Ui, actions: &mut Vec<Action>) {
         let dialog = self.project_dialog.is_some()
             || self.save_prompt.is_some()
+            || self.export_dialog.is_some()
             || self.unsaved_prompt.is_some()
             || !self.agent_asks.is_empty();
         let session_view = self.shown == View::Session && !self.sample_map.view.large;
@@ -4363,6 +4695,7 @@ impl App {
     fn shortcuts(&mut self, ui: &Ui, actions: &mut Vec<Action>) {
         let dialog = self.project_dialog.is_some()
             || self.save_prompt.is_some()
+            || self.export_dialog.is_some()
             || self.unsaved_prompt.is_some()
             || self.about_open
             || !self.agent_asks.is_empty()
@@ -6600,6 +6933,21 @@ fn bar_menu<R>(ui: &mut Ui, title: &str, content: impl FnOnce(&mut Ui) -> R) -> 
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_pending_quit_check_continues_after_the_close_event_is_gone() {
+        let mut app = App::new();
+        app.set_session(Session::new(crate::demo::demo_project()), &[]);
+        let id = app.projects.active().unwrap();
+        app.projects.get_mut(id).unwrap().execute("track.delete", &json!({ "track": 1 })).unwrap();
+        app.quit_checks = Some(vec![id]);
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| app.guard_quit(ui.ctx()));
+        output.textures_delta.clear();
+        assert!(app.quit_checks.is_none());
+        assert!(matches!(app.unsaved_prompt, Some(Leaving { then: AfterLeaving::Quit(_), .. })));
+        assert!(app.quitting.is_none(), "the save prompt must precede releasing the project");
+    }
+
     /// One frame with the main window's content at `main` on the desktop; returns where a drag
     /// is in the main window.
     fn drag_pointer_in(app: &App, main: Rect, pointer: Option<Pos2>) -> Option<Pos2> {
@@ -6980,5 +7328,109 @@ mod tests {
         assert_eq!(ram_text(2 * 1024 * 1024 * 1024 + 555_745_280), "2.5 GB");
         // The measurement itself answers on this machine.
         assert!(memory_stats::memory_stats().is_some_and(|s| s.physical_mem > 0));
+    }
+
+    /// One export runs on its worker at a time: a second is refused with where it is said, and
+    /// a dialog opened over the running one shows it busy again instead of starting over the
+    /// running job's receiver. What runs is the one whose result is taken, and closing the
+    /// dialog while it goes never means the window lost track of it.
+    #[test]
+    fn a_second_export_is_refused_while_one_runs_and_a_reopened_dialog_shows_it() {
+        let mut app = App::new();
+        app.set_session(Session::new(crate::demo::demo_project()), &[]);
+        let dir = std::env::temp_dir().join(format!("suhina-export-one-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("one.wav");
+        let job = ExportJob {
+            path: path.clone(),
+            format: None,
+            sample_rate: 48_000,
+            bit_depth: None,
+            normalize: false,
+            dither: None,
+            overwrite: false,
+        };
+
+        // The first export goes to its worker: its receiver is in the app from now on, whether
+        // the render is at its first or its last block.
+        app.start_export(job.clone());
+        assert!(app.export.is_some(), "the first export's worker started");
+
+        // File › Export… opened again over the running export shows it busy, its own settings.
+        app.open_export();
+        let dialog = app.export_dialog.as_ref().unwrap();
+        assert!(dialog.busy, "the reopened dialog shows the running export");
+        assert!(!dialog.path.is_empty(), "the dialog still names its file: {:?}", dialog.path);
+
+        // A second export is refused, and nothing took the first one's result away.
+        app.start_export(job);
+        assert!(
+            matches!(&app.status, Status::Error(text) if text.contains("already running")),
+            "the second export is refused: {:?}",
+            app.status
+        );
+        assert!(app.export_dialog.as_ref().is_some_and(|d| d.busy), "the dialog shows the running one");
+        assert!(app.export.is_some(), "the first export's result is still coming");
+
+        // The first export lands its result; the dialog closes with it.
+        let ctx = egui::Context::default();
+        for _ in 0..600 {
+            app.poll_export(&ctx);
+            if matches!(app.status, Status::Done(_)) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(matches!(&app.status, Status::Done(text) if text.contains("Exported")), "{:?}", app.status);
+        assert!(app.export.is_none(), "the finished export's receiver went with it");
+        assert!(app.export_dialog.is_none(), "the finished export closed the dialog");
+        assert!(path.exists(), "the first export wrote {}", path.display());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The project closed while the export's states were being gathered: the export stops,
+    /// said with the name it set out under (the feedback keeps naming a closed project), and
+    /// no worker is left running or a dialog stuck on Exporting….
+    #[test]
+    fn a_project_closed_during_the_gather_stops_the_export_with_its_name() {
+        let mut app = App::new();
+        app.set_session(Session::new(crate::demo::demo_project()), &[]);
+        let id = app.projects.active().unwrap();
+        let dir = std::env::temp_dir().join(format!("suhina-export-closed-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let job = ExportJob {
+            path: dir.join("one.wav"),
+            format: None,
+            sample_rate: 48_000,
+            bit_depth: None,
+            normalize: false,
+            dither: None,
+            overwrite: false,
+        };
+
+        // The export is gathering its states over the frames (a read pending): the app holds
+        // the job, and the dialog is up showing Exporting… with the gather's working Cancel.
+        let name = app.projects.name(id).unwrap_or("the mix").to_string();
+        app.export_gather =
+            Some((id, job, std::time::Instant::now() + std::time::Duration::from_secs(1), name.clone()));
+        app.open_export();
+        assert!(app.export_dialog.as_ref().is_some_and(|d| d.busy && d.gathering), "the dialog shows the gather");
+
+        // The project's tab closes (nothing unsaved here, so it closes without asking).
+        app.run(&Action::new("projects.close", json!({ "project": id.0 })));
+        assert!(app.projects.get(id).is_none(), "the project is gone");
+
+        // The next frame's gather finds no project: the export is said with its name, no
+        // worker started, and the dialog closed instead of saying Exporting… for ever.
+        app.gather_export();
+        assert!(app.export_gather.is_none(), "the gather's job went with it");
+        assert!(app.export.is_none(), "no worker started");
+        assert!(app.export_dialog.is_none(), "the stuck dialog closed with the export");
+        assert!(
+            matches!(&app.status, Status::Error(text) if text.contains(&format!("the export of {name} stopped: the project closed"))),
+            "{:?}",
+            app.status
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

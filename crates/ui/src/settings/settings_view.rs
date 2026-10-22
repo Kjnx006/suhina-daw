@@ -64,6 +64,8 @@ pub struct About {
     pub irs_default: String,
     /// The active project's newest backup, as Settings › General shows it: when and where.
     pub last_backup: String,
+    /// The active project's implicit MCP write folder, displayed alongside explicit grants.
+    pub mcp_project_folder: Option<String>,
 }
 
 impl Default for About {
@@ -79,6 +81,7 @@ impl Default for About {
             nam_models_default: String::new(),
             irs_default: String::new(),
             last_backup: Default::default(),
+            mcp_project_folder: None,
         }
     }
 }
@@ -200,6 +203,7 @@ pub enum ThemeRequest {
 pub enum Page {
     #[default]
     General,
+    Export,
     Audio,
     Midi,
     Plugins,
@@ -217,8 +221,9 @@ pub enum Page {
 
 impl Page {
     /// Every page with its name.
-    pub const ALL: [(Page, &'static str); 13] = [
+    pub const ALL: [(Page, &'static str); 14] = [
         (Page::General, "General"),
+        (Page::Export, "Export"),
         (Page::Audio, "Audio"),
         (Page::Midi, "MIDI"),
         (Page::Plugins, "Plug-ins"),
@@ -408,6 +413,39 @@ pub struct Cx<'a> {
 }
 
 impl Cx<'_> {
+    /// The person's explicit MCP write grants; each includes all its subfolders.
+    pub fn mcp_write_folders(&mut self, y: &mut f32) {
+        let row = setting_row(self.page, y);
+        label(self.painter, row, "MCP allowed write folders", "Each allowed folder includes its subfolders");
+        let mut remove = None;
+        for (index, folder) in self.settings.mcp_write_folders.iter().enumerate() {
+            let row = setting_row(self.page, y);
+            let button =
+                Rect::from_min_size(Pos2::new(row.right() - BROWSE_WIDTH, row.top()), Vec2::new(BROWSE_WIDTH, SEGMENT));
+            let text = Rect::from_min_max(row.min, Pos2::new(button.left() - PAD, button.bottom()));
+            widgets::text_in(
+                self.painter,
+                text,
+                Align2::LEFT_CENTER,
+                folder,
+                theme::ui_font(theme::TEXT_SMALL),
+                theme::text_primary(),
+            );
+            if widgets::button(self.ui, self.painter, button, "Remove", &format!("Remove MCP write folder {folder}")) {
+                remove = Some(index);
+            }
+        }
+        if let Some(index) = remove {
+            self.settings.mcp_write_folders.remove(index);
+            self.outcome.changed = true;
+        }
+        let row = setting_row(self.page, y);
+        let button = Rect::from_min_size(row.min, Vec2::new(100.0, SEGMENT));
+        if widgets::button(self.ui, self.painter, button, "Add folder…", "Add MCP write folder") {
+            self.outcome.pick = Some(PickField::McpWriteFolder);
+        }
+    }
+
     /// Shows `note` under the name in place of the entry's own note.
     pub fn note(&mut self, note: impl Into<String>) {
         self.note = Some(note.into());

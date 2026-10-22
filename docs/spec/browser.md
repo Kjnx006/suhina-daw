@@ -3,7 +3,7 @@ description: How the browser behaves: places, categories, search, the tree, prev
 read_when: browser, library, samples, drag from the browser, drop files, preview, audition, search, folders, pinned, recent, colour tags, track.add, clip.addFiles, library commands, preview.play, MIDI file import, .mid, presets, .syx, .sd, new track, empty area
 type: spec
 status: draft
-last_verified: 2026-10-20
+last_verified: 2026-10-21
 covers:
   - crates/library/**
   - crates/media/src/midi.rs
@@ -443,10 +443,10 @@ the user chooses the browser's folders ([`mcp.md`](../mcp.md)).
 - Key detection by analysis.
 - A system file dialog for adding a folder (today a path is typed or a folder dropped).
 
-Stock instrument and effect entries come from the embedded build-time `.sd` bundle.
-Availability does not depend on resource files beside the executable. Imported native
-wrappers preserve their SDK definitions in the project; see
-[stock bundles](stock-device-bundle.md).
+Built-in instrument, effect and MIDI effect entries come from the device registry, under the
+key `device:<id>`; they are not `.sd` files, and nothing beside the executable is needed for
+them. Their panels are loaded by id ([ADR 0021](../decisions/0021-device-graph-files.md) ›
+Amendment: device panels for built-in devices).
 
 A single audio file dropped onto an empty MIDI track (header, slot, arrangement lane or empty device area)
 adds Sampler and loads its source without creating an audio clip. Tracks with devices

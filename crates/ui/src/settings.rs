@@ -357,6 +357,10 @@ pub struct Settings {
     /// Agents may connect over MCP and work on the open projects (ADR 0028); off until the person
     /// turns it on.
     pub agents: bool,
+    /// Attached agents may write within the project folder, including subfolders.
+    pub mcp_project_folder: bool,
+    /// Additional write folders granted by the person, including subfolders.
+    pub mcp_write_folders: Vec<String>,
 }
 
 impl Default for Settings {
@@ -413,6 +417,8 @@ impl Default for Settings {
             backup: suhina_session::backup::Interval::default(),
             backup_clean_up: true,
             agents: false,
+            mcp_project_folder: true,
+            mcp_write_folders: Vec::new(),
         }
     }
 }
@@ -560,6 +566,8 @@ impl Settings {
             piano_toolbar = self.toolbar_size.param(),
         ) + &self.view.to_text()
             + &format!("agents = {}\n", if self.agents { "on" } else { "off" })
+            + &format!("mcp_project_folder = {}\n", if self.mcp_project_folder { "on" } else { "off" })
+            + &format!("mcp_write_folders = {}\n", serde_json::json!(self.mcp_write_folders))
             + &self.updates.to_text()
             + &self.midi_inputs_off.iter().map(|port| format!("midi_input_off = {port}\n")).collect::<String>()
     }
@@ -586,6 +594,13 @@ impl Settings {
                 ("animations", "on" | "off") => settings.animations = value == "on",
                 ("sample_stacking", "on" | "off") => settings.sample_stacking = value == "on",
                 ("agents", "on" | "off") => settings.agents = value == "on",
+                ("mcp_project_folder", "on" | "off") => settings.mcp_project_folder = value == "on",
+                ("mcp_write_folders", folders) => match serde_json::from_str::<Vec<String>>(folders) {
+                    Ok(folders) => settings.mcp_write_folders = folders,
+                    Err(_) => {
+                        warnings.push(format!("settings line {}: expected a list of MCP write folders", number + 1))
+                    }
+                },
                 ("midi_stacking", "on" | "off") => settings.midi_stacking = value == "on",
                 ("track_headers", "left") => settings.track_headers = Side::Left,
                 ("track_headers", "right") => settings.track_headers = Side::Right,
@@ -896,6 +911,8 @@ midi_input_off = Keys
             backup: suhina_session::backup::Interval::Minutes(240),
             backup_clean_up: false,
             agents: true,
+            mcp_project_folder: false,
+            mcp_write_folders: vec![r"C:\Music\Mixes = mine".into(), "/tmp/renders".into()],
         };
         assert_eq!(Settings::from_text(&settings.to_text()), (settings, Vec::new()));
         assert_eq!(Settings::from_text(&Settings::default().to_text()).0, Settings::default());

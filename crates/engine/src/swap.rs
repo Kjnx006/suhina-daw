@@ -114,6 +114,10 @@ pub(crate) struct Updater {
     tempo: Arc<suhina_model::TempoMap>,
     /// The tracks whose chain in the last graph sent takes a live volume.
     live_volumes: Vec<TrackId>,
+    /// The sends (track, return) a knob's turn reaches without a new graph.
+    live_sends: Vec<(TrackId, TrackId)>,
+    /// The tracks whose pan a knob's turn reaches without a new graph.
+    live_pans: Vec<TrackId>,
 }
 
 impl Updater {
@@ -163,6 +167,8 @@ impl Renderer {
             retired_plugins,
             tempo: Arc::clone(&self.graph.tempo),
             live_volumes: self.graph.chains.iter().filter(|c| c.built_volume.is_some()).map(|c| c.track).collect(),
+            live_sends: live_sends(&self.graph.chains),
+            live_pans: self.graph.chains.iter().filter(|c| c.built_pan.is_some()).map(|c| c.track).collect(),
         }
     }
 
@@ -443,10 +449,19 @@ fn park(parked: &mut Vec<(u64, Processor)>, retired: &mut Producer<Processor>, k
     }
 }
 
+/// The sends of `chains` a knob's turn reaches as a message: (track, return).
+fn live_sends(chains: &[crate::chain::Chain]) -> Vec<(TrackId, TrackId)> {
+    chains.iter().flat_map(|c| c.live_sends().map(move |target| (c.track, target))).collect()
+}
+
 fn apply_param(chains: &mut [crate::chain::Chain], change: ParamChange) {
     if let Some(chain) = chains.iter_mut().find(|c| c.track == change.track) {
         if change.device == crate::MIXER_VOLUME {
             chain.set_live_volume(change.value);
+        } else if change.device == crate::MIXER_PAN {
+            chain.set_live_pan(change.value);
+        } else if change.device == crate::MIXER_SEND {
+            chain.set_live_send(TrackId(u32::try_from(change.param).unwrap_or(u32::MAX)), change.value);
         } else {
             chain.set_param(change.device, change.param, change.value);
         }
@@ -470,11 +485,13 @@ impl Controller {
         updater.collect();
         let collect_took = collect_began.elapsed();
         let mut plugins = Plugins { info: updater.plugin_info.clone(), processors: HashMap::new() };
-        let mut graph = Graph::build(project, &updater.audio, &updater.assets, updater.sample_rate, &mut plugins)
+        let mut graph = Graph::build(project, &updater.audio, &updater.assets, updater.sample_rate, &mut plugins, None)
             .map_err(|e| e.to_string())?;
         crate::build_report::add(&format!("old graphs dropped {:.1} ms", collect_took.as_secs_f64() * 1000.0));
         let sent = Arc::clone(&graph.tempo);
         updater.live_volumes = graph.chains.iter().filter(|c| c.built_volume.is_some()).map(|c| c.track).collect();
+        updater.live_sends = live_sends(&graph.chains);
+        updater.live_pans = graph.chains.iter().filter(|c| c.built_pan.is_some()).map(|c| c.track).collect();
         let monitor = &self.monitor;
         let (at, arrangement) = if monitor.running() {
             let ahead =
@@ -529,6 +546,15 @@ impl Controller {
         // A fader move ([`crate::MIXER_VOLUME`]) only reaches a track whose chain can take it.
         if device == crate::MIXER_VOLUME && !updater.live_volumes.contains(&track) {
             return Err("the track's volume takes a new graph".to_string());
+        }
+        // A send's turn only reaches a send the playing graph has.
+        let target = TrackId(u32::try_from(param).unwrap_or(u32::MAX));
+        if device == crate::MIXER_SEND && !updater.live_sends.contains(&(track, target)) {
+            return Err("the send takes a new graph".to_string());
+        }
+        // A pan on a lane, or a group's, takes a new graph.
+        if device == crate::MIXER_PAN && (!updater.live_pans.contains(&track) || !value.is_finite()) {
+            return Err("the track's pan takes a new graph".to_string());
         }
         let seq = updater.param_seq + 1;
         updater

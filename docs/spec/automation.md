@@ -3,7 +3,7 @@ description: Automation envelopes - lanes of points over the arrangement for a t
 read_when: automation, envelope, automation lane, automation lanes view, show automation, automation.movePoints, automation.deletePoints, select points, breakpoint, automation point, curve, automation.addPoint, automation.movePoint, automation.deletePoint, automation.clear, automation.setEnabled, automation.list, device.setAutomation, automation off, re-enable automation, volume automation, pan automation, mute automation, device parameter automation, AutomationLane, AutomationPoint, MixLanes, DeviceLanes, Envelope
 type: spec
 status: current
-last_verified: 2026-10-19
+last_verified: 2026-10-21
 covers:
   - crates/model/src/automation.rs
   - crates/engine/src/automation.rs
@@ -134,7 +134,32 @@ A lane is 40 px tall across the timeline, with a header under the track's:
 
 - **The parameter**, a dropdown of the track's volume, pan and mute and each built-in or `.sd`
   device's parameters, grouped by device; a parameter with points is marked " •". Choosing one
-  shows it in this lane. Plug-in parameters can be set by command but are not yet in this dropdown.
+  shows it in this lane.
+  The parameters with points come first, under a heading "Automated" that does not fold: a
+  shortcut to them while their devices are closed, each named with its device ("Utility: Gain")
+  and in the order of the list below, where it is listed as well. A search narrows it like the
+  rest of the list, and the heading is left out when none of the track's parameters (or none
+  that match) has points. A parameter chosen there opens the menu there again, scrolled to its
+  copy under "Automated" (while it has points); one chosen in its device opens it on its own
+  row. Its device and group are open either way.
+  The track's volume, pan and mute come next, without a heading. Each device follows under a
+  heading with an arrow, the device's name and how many parameters it has (" •" when one of
+  them has points). Inside a device, parameters that name a group (the FM synth's operators,
+  its LFO; an `.sd` parameter's `ui.group`) are gathered under a heading of the same kind with
+  the group's name; a device's parameters without a group come first, then each group in the
+  order its first parameter comes. A row under a heading leaves out the group's name at the
+  start ("Rate 1" under "Op 1"). Devices and groups start closed, except the device and group
+  holding the lane's own parameter, and a track's only device; a click on a heading opens or
+  closes it, and a device closed and opened again keeps its groups as they were. The menu grows
+  as headings open, up to the limits below, without moving.
+  The menu opens under the dropdown, or over it when there is more room above, and stays on that
+  side while it is open. It has a search field in focus and a list that scrolls when it is longer
+  than 60 % of the window or than the room on the menu's side (the FM synth has over a hundred
+  parameters), scrolled to the lane's own
+  parameter (where it was chosen, above). Typing narrows the list to the parameters whose device, group and name contain
+  every word typed between them ("op 3 coarse", or "lfo" for a whole group), under their
+  device's and their group's headings, open; Enter takes the first of them as listed, an automated one first. A parameter another lane
+  of the track shows is greyed out. Clicks in the menu (the search field, a heading, the heading of the lane's own parameter included, which the lane keeps showing) leave it open; choosing a parameter or a click outside closes it, and closing it clears the search. Plug-in parameters can be set by command but are not yet in this dropdown.
 - **On/Off** (lanes with points): whether the lane plays. A manual change to the parameter turns
   it off (the envelope is drawn in `text.hint` and the header says "Off: set by hand"); a click
   turns it on again (`automation.setEnabled`), or off.
@@ -143,12 +168,14 @@ A lane is 40 px tall across the timeline, with a header under the track's:
 The envelope is drawn in the track's colour through every point, holding before the first and
 after the last, along each segment's curve; steps for mute, on/off and choices. Values are placed
 as the parameter's control places them: the volume as the mixer's volume field (0 dB at 85 % of
-the height), a device's parameter as its knob turns. Editing (every edit is one undo step):
+the height), a device's parameter as its knob turns. A lane without points draws a faint line at
+the value set on the mixer or the device. Editing (every edit is one undo step):
 
 | Gesture | Command |
 |---|---|
-| Click the lane | `automation.addPoint` at the beat under the pointer (on the clip grid of the zoom; Alt: free) and the value at its height |
-| Drag a point | `automation.movePoint`, its beat on the grid (Alt: free) and its value following the pointer; points dragged past others keep beat order |
+| Click the lane | `automation.addPoint` at the beat under the pointer (on the clip grid of the zoom; Alt, Option on macOS: free) and the value at its height |
+| Click on or near the line (within 6 points), or a lane's faint line | `automation.addPoint` on the envelope: its value at that beat, so the envelope keeps its shape (a level or straight segment stays exactly so). The segment before the new point keeps its curve; the one after gets the curve that passes through the old segment's middle |
+| Drag a point | `automation.movePoint`, its beat on the grid (Alt, Option on macOS: free) and its value following the pointer; points dragged past others keep beat order |
 | Click a point | selects it; Shift or Ctrl adds it to the selection or takes it out. Selecting a clip ends a selection of points |
 | Drag on the lane away from the line | draws a box that selects the points in it |
 | Drag a selected point | `automation.movePoints`: the whole selection moves by the same beats (none before beat 0) and the same change of value |

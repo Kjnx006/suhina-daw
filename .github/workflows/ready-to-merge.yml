@@ -10,8 +10,9 @@ name: Ready to merge
 #   needs one approval, and a maintainer cannot approve their own pull request), then enables
 #   auto-merge with that commit as the expected head, so a commit pushed in between is never what
 #   gets merged. A contributor's pull request also needs `test-build` (a maintainer read the code
-#   and its build); without it the label comes off with a comment saying why. Dependabot's
-#   Cargo updates do not: the queue's build and tests are what check a new crate.
+#   and its build) or a maintainer's approving review of that same head commit (they read it, and
+#   `ci` tested it); without either the label comes off with a comment saying why. Dependabot's
+#   Cargo updates need neither: the queue's build and tests are what check a new crate.
 # - A push by anyone but a maintainer takes the label off, turns auto-merge off and leaves the
 #   pull request out of the queue: the new commits wait for a maintainer to read them, as the
 #   `test-build` label does (test-build-links.yml, job `unlabel`). main's rule dismisses the
@@ -26,8 +27,8 @@ name: Ready to merge
 # It acts with a short-lived token of the repository's GitHub App (the one docs-generated.yml
 # pushes with), not GITHUB_TOKEN: GitHub starts no workflows for a merge made through
 # GITHUB_TOKEN, and the workflows on main must run after every merge. Setup: the app has
-# Repository permissions › Contents: Read and write and Pull requests: Read and write; its App ID
-# and private key are DOCS_BOT_APP_ID and DOCS_BOT_PRIVATE_KEY in the `docs-bot` environment
+# Repository permissions › Contents: Read and write and Pull requests: Read and write; its public
+# Client ID is the DOCS_BOT_CLIENT_ID variable and its key the DOCS_BOT_PRIVATE_KEY secret in `docs-bot`
 # (pull_request_target runs on main, which the environment allows); Settings › General › Allow
 # auto-merge is on.
 
@@ -82,7 +83,7 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ secrets.DOCS_BOT_APP_ID }}
+          client-id: ${{ vars.DOCS_BOT_CLIENT_ID }}
           private-key: ${{ secrets.DOCS_BOT_PRIVATE_KEY }}
       - name: Approve the commit and turn on merge when ready
         env:
@@ -110,11 +111,32 @@ jobs:
             echo "::notice::$SENDER is not a maintainer; the label was taken off."
             exit 0
           fi
+          # A maintainer's approving review of the head commit counts as reading it, as `test-build`
+          # does. The commit id is compared, so an approval of an older commit never lets a newer
+          # one through. 0: approved; 1: not approved; 2: the reviews could not be read, which must
+          # not read as "not approved" (that would take the label off a pull request that has it).
+          approved_by_maintainer() {
+            local logins login
+            logins=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$NUMBER/reviews" \
+              --jq ".[] | select(.state == \"APPROVED\" and .commit_id == \"$SHA\") | .user.login") || return 2
+            for login in $logins; do
+              is_maintainer "$login" && return 0
+            done
+            return 1
+          }
+          approved=0
           if ! is_maintainer "$AUTHOR" && ! is_dependabot_cargo && [ "$HAS_TEST_BUILD" != "true" ]; then
+            approved_by_maintainer || approved=$?
+          fi
+          if [ "$approved" -eq 2 ]; then
+            echo "::error::The pull request's reviews could not be read; the label stays, add it again to retry."
+            exit 1
+          fi
+          if [ "$approved" -eq 1 ]; then
             gh pr edit "$NUMBER" --repo "$GITHUB_REPOSITORY" --remove-label "$LABEL"
             gh pr comment "$NUMBER" --repo "$GITHUB_REPOSITORY" --body \
-              "\`$LABEL\` needs \`test-build\` on a contributor's pull request: add \`test-build\`, try the build of the commit you read, then add \`$LABEL\` again (CONTRIBUTING.md › Merging many pull requests)."
-            echo "::notice::A contributor's pull request without test-build; the label was taken off."
+              "\`$LABEL\` needs a maintainer's approval of ${SHA:0:7} or \`test-build\` on a contributor's pull request: approve the commit you read (or add \`test-build\` and try its build), then add \`$LABEL\` again (CONTRIBUTING.md › Merging many pull requests)."
+            echo "::notice::A contributor's pull request without an approval of the head or test-build; the label was taken off."
             exit 0
           fi
           gh api --method POST "repos/$GITHUB_REPOSITORY/pulls/$NUMBER/reviews" \
@@ -151,7 +173,7 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ secrets.DOCS_BOT_APP_ID }}
+          client-id: ${{ vars.DOCS_BOT_CLIENT_ID }}
           private-key: ${{ secrets.DOCS_BOT_PRIVATE_KEY }}
       # Taking the label off starts the `stop` job below, which turns auto-merge off.
       - name: Remove the label
@@ -172,7 +194,7 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ secrets.DOCS_BOT_APP_ID }}
+          client-id: ${{ vars.DOCS_BOT_CLIENT_ID }}
           private-key: ${{ secrets.DOCS_BOT_PRIVATE_KEY }}
       - name: Turn off merge when ready, leave the queue, dismiss the approvals
         env:

@@ -2,16 +2,16 @@
 description: Build-time .sd definitions of the native devices shipped with Suhina
 read_when: stock device bundle, build devices, native_device node, bundled sd
 type: spec
-status: current
-last_verified: 2026-10-19
+status: superseded
+last_verified: 2026-10-21
 covers:
-  - crates/device-bundle/**
-  - crates/device-registry/src/stock.rs
-  - crates/device-sdk/src/native.rs
   - apps/suhina/build.rs
 ---
 
 # Stock device bundle
+
+> Superseded: built-in devices no longer ship as generated `.sd` definitions; their panels are built from the
+> devices' own parameters. This page stays until a follow-up change deletes it together with its `INDEX.md` entry.
 
 Every registered device under devices/ has a generated .sd definition containing
 its stable identity, role, parameter contract and SDK panel. Heavy native DSP is

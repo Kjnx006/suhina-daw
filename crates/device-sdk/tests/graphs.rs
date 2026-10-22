@@ -70,10 +70,7 @@ fn midi_transpose_parameter_updates_without_recompiling() {
 fn every_catalog_node_round_trips_resets_and_ignores_host_block_size() {
     let mut kinds = NODE_CATALOG
         .iter()
-        // Native wrappers require the registry factory; bundle tests cover their contracts.
-        .filter(|info| {
-            !matches!(info.kind, "audio_input" | "audio_output" | "midi_input" | "midi_output" | "native_device")
-        })
+        .filter(|info| !matches!(info.kind, "audio_input" | "audio_output" | "midi_input" | "midi_output"))
         .map(|info| serde_json::from_str::<K>(info.example).unwrap())
         .collect::<Vec<_>>();
     kinds.extend([
@@ -222,10 +219,7 @@ fn version_one_gain_example_remains_readable_and_new_nodes_require_version_two()
     let mut out = [1.0, -1.0];
     g.compile().unwrap().process(&mut out);
     assert_eq!(out, [1.0, -1.0]);
-    let text = graph(K::Tanh)
-        .to_sd()
-        .unwrap()
-        .replace(&format!("\"version\": {}", suhina_device_sdk::VERSION), "\"version\": 1");
+    let text = graph(K::Tanh).to_sd().unwrap().replace("\"version\": 4", "\"version\": 1");
     assert!(DeviceGraph::from_sd(&text).is_err());
     assert!(g.compile_at(f64::NAN).is_err());
     assert!(g.compile_at(1e9).is_err());
@@ -770,4 +764,17 @@ fn parameter_controls_share_discrete_semantics() {
         parameter.control = control;
         assert_eq!(parameter.clamp(0.7), if stepped { 1.0 } else { 0.7 });
     }
+}
+
+/// The fixture a pull request's check steps add to a track: version 5 with an expanded panel
+/// whose control turns the Power toggle.
+#[test]
+fn the_expanded_panel_fixture_reads_and_round_trips() {
+    let text = include_str!("fixtures/expanded-panel.sd");
+    let g = DeviceGraph::from_sd(text).unwrap();
+    let expanded = g.expanded.as_ref().unwrap();
+    assert_eq!(expanded.controls[0].name, "Big power switch");
+    assert!(g.ui.is_none());
+    // A Windows checkout may have turned the fixture's line ends into CRLF; `to_sd` writes LF.
+    assert_eq!(g.to_sd().unwrap(), text.replace("\r\n", "\n"));
 }

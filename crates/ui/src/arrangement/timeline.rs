@@ -206,6 +206,9 @@ pub struct Timeline {
     pub waveforms: Arc<Waveforms>,
     /// The notes ARA plug-ins found in audio clips, by clip, set by the app every frame (#720).
     pub ara_notes: std::collections::HashMap<ClipId, suhina_session::ClipNotes>,
+    /// What an ARA plug-in is doing with a track's audio clips, by track: its name, and how far
+    /// its analysis has come (`None` while it loads).
+    pub ara_activity: std::collections::HashMap<TrackId, (String, Option<f32>)>,
     /// The project's tempo map in seconds, to place those notes, which come in seconds.
     pub tempo: Option<suhina_engine::model::TempoMap>,
     /// The parameters each track's automation lanes can show, with their points.
@@ -410,6 +413,7 @@ impl Timeline {
         let mut timeline = Self {
             stack_rows,
             ara_notes: std::collections::HashMap::new(),
+            ara_activity: std::collections::HashMap::new(),
             tempo: Some(project.transport.tempo_map(1.0)),
             midi_ports: Vec::new(),
             input_channels: 0,

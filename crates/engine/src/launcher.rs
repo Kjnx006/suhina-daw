@@ -818,6 +818,22 @@ impl Launcher {
         self.follows_map = false;
     }
 
+    /// The bar the clock is in: its number from 0, the beat it starts at and its time
+    /// signature, the map's or the one a scene set. Never allocates.
+    pub(crate) fn bar(&self) -> (u32, f64, TimeSignature) {
+        let beat = if self.beat.is_finite() { self.beat.max(0.0) } else { 0.0 };
+        if self.follows_map {
+            let here = self.meter.position(beat + 1e-9);
+            return (here.bar, here.bar_start, here.time_signature);
+        }
+        // Signed: a jump back before where the scene set the bars (a locate) is in a bar before
+        // it, which starts before the playhead, not at `bar_origin` after it.
+        let into = beat - self.bar_origin;
+        let bars = if self.bar_beats > 0.0 && into.is_finite() { (into / self.bar_beats + 1e-9).floor() } else { 0.0 };
+        let number = (self.bars_before + bars).clamp(0.0, f64::from(u32::MAX)) as u32;
+        (number, (self.bar_origin + bars * self.bar_beats).max(0.0), self.time_signature)
+    }
+
     /// Whether the clock follows the tempo map (no scene has taken it off).
     pub(crate) fn follows_map(&self) -> bool {
         self.follows_map
@@ -1084,7 +1100,12 @@ fn plan_clip(
                 let stretch = (region.warped && region.stretch != suhina_model::StretchMode::Repitch)
                     .then(|| {
                         let stretched = suhina_model::Clip { length: stretch_beats, ..placed.clone() };
-                        StretchVoice::new(&stretched, region, data.clone(), tempo, sample_rate)
+                        StretchVoice::new(&stretched, region, data.clone(), tempo, sample_rate).map(|mut voice| {
+                            // A launched clip's voice is seeked and rendered on the audio thread:
+                            // its stretcher is built here, with the plan, off that thread.
+                            voice.prepare();
+                            voice
+                        })
                     })
                     .flatten();
                 let region_gain = if region.gain.is_finite() { region.gain.max(0.0) as f32 } else { 0.0 };
@@ -2457,6 +2478,25 @@ mod tests {
     }
 
     #[test]
+    fn a_bar_before_where_a_scene_set_the_bars_starts_before_the_playhead() {
+        // Off the map (a scene's time signature), bars count from beat 8; a locate back to beat
+        // 5 is in the bar from beat 4, not at beat 8 after the playhead.
+        let p = project(Vec::new(), vec![Vec::new()]);
+        let map = Arc::new(p.transport.tempo_map(f64::from(SR)));
+        let mut launcher = super::Launcher::new(&p, &AudioPool::new(), SR, &[], map);
+        launcher.follows_map = false;
+        launcher.bar_beats = 4.0;
+        launcher.bar_origin = 8.0;
+        launcher.bars_before = 2.0;
+        launcher.beat = 5.0;
+        let (bar, start, _) = launcher.bar();
+        assert_eq!((bar, start), (1, 4.0));
+        launcher.beat = 9.0;
+        assert_eq!(launcher.bar().0, 2);
+        assert_eq!(launcher.bar().1, 8.0);
+    }
+
+    #[test]
     fn launched_audio_loops_from_its_start_marker() {
         // A one-second ramp: the sample value tells the file position in seconds.
         let samples = (0..SR).map(|i| i as f32 / SR as f32).collect();
@@ -2495,6 +2535,41 @@ mod tests {
         // After half a beat the loop wraps to its start.
         assert!((left(BEAT / 2 + BEAT / 4) - 0.125).abs() < 0.01, "{}", left(BEAT / 2 + BEAT / 4));
         assert!((left(BEAT + BEAT / 2 + BEAT / 4) - 0.125).abs() < 0.01);
+    }
+
+    #[test]
+    fn a_launched_clip_s_stretcher_is_built_with_the_plan_not_on_the_audio_thread() {
+        // Stretched to 1.5 times its length, so it needs a stretcher. The audio thread seeks and
+        // renders a launched voice itself: it must not build the stretcher there.
+        let samples = (0..SR).map(|i| (i as f32 * 0.05).sin() * 0.5).collect();
+        let mut audio = AudioPool::new();
+        audio.files.insert("sine.wav".into(), Arc::new(AudioData { sample_rate: SR, channels: 1, samples }));
+        let region = AudioRegion {
+            file: "sine.wav".into(),
+            absolute_file: None,
+            sample_rate: Some(SR),
+            channels: Some(1),
+            duration_seconds: Some(1.0),
+            warped: true,
+            stretch: StretchMode::Smooth,
+            warp_markers: vec![WarpMarker { time: 0.0, audio_time: 0.0 }, WarpMarker { time: 3.0, audio_time: 1.0 }],
+            gain: 1.0,
+            transpose: 0.0,
+            stream: None,
+        };
+        let content = ClipContent {
+            id: ContentId(1),
+            name: "sine".into(),
+            length: 3.0,
+            lanes: vec![ContentLane { target: None, data: LaneData::Audio(region) }],
+            extensions: Extensions::default(),
+            scale: None,
+        };
+        let c = clip(1, 3.0, true);
+        let p = project(vec![content], vec![vec![with(c.clone())]]);
+        let Some(plan) = plan_clip(&p, &audio, &[], &c, p.tracks[0].id, BEAT as f64, SR) else { panic!("no plan") };
+        let Some(voice) = plan.audio.first().and_then(|a| a.stretch.as_ref()) else { panic!("no stretch voice") };
+        assert!(voice.is_prepared());
     }
 
     #[test]

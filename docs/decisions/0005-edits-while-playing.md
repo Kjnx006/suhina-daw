@@ -3,7 +3,7 @@ description: How edits reach an engine that is already playing — a new graph b
 read_when: edit while playing, graph swap, renderer rebuild, Controller::update, live edits, volume change not heard, LOOP-26
 type: decision
 status: current
-last_verified: 2026-10-15
+last_verified: 2026-10-20
 covers:
   - crates/engine/src/lib.rs
   - crates/engine/src/swap.rs
@@ -136,8 +136,16 @@ klingt and JUCE's graph do), now:
   build the graph (with stretched arrangement clips, 0.15 s after), and heard once that block
   leaves the output's ring, which runs up to two blocks ahead of the device (`crates/output`). A
   device parameter is rendered from the next block without building anything.
-- Structural edits still rebuild the whole graph; volume, pan and other mix changes could get
-  the same message path as device parameters if building becomes too slow for fader drags.
+- Structural edits still rebuild the whole graph. Building did become too slow for knob drags in
+  a large project (60 to 80 ms a step on the window's thread), so a track's volume, pan and
+  sends take the device parameters' message path (`MIXER_VOLUME`, `MIXER_PAN`, `MIXER_SEND`):
+  the chain remembers the volume and send levels its gains were built at and scales them by the
+  new value's ratio; a track's pan is applied live over its whole range (its gains, and its
+  post-fader sends', are built centred and the pan's equal-power factors multiply them); each is
+  smoothed like a fader (a one-pole low pass at about 25 Hz). Where that cannot do it (a volume
+  or pan on a lane, a group, a send that starts from silence), the message is refused and the
+  edit builds a graph as before. A knob of a track that is not heard (muted, outside a solo)
+  changes nothing played, and keeps the playing graph.
 - Offline rendering stays the oracle (rule 4): tests swap graphs inside an offline render and
   compare against renders of the edited project.
 

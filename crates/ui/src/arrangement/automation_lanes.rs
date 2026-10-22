@@ -18,24 +18,35 @@ use suhina_engine::model::{AutomationLane, AutomationPoint, ClipId, DeviceKind, 
 use crate::kit::theme::{self, PAD};
 use crate::kit::widgets::{self, Action};
 
-/// Height of one automation lane, and of the line under it.
+/// Height of one automation lane.
 pub const LANE: f32 = 40.0;
+/// Height of the line under a lane.
 const LINE: f32 = 1.0;
 /// Space kept above and below the envelope inside a lane.
 const INSET: f32 = 4.0;
-/// A point: the dot drawn, and the square that takes the pointer.
+/// The radius of the dot drawn for a point.
 const POINT: f32 = 3.5;
+/// The square around a point that takes the pointer.
 const POINT_HIT: f32 = 11.0;
-/// How near the envelope a drag has to start to bend a segment.
+/// How near the envelope a drag has to start to bend a segment, and a click has to be to add a
+/// point on it.
 const SEGMENT_HIT: f32 = 6.0;
 /// How much a point of vertical drag bends a segment's curve.
 const CURVE_PER_POINT: f64 = 0.01;
+/// How strongly a lane without points draws its parameter's value.
+const LEVEL_ALPHA: f32 = 0.4;
 /// Most points one segment of an envelope is drawn with.
 const SEGMENT_POINTS: usize = 128;
-/// Header parts: a row's height, the on/off toggle and the small buttons.
+/// Height of one row of a lane's header.
 const HEADER_ROW: f32 = 15.0;
+/// Width of the header's on/off toggle.
 const TOGGLE: f32 = 30.0;
+/// Side of the header's small square buttons (**+**, **×**).
 const SMALL_BUTTON: f32 = 16.0;
+/// Width of the lane header's parameter menu: its rows and search field fill it, no wider.
+const MENU_WIDTH: f32 = 240.0;
+/// Space the parameter menu leaves between itself and the window's edge.
+const MENU_EDGE: f32 = 8.0;
 /// The bottom of the volume's travel, as the mixer's fields show it.
 const VOLUME_FLOOR: f64 = -70.0;
 
@@ -47,6 +58,7 @@ pub struct LaneKey {
 }
 
 impl LaneKey {
+    /// The lane of the track's own mixer parameter `param` (volume, pan or mute).
     pub fn mixer(param: &str) -> Self {
         Self { device: None, param: param.into() }
     }
@@ -109,6 +121,26 @@ impl Scale {
                 db => json!(db),
             },
             _ => json!(self.number(value)),
+        }
+    }
+
+    /// A value as `automation.addPoint` takes it, unrounded, so a point added on the envelope
+    /// keeps the envelope's value exactly.
+    fn exact(&self, value: f64) -> Value {
+        match self {
+            Self::Volume if value <= 0.0 => json!("-inf"),
+            Self::Volume => json!(gain_to_db(value).min(6.0)),
+            _ => json!(value),
+        }
+    }
+
+    /// Whether `automation.addPoint` keeps `value` as it is: a whole-number parameter (an integer,
+    /// a toggle, a choice) rounds it, which would move a point spliced onto a slope.
+    fn keeps(&self, value: f64) -> bool {
+        match self {
+            Self::Device(info) => info.clamp(value) == value,
+            Self::Sd(parameter) => parameter.clamp(value) == value,
+            Self::Volume | Self::Pan | Self::Mute => true,
         }
     }
 
@@ -205,6 +237,8 @@ fn sd_log(parameter: &suhina_device_sdk::Parameter) -> bool {
     ) && parameter.min > 0.0
 }
 
+/// Where `value` sits on a lane of a data-only device's `parameter`, 0 … 1: linear, or
+/// logarithmic for a log control; the middle for a parameter with no range.
 fn sd_position(parameter: &suhina_device_sdk::Parameter, value: f64) -> f64 {
     let (min, max) = (parameter.min, parameter.max);
     let value = parameter.clamp(value);
@@ -217,6 +251,8 @@ fn sd_position(parameter: &suhina_device_sdk::Parameter, value: f64) -> f64 {
     }
 }
 
+/// The value of a data-only device's `parameter` at `position` (0 … 1) on its lane: the
+/// inverse of [`sd_position`], held in the parameter's range.
 fn sd_value(parameter: &suhina_device_sdk::Parameter, position: f64) -> f64 {
     let (min, max) = (parameter.min, parameter.max);
     let position = position.clamp(0.0, 1.0);
@@ -230,10 +266,12 @@ fn sd_value(parameter: &suhina_device_sdk::Parameter, position: f64) -> f64 {
     parameter.clamp(value)
 }
 
+/// `value` rounded to the nearest `1 / per`: `round(x, 1000.0)` keeps three decimals.
 fn round(value: f64, per: f64) -> f64 {
     (value * per).round() / per
 }
 
+/// A linear gain in decibels; minus infinity for silence (a gain of 0 or less).
 fn gain_to_db(gain: f64) -> f64 {
     if gain > 0.0 { 20.0 * gain.log10() } else { f64::NEG_INFINITY }
 }
@@ -272,9 +310,15 @@ pub struct Param {
     pub name: String,
     /// The device's name, for a device's parameter: the chooser groups by it.
     pub device_name: Option<String>,
+    /// The part of its device it belongs to ("Op 1", "LFO"): the chooser gathers a group's
+    /// parameters under its name.
+    pub group: Option<String>,
     pub scale: Scale,
     pub points: Vec<AutomationPoint>,
     pub enabled: bool,
+    /// The parameter's value set on the mixer or the device: where a lane without points draws
+    /// its faint line.
+    pub current: f64,
 }
 
 /// Every track's parameters that lanes can show, built from the project.
@@ -284,6 +328,8 @@ pub struct Params {
 }
 
 impl Params {
+    /// Every track's parameters from `project`: its mixer's volume, pan and mute, then each
+    /// built-in and `.sd` device's parameters in device order, with their lanes' points.
     pub fn build(project: &Project) -> Self {
         let mut tracks = HashMap::new();
         for track in &project.tracks {
@@ -291,22 +337,28 @@ impl Params {
                 continue;
             };
             let lane_of = |lanes: &[AutomationLane], id: &str| lanes.iter().find(|l| l.param == id).cloned();
-            let mut params: Vec<Param> =
-                [(VOLUME, "Volume", Scale::Volume), (PAN, "Pan", Scale::Pan), (MUTE, "Mute", Scale::Mute)]
-                    .into_iter()
-                    .map(|(id, name, scale)| {
-                        let lane = lane_of(&channel.automation, id);
-                        Param {
-                            key: LaneKey::mixer(id),
-                            name: name.into(),
-                            device_name: None,
-                            scale,
-                            enabled: lane.as_ref().is_none_or(|l| l.enabled),
-                            points: lane.map(|l| l.points).unwrap_or_default(),
-                        }
-                    })
-                    .collect();
+            let mut params: Vec<Param> = [
+                (VOLUME, "Volume", Scale::Volume, channel.volume),
+                (PAN, "Pan", Scale::Pan, channel.pan),
+                (MUTE, "Mute", Scale::Mute, if channel.mute { 1.0 } else { 0.0 }),
+            ]
+            .into_iter()
+            .map(|(id, name, scale, current)| {
+                let lane = lane_of(&channel.automation, id);
+                Param {
+                    key: LaneKey::mixer(id),
+                    name: name.into(),
+                    device_name: None,
+                    group: None,
+                    scale,
+                    enabled: lane.as_ref().is_none_or(|l| l.enabled),
+                    points: lane.map(|l| l.points).unwrap_or_default(),
+                    current,
+                }
+            })
+            .collect();
             for (index, device) in channel.devices.iter().enumerate() {
+                let set = |id: &str| device.params.iter().find(|p| p.id == id).map(|p| p.value);
                 match &device.kind {
                     DeviceKind::Builtin(id) => {
                         let Some(info) = suhina_device_registry::info(id) else { continue };
@@ -316,9 +368,11 @@ impl Params {
                                 key: LaneKey { device: Some(index), param: spec.id.into() },
                                 name: spec.name.into(),
                                 device_name: Some(device.name.clone()),
+                                group: (!spec.group.is_empty()).then(|| spec.group.to_string()),
                                 scale: Scale::Device(*spec),
                                 enabled: lane.as_ref().is_none_or(|l| l.enabled),
                                 points: lane.map(|l| l.points).unwrap_or_default(),
+                                current: set(spec.id).unwrap_or(spec.default),
                             });
                         }
                     }
@@ -337,9 +391,11 @@ impl Params {
                                 key: LaneKey { device: Some(index), param: spec.id.clone() },
                                 name: spec.name.clone(),
                                 device_name: Some(device.name.clone()),
+                                group: (!spec.ui.group.is_empty()).then(|| spec.ui.group.clone()),
                                 scale: Scale::Sd(Box::new(spec.clone())),
                                 enabled: lane.as_ref().is_none_or(|l| l.enabled),
                                 points: lane.map(|l| l.points).unwrap_or_default(),
+                                current: set(&spec.id).unwrap_or(spec.default),
                             });
                         }
                     }
@@ -351,10 +407,13 @@ impl Params {
         Self { tracks }
     }
 
+    /// `track`'s parameters, in the order the chooser lists them; none for a track without a
+    /// channel.
     pub fn of(&self, track: TrackId) -> &[Param] {
         self.tracks.get(&track).map_or(&[], Vec::as_slice)
     }
 
+    /// `track`'s parameter that `key` names, if the track still has it.
     fn param(&self, track: TrackId, key: &LaneKey) -> Option<&Param> {
         self.of(track).iter().find(|p| &p.key == key)
     }
@@ -367,6 +426,28 @@ impl Param {
             Some(device) => format!("{device}: {}", self.name),
             None => self.name.clone(),
         }
+    }
+
+    /// The name under its group's heading, without the group's name in front ("Rate 1" for
+    /// "Op 1 Rate 1" in "Op 1"); the whole name when it does not start with the group's or is
+    /// nothing more.
+    pub fn short_name(&self) -> &str {
+        self.group
+            .as_deref()
+            .and_then(|group| self.name.strip_prefix(group))
+            .and_then(|rest| rest.strip_prefix(' '))
+            .filter(|rest| !rest.trim().is_empty())
+            .unwrap_or(&self.name)
+    }
+
+    /// What a search looks in: the device, the group and the name, lower case.
+    fn search_text(&self) -> String {
+        [self.device_name.as_deref(), self.group.as_deref(), Some(self.name.as_str())]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase()
     }
 }
 
@@ -418,6 +499,9 @@ pub struct LanesState {
     point_drag: Option<PointDrag>,
     curve_drag: Option<CurveDrag>,
     box_drag: Option<BoxDrag>,
+    /// The lanes whose parameter was chosen in the parameter menu's "Automated" section: the
+    /// menu opens there again for them, and on the parameter's own row for the rest.
+    from_automated: HashSet<(TrackId, LaneKey)>,
     /// The clip selected in the view last frame: selecting a clip ends a selection of points.
     clip: Option<(TrackId, ClipId)>,
 }
@@ -503,10 +587,13 @@ impl LanesState {
         self.clip = clip;
     }
 
+    /// Whether `point` of `track`'s lane `key` is selected.
     fn is_selected(&self, track: TrackId, key: &LaneKey, point: usize) -> bool {
         self.selection.as_ref().is_some_and(|s| s.track == track && &s.key == key && s.points.contains(&point))
     }
 
+    /// Selects `point` of `track`'s lane `key`: alone, or with `add` (Shift or Ctrl) added to the
+    /// selection on that lane or taken out of it.
     fn select(&mut self, track: TrackId, key: &LaneKey, point: usize, add: bool) {
         match self.selection.as_mut().filter(|s| add && s.track == track && &s.key == key) {
             Some(selection) => match selection.points.iter().position(|p| *p == point) {
@@ -535,10 +622,12 @@ pub struct Geometry {
 }
 
 impl Geometry {
+    /// Where `beat` is on screen, after the timeline's scroll.
     fn x_of(&self, beat: f64) -> f32 {
         self.time.min - self.scroll_x + beat as f32 * self.beat_width
     }
 
+    /// The beat at `x` on screen: the inverse of [`Geometry::x_of`].
     fn beat_of(&self, x: f32) -> f64 {
         f64::from((x - self.time.min + self.scroll_x) / self.beat_width)
     }
@@ -555,14 +644,18 @@ fn plot(lane: Rect) -> Rect {
     lane.shrink2(Vec2::new(0.0, INSET))
 }
 
+/// The height in `plot` of a lane `position` (0 at the bottom, 1 at the top).
 fn y_of(plot: Rect, position: f64) -> f32 {
     plot.bottom() - position as f32 * plot.height()
 }
 
+/// The lane position (0 … 1) at height `y` in `plot`: the inverse of [`y_of`], held in the
+/// lane.
 fn position_of(plot: Rect, y: f32) -> f64 {
     if plot.height() > 0.0 { f64::from((plot.bottom() - y) / plot.height()).clamp(0.0, 1.0) } else { 0.0 }
 }
 
+/// A track colour from the project as egui draws it.
 fn color(rgb: Rgb) -> Color32 {
     Color32::from_rgb(rgb.0, rgb.1, rgb.2)
 }
@@ -718,6 +811,49 @@ fn envelope(points: &[AutomationPoint], scale: &Scale, plot: Rect, geometry: &Ge
     line
 }
 
+/// The points a click on a lane is measured against: the lane's own, or for a lane without
+/// points one at the parameter's value, its faint line.
+fn level_points(param: &Param) -> Vec<AutomationPoint> {
+    if param.points.is_empty() { vec![AutomationPoint::new(0.0, param.current)] } else { param.points.clone() }
+}
+
+/// How far `pos` is from the nearest part of `line`; infinite for no line.
+fn distance_to(line: &[Pos2], pos: Pos2) -> f32 {
+    line.windows(2)
+        .filter_map(|pair| match pair {
+            [a, b] => {
+                let along = *b - *a;
+                let length = along.length_sq();
+                let t = if length > 0.0 { ((pos - *a).dot(along) / length).clamp(0.0, 1.0) } else { 0.0 };
+                Some(pos.distance(*a + along * t))
+            }
+            _ => None,
+        })
+        .fold(f32::INFINITY, f32::min)
+}
+
+/// A point at `beat` that leaves the envelope of `points` as it is: the envelope's value there,
+/// and the curve of the segment it starts. The segment before it keeps its curve, which is exact
+/// (a power curve cut short is the same power curve); the one after it gets the curve through
+/// the old segment's middle, exact for a straight segment. `None` for no points.
+fn splice(points: &[AutomationPoint], beat: f64, stepped: bool) -> Option<(f64, f64)> {
+    use suhina_engine::model::automation::{shape, value_at};
+    let value = value_at(points, beat, stepped)?;
+    let index = points.partition_point(|p| p.beat <= beat).checked_sub(1);
+    let segment = index.and_then(|i| Some((points.get(i)?, points.get(i + 1)?)));
+    let Some((a, b)) = segment.filter(|(a, b)| !stepped && a.curve != 0.0 && b.beat > a.beat) else {
+        return Some((value, 0.0));
+    };
+    let t = (beat - a.beat) / (b.beat - a.beat);
+    let start = shape(t, a.curve);
+    let middle = (shape(t + (1.0 - t) / 2.0, a.curve) - start) / (1.0 - start);
+    // `shape(0.5, c)` is 0.5 to the power of 4^-c.
+    let curve = -(middle.ln() / 0.5f64.ln()).ln() / 4f64.ln();
+    let curve =
+        if middle > 0.0 && middle < 1.0 && curve.is_finite() { round(curve.clamp(-1.0, 1.0), 1000.0) } else { 0.0 };
+    Some((value, curve))
+}
+
 /// The segment of `points` under `pos`, near enough to its line to bend it: the index of its
 /// first point. Steps have no curve.
 fn segment_at(points: &[AutomationPoint], scale: &Scale, plot: Rect, geometry: &Geometry, pos: Pos2) -> Option<usize> {
@@ -734,6 +870,8 @@ fn segment_at(points: &[AutomationPoint], scale: &Scale, plot: Rect, geometry: &
     ((y_of(plot, scale.position(value)) - pos.y).abs() <= SEGMENT_HIT).then_some(index)
 }
 
+/// Draws one lane of `param` in `time` (its envelope, points and drag in progress) and turns
+/// clicks and drags on it into `automation.*` actions.
 #[allow(clippy::too_many_arguments)]
 fn lane(
     ui: &mut Ui,
@@ -753,8 +891,9 @@ fn lane(
     let id = Id::new(("automation-lane", track.0, key.device, key.param.as_str()));
     let label = param.label();
 
-    // The lane itself: a click adds a point, a drag near the line bends its segment, any other
-    // drag draws a box that selects the points in it.
+    // The lane itself: a click adds a point (on the envelope when near it, so the envelope keeps
+    // its shape; where the pointer is otherwise), a drag near the line bends its segment, any
+    // other drag draws a box that selects the points in it.
     let body = ui.interact(visible, id, Sense::click_and_drag());
     body.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::Other, true, format!("{label} automation on {}", lanes.name))
@@ -765,7 +904,19 @@ fn lane(
         let mut params = key.params(track);
         let beat = geometry.snap(geometry.beat_of(pos.x), free);
         params["beat"] = json!(beat);
-        params["value"] = param.scale.command(param.scale.value_at(position_of(plot, pos.y)));
+        let level = level_points(param);
+        let near = distance_to(&envelope(&level, &param.scale, plot, geometry), pos) <= SEGMENT_HIT;
+        // On a whole-number lane a value between two numbers cannot be kept: the point goes where
+        // the pointer is, as off the line.
+        match splice(&level, beat, param.scale.stepped()).filter(|(value, _)| near && param.scale.keeps(*value)) {
+            Some((value, curve)) => {
+                params["value"] = param.scale.exact(value);
+                if curve != 0.0 {
+                    params["curve"] = json!(curve);
+                }
+            }
+            None => params["value"] = param.scale.command(param.scale.value_at(position_of(plot, pos.y))),
+        }
         actions.push(Action::new("automation.addPoint", params));
         state.selection = None;
     }
@@ -832,6 +983,10 @@ fn lane(
     let line = envelope(&points, &param.scale, plot, geometry);
     if line.len() > 1 {
         lane_painter.add(Shape::line(line, Stroke::new(1.5, ink)));
+    } else if points.is_empty() {
+        // No automation yet: a faint line at the parameter's value, where a click adds a point.
+        let y = y_of(plot, param.scale.position(param.current));
+        lane_painter.hline(plot.x_range(), y, Stroke::new(1.0, ink.gamma_multiply(LEVEL_ALPHA)));
     }
     if let Some(drag) = state.box_drag.as_ref().filter(|d| d.track == track && &d.key == key) {
         let area = Rect::from_two_pos(drag.from, drag.to);
@@ -970,6 +1125,273 @@ fn drop_points(drag: &PointDrag, param: &Param, geometry: &Geometry, free: bool)
     Some(Action::new("automation.movePoint", params))
 }
 
+/// The words of a search, lower case: a parameter matches when its device, group and name have
+/// all of them between them.
+fn query_words(query: &str) -> Vec<String> {
+    query.split_whitespace().map(str::to_lowercase).collect()
+}
+
+/// Whether `param` matches a search (`words` from [`query_words`]; none matches everything).
+fn matches_query(param: &Param, words: &[String]) -> bool {
+    let text = param.search_text();
+    words.iter().all(|w| text.contains(w.as_str()))
+}
+
+/// One device's part of the parameter menu, or the track mixer's: its parameters without a
+/// group, then each group in the order its first parameter comes.
+#[derive(Debug)]
+struct Section<'a> {
+    device: Option<usize>,
+    name: Option<&'a str>,
+    loose: Vec<&'a Param>,
+    groups: Vec<(&'a str, Vec<&'a Param>)>,
+}
+
+impl<'a> Section<'a> {
+    /// Its parameters in the order the menu lists them.
+    fn params(&self) -> impl Iterator<Item = &'a Param> + '_ {
+        self.loose.iter().copied().chain(self.groups.iter().flat_map(|(_, params)| params.iter().copied()))
+    }
+}
+
+/// The parameter menu's sections: the `choices` that match a search (`words`), by device in the
+/// order they come, each with its groups.
+fn sections<'a>(choices: &'a [Param], words: &[String]) -> Vec<Section<'a>> {
+    let mut sections: Vec<Section<'a>> = Vec::new();
+    for choice in choices.iter().filter(|c| matches_query(c, words)) {
+        if sections.last().is_none_or(|s| s.device != choice.key.device) {
+            sections.push(Section {
+                device: choice.key.device,
+                name: choice.device_name.as_deref(),
+                loose: Vec::new(),
+                groups: Vec::new(),
+            });
+        }
+        let Some(section) = sections.last_mut() else { continue };
+        match choice.group.as_deref() {
+            None => section.loose.push(choice),
+            Some(group) => match section.groups.iter_mut().find(|(g, _)| *g == group) {
+                Some((_, params)) => params.push(choice),
+                None => section.groups.push((group, vec![choice])),
+            },
+        }
+    }
+    sections
+}
+
+/// What the parameter menu keeps while it is open: the search, whether it has been shown yet,
+/// the devices opened (by index) and the groups opened (by device and name). A device keeps its
+/// groups open while it is closed.
+#[derive(Debug, Clone, Default)]
+struct MenuState {
+    query: String,
+    shown: bool,
+    devices: HashSet<usize>,
+    open: HashSet<(Option<usize>, String)>,
+}
+
+/// A device's or a group's heading in the parameter menu: an arrow, its name, and how many
+/// parameters it has (" •" when one of them has points). A click opens or closes it
+/// (`toggles`), except while a search shows every heading open.
+fn heading_row(ui: &mut Ui, name: &str, count: usize, marked: bool, open: bool, toggles: bool) -> egui::Response {
+    let height = ui.spacing().interact_size.y;
+    let sense = if toggles { Sense::click() } else { Sense::hover() };
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), sense);
+    if ui.is_rect_visible(rect) {
+        let painter = ui.painter();
+        if toggles && response.hovered() {
+            painter.rect_filled(rect, 2.0, ui.visuals().widgets.hovered.weak_bg_fill);
+        }
+        widgets::chevron(painter, Pos2::new(rect.left() + 6.0, rect.center().y), open, theme::text_hint());
+        let font = egui::TextStyle::Button.resolve(ui.style());
+        let text = Pos2::new(rect.left() + 14.0, rect.center().y);
+        painter.text(text, Align2::LEFT_CENTER, name, font.clone(), ui.visuals().text_color());
+        let count = format!("{count}{}", if marked { " •" } else { "" });
+        let end = Pos2::new(rect.right() - 4.0, rect.center().y);
+        painter.text(end, Align2::RIGHT_CENTER, count, font, theme::text_hint());
+    }
+    response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::CollapsingHeader, true, open, name));
+    response
+}
+
+/// A parameter's row in the menu: its name (short under a group's heading) and " •" when it has
+/// points; selected for the lane's own, greyed out when it is not `free`. Its accessible label is
+/// the whole "Device: Name". Answers whether it was clicked.
+fn parameter_row(ui: &mut Ui, choice: &Param, current: &LaneKey, free: bool, scroll: bool) -> bool {
+    let mark = if choice.points.is_empty() { "" } else { " •" };
+    let selected = choice.key == *current;
+    let button = egui::Button::selectable(selected, format!("{}{mark}", choice.short_name()));
+    let response = ui.add_enabled(free, button);
+    let label = choice.label();
+    response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, free, selected, &label));
+    if scroll && selected {
+        response.scroll_to_me(Some(egui::Align::Center));
+    }
+    response.clicked()
+}
+
+/// A parameter's copy in the menu's "Automated" section: its whole name ("Utility: Gain"), as it
+/// stands outside its device's heading, selected for the lane's own (scrolled to on `scroll`)
+/// and greyed out when it is not `free`. Its accessible label ends in " (automated)", apart from
+/// its row in its device. Answers whether it was clicked.
+fn automated_row(ui: &mut Ui, choice: &Param, current: &LaneKey, free: bool, scroll: bool) -> bool {
+    let selected = choice.key == *current;
+    let label = choice.label();
+    let response = ui.add_enabled(free, egui::Button::selectable(selected, &label));
+    let label = format!("{label} (automated)");
+    response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, free, selected, &label));
+    if scroll && selected {
+        response.scroll_to_me(Some(egui::Align::Center));
+    }
+    response.clicked()
+}
+
+/// The lane header's parameter menu: a search field and, under it, the track's parameters in a
+/// list that scrolls when it is longer than the window (the FM synth has over a hundred): those
+/// with points first under "Automated", a shortcut that a search narrows like the rest and that
+/// does not fold, then the mixer's, then each device under a heading and, inside a device, by
+/// group. Devices and
+/// groups start closed except those holding the lane's own parameter (`current`), which is
+/// scrolled into view, and a track's only device; a search shows the devices and groups with
+/// matches open, and Enter takes the first match. A parameter another lane shows (`shown`) is
+/// greyed out. The menu fits in `room`, the height on its side of the dropdown, so it grows as
+/// headings open without moving. The lane's own parameter is scrolled to where it was chosen:
+/// its copy under "Automated" when it was chosen there (`from_automated`) and still has points,
+/// its own row otherwise; its device and group open either way. Answers the one chosen, and
+/// whether it was chosen under "Automated".
+fn parameter_menu(
+    ui: &mut Ui,
+    filter: Id,
+    choices: &[Param],
+    current: &LaneKey,
+    shown: &[LaneKey],
+    from_automated: bool,
+    room: f32,
+) -> Option<(LaneKey, bool)> {
+    ui.set_width(MENU_WIDTH);
+    let mut menu: MenuState = ui.data(|d| d.get_temp(filter)).unwrap_or_default();
+    let first_frame = !menu.shown;
+    if first_frame {
+        if let Some(device) = current.device {
+            menu.devices.insert(device);
+        }
+        if let Some(group) = choices.iter().find(|c| c.key == *current).and_then(|c| c.group.clone()) {
+            menu.open.insert((current.device, group));
+        }
+        let devices: HashSet<usize> = choices.iter().filter_map(|c| c.key.device).collect();
+        if let [only] = devices.into_iter().collect::<Vec<_>>()[..] {
+            menu.devices.insert(only);
+        }
+    }
+    let field_id = filter.with("field");
+    // Enter ends the field's focus, so whether it had it is read before the field is shown.
+    let had_focus = ui.memory(|m| m.has_focus(field_id));
+    let field = ui.add(
+        egui::TextEdit::singleline(&mut menu.query)
+            .id(field_id)
+            .hint_text("Search parameters")
+            .font(theme::ui_font(theme::TEXT_SMALL))
+            .desired_width(f32::INFINITY),
+    );
+    field.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, "Search parameters"));
+    if first_frame {
+        field.request_focus();
+    }
+    let enter = had_focus && ui.input(|i| i.key_pressed(egui::Key::Enter));
+
+    let words = query_words(&menu.query);
+    let searching = !words.is_empty();
+    let sections = sections(choices, &words);
+    let automated: Vec<&Param> = sections.iter().flat_map(Section::params).filter(|c| !c.points.is_empty()).collect();
+    let free = |choice: &Param| !shown.contains(&choice.key) || choice.key == *current;
+    // Where the menu opens: on the copy under "Automated" when the lane's parameter was chosen
+    // there, on its own row otherwise.
+    let to_top = from_automated && automated.iter().any(|c| c.key == *current);
+    let mut chosen = None;
+    // What is left of the room under the search field and the menu's margins.
+    let used = ui.min_rect().height() + ui.spacing().menu_margin.sum().y + ui.spacing().item_spacing.y + MENU_EDGE;
+    let height = (ui.ctx().content_rect().height() * 0.6).min(room - used).max(80.0);
+    // The list's room is its own most, not what the menu had the frame before: after a heading
+    // opens, the menu grows to fit it rather than the list scrolling in the old height.
+    ui.allocate_ui(Vec2::new(ui.available_width(), height), |ui| {
+        egui::ScrollArea::vertical().max_height(height).auto_shrink([true, true]).show(ui, |ui| {
+            if sections.is_empty() {
+                ui.label(egui::RichText::new("No parameter matches").color(theme::text_hint()));
+            }
+            // Every parameter with points, again at the top: their devices may be closed.
+            if !automated.is_empty() {
+                ui.separator();
+                ui.label(egui::RichText::new("Automated").color(theme::text_hint()));
+                for choice in &automated {
+                    if automated_row(ui, choice, current, free(choice), first_frame && to_top) {
+                        chosen = Some((choice.key.clone(), true));
+                    }
+                }
+            }
+            for section in &sections {
+                ui.separator();
+                // The mixer's few parameters have no heading.
+                let Some(device) = section.device else {
+                    for choice in &section.loose {
+                        if parameter_row(ui, choice, current, free(choice), first_frame && !to_top) {
+                            chosen = Some((choice.key.clone(), false));
+                        }
+                    }
+                    continue;
+                };
+                let name = section.name.unwrap_or("Device");
+                let marked = section.params().any(|p| !p.points.is_empty());
+                let open = searching || menu.devices.contains(&device);
+                if heading_row(ui, name, section.params().count(), marked, open, !searching).clicked()
+                    && !menu.devices.remove(&device)
+                {
+                    menu.devices.insert(device);
+                }
+                if !(searching || menu.devices.contains(&device)) {
+                    continue;
+                }
+                ui.indent(("device", device), |ui| {
+                    for choice in &section.loose {
+                        if parameter_row(ui, choice, current, free(choice), first_frame && !to_top) {
+                            chosen = Some((choice.key.clone(), false));
+                        }
+                    }
+                    for (group, params) in &section.groups {
+                        let key = (section.device, (*group).to_string());
+                        let marked = params.iter().any(|p| !p.points.is_empty());
+                        let open = searching || menu.open.contains(&key);
+                        if heading_row(ui, group, params.len(), marked, open, !searching).clicked()
+                            && !menu.open.remove(&key)
+                        {
+                            menu.open.insert(key.clone());
+                        }
+                        if searching || menu.open.contains(&key) {
+                            ui.indent(&key, |ui| {
+                                for choice in params {
+                                    if parameter_row(ui, choice, current, free(choice), first_frame && !to_top) {
+                                        chosen = Some((choice.key.clone(), false));
+                                    }
+                                }
+                            });
+                        }
+                    }
+                });
+            }
+        });
+    });
+    if chosen.is_none() && enter {
+        let top = automated.iter().find(|c| free(c)).map(|c| (c.key.clone(), true));
+        let rest = || sections.iter().flat_map(Section::params).find(|c| free(c)).map(|c| (c.key.clone(), false));
+        chosen = top.or_else(rest);
+    }
+    menu.shown = true;
+    ui.data_mut(|d| d.insert_temp(filter, menu));
+    if chosen.is_some() {
+        ui.close();
+    }
+    chosen
+}
+
 /// A lane's header, under the track's: which parameter (a menu to choose another), whether its
 /// automation plays (a manual change turns it off; the toggle turns it on again), a button that
 /// adds a lane and one that hides this one.
@@ -1015,31 +1437,64 @@ fn lane_header(
     );
     widgets::dropdown(ui, &painter, chooser, &response, &label);
     let shown = state.shown(track, params);
-    egui::Popup::menu(&response).show(|ui| {
-        ui.set_min_width(200.0);
-        let mut device = None;
-        for choice in params.of(track) {
-            if choice.device_name != device {
-                device.clone_from(&choice.device_name);
-                ui.separator();
-                if let Some(name) = &device {
-                    ui.label(egui::RichText::new(name).color(theme::text_hint()));
-                }
+    let filter = id.with("filter");
+    // Under the dropdown, or over it when there is more room there; on that side only, so the
+    // menu never jumps to another as it grows.
+    let window = ui.ctx().content_rect();
+    let below = window.bottom() - response.rect.bottom();
+    let above = response.rect.top() - window.top();
+    let (align, room) =
+        if below >= above { (egui::RectAlign::BOTTOM_START, below) } else { (egui::RectAlign::TOP_START, above) };
+    // Only a click outside closes it: the search field and the headings take clicks, and
+    // choosing a parameter closes it itself. Outside is where the menu was when the click came,
+    // as a heading the click closes shrinks the menu in the same frame, maybe from under it.
+    let placed = filter.with("rect");
+    let last: Option<Rect> = ui.data(|d| d.get_temp(placed));
+    let outside = ui.input(|i| {
+        i.pointer.any_click()
+            && i.pointer
+                .interact_pos()
+                .is_some_and(|p| last.is_some_and(|r| !r.contains(p)) && !response.rect.contains(p))
+    });
+    let menu = egui::Popup::menu(&response)
+        .align(align)
+        .align_alternatives(&[])
+        .close_behavior(egui::PopupCloseBehavior::IgnoreClicks);
+    let this_lane = (track, param.key.clone());
+    let from_automated = state.from_automated.contains(&this_lane);
+    let choices = params.of(track);
+    match menu.show(|ui| parameter_menu(ui, filter, choices, &param.key, &shown, from_automated, room)) {
+        Some(menu) => {
+            // A menu over the dropdown is placed by its size the frame before: when that changed
+            // (a heading, a search), the frame is drawn again rather than shown in the old place.
+            let rect = menu.response.rect;
+            if last.is_some_and(|r| r.size() != rect.size()) {
+                ui.ctx().request_discard("the parameter menu changed size");
             }
-            let taken = shown.contains(&choice.key) && choice.key != param.key;
-            let mark = if choice.points.is_empty() { "" } else { " •" };
-            let button = egui::Button::selectable(choice.key == param.key, format!("{}{mark}", choice.name));
-            if ui.add_enabled(!taken, button).clicked() {
+            ui.data_mut(|d| d.insert_temp(placed, rect));
+            if outside {
+                egui::Popup::close_id(ui.ctx(), egui::Popup::default_response_id(&response));
+            }
+            if let Some((choice, top)) = menu.inner {
+                // The lane's ids follow its parameter, so the menu's state is dropped under the
+                // old ones now rather than when a header with them is next drawn closed: a lane
+                // switched back opens its menu afresh even in that header's first frame.
+                forget_menu(ui, filter, placed);
+                state.from_automated.remove(&this_lane);
+                if top {
+                    state.from_automated.insert((track, choice.clone()));
+                }
                 if let Some(keys) = state.shown.get_mut(&track)
                     && let Some(slot) = keys.iter_mut().find(|k| **k == param.key)
                 {
-                    *slot = choice.key.clone();
+                    *slot = choice;
                 }
                 state.selection = None;
-                ui.close();
             }
         }
-    });
+        // Closed: the next opening starts with an empty search, its groups closed, and no place.
+        None => forget_menu(ui, filter, placed),
+    }
 
     // On or off: off after a manual change; a click turns it on again (or off).
     if has_lane {
@@ -1086,6 +1541,9 @@ fn lane_header(
     let response =
         widgets::button_area(ui, hide.intersect(clip), id.with("hide"), format!("Hide {label} lane on {}", lanes.name));
     if response.clicked() {
+        // A hidden lane draws no header to drop its menu's state when the menu closes.
+        forget_menu(ui, filter, placed);
+        state.from_automated.remove(&this_lane);
         if let Some(keys) = state.shown.get_mut(&track) {
             keys.retain(|k| *k != param.key);
             if keys.is_empty() {
@@ -1108,6 +1566,17 @@ fn lane_header(
     widgets::text_in(&painter, second, Align2::LEFT_CENTER, &text, theme::ui_font(theme::TEXT_SMALL), ink);
 }
 
+/// Drops what a lane's parameter menu keeps while it is open (its [`MenuState`] under `filter`,
+/// its place under `placed`), so the next opening starts afresh.
+fn forget_menu(ui: &Ui, filter: Id, placed: Id) {
+    ui.data_mut(|d| {
+        d.remove_temp::<MenuState>(filter);
+        d.remove::<Rect>(placed);
+    });
+}
+
+/// Draws one of a lane header's small buttons: its background, lighter under the pointer, and
+/// `text` in its middle.
 fn small_button(ui: &Ui, painter: &egui::Painter, rect: Rect, response: &egui::Response, text: &str) {
     let fill =
         crate::kit::motion::mix(theme::control_background(), theme::control_hover(), widgets::hover(ui, response));
@@ -1119,6 +1588,7 @@ fn small_button(ui: &Ui, painter: &egui::Painter, rect: Rect, response: &egui::R
 mod tests {
     use super::*;
 
+    /// A volume placed on the lane and read back is the same, and sits where the mixer's field puts it.
     #[test]
     fn volume_positions_and_values_are_inverses() {
         let scale = Scale::Volume;
@@ -1138,6 +1608,84 @@ mod tests {
         }
     }
 
+    /// A point spliced in at `beat` with [`splice`], as `automation.addPoint` puts it.
+    fn spliced(points: &[AutomationPoint], beat: f64) -> Vec<AutomationPoint> {
+        let mut lane = AutomationLane::new(VOLUME);
+        lane.points = points.to_vec();
+        if let Some((value, curve)) = splice(points, beat, false) {
+            lane.insert(AutomationPoint { beat, value, curve });
+        }
+        lane.points
+    }
+
+    /// A point spliced onto a level or straight segment leaves the envelope exactly as it was.
+    #[test]
+    fn a_spliced_point_keeps_a_straight_or_level_envelope_exactly() {
+        use suhina_engine::model::automation::value_at;
+        let level = [AutomationPoint::new(0.0, 0.5), AutomationPoint::new(8.0, 0.5)];
+        assert_eq!(splice(&level, 3.0, false), Some((0.5, 0.0)));
+        let ramp = [AutomationPoint::new(0.0, 0.0), AutomationPoint::new(8.0, 1.0)];
+        let after = spliced(&ramp, 2.0);
+        assert_eq!(after.len(), 3);
+        for beat in [0.0, 1.0, 2.0, 5.0, 8.0, 10.0] {
+            assert_eq!(value_at(&after, beat, false), value_at(&ramp, beat, false), "{beat}");
+        }
+        // Before the first point and after the last, the envelope holds: the point takes that.
+        assert_eq!(splice(&ramp, 12.0, false), Some((1.0, 0.0)));
+        assert_eq!(splice(&[], 1.0, false), None);
+        // A step holds its first value.
+        assert_eq!(splice(&ramp, 4.0, true), Some((0.0, 0.0)));
+    }
+
+    /// A whole-number lane cannot keep a value between two numbers, so a point is not spliced
+    /// with one; a value that is a whole number is kept.
+    #[test]
+    fn a_whole_number_lane_keeps_only_whole_numbers() {
+        let integer = Scale::Device(ParamInfo::integer("steps", "Steps", (0, 3), 0, Unit::None));
+        let ramp = [AutomationPoint::new(0.0, 0.0), AutomationPoint::new(8.0, 3.0)];
+        let (value, _) = splice(&ramp, 4.0, integer.stepped()).unwrap();
+        assert_eq!(value, 1.5);
+        assert!(!integer.keeps(value));
+        let halves = [AutomationPoint::new(0.0, 0.0), AutomationPoint::new(8.0, 2.0)];
+        let (value, _) = splice(&halves, 4.0, integer.stepped()).unwrap();
+        assert!(integer.keeps(value), "{value}");
+        assert!(Scale::Pan.keeps(0.123_456));
+    }
+
+    /// A point spliced onto a curved segment keeps the part before it exactly and the part after it
+    /// within 5 % of the lane.
+    #[test]
+    fn a_spliced_point_follows_a_curved_segment_closely() {
+        use suhina_engine::model::automation::value_at;
+        for curve in [-1.0, -0.4, 0.3, 1.0] {
+            let bent = [AutomationPoint { beat: 0.0, value: 0.0, curve }, AutomationPoint::new(8.0, 1.0)];
+            for at in [0.0, 1.0, 3.0, 6.0] {
+                let after = spliced(&bent, at);
+                // The segment before the new point is the same curve, exactly.
+                for beat in (0..=at as usize * 4).map(|q| q as f64 / 4.0) {
+                    let (old, new) = (value_at(&bent, beat, false), value_at(&after, beat, false));
+                    assert!((old.unwrap_or(0.0) - new.unwrap_or(1.0)).abs() < 1e-12, "{curve} {at} {beat}");
+                }
+                // The one after follows it within a small part of the lane.
+                for beat in (at as usize * 4..=32).map(|q| q as f64 / 4.0) {
+                    let (old, new) = (value_at(&bent, beat, false), value_at(&after, beat, false));
+                    assert!((old.unwrap_or(0.0) - new.unwrap_or(1.0)).abs() < 0.05, "{curve} {at} {beat}");
+                }
+            }
+        }
+    }
+
+    /// The distance to a line is to its nearest segment, end or corner.
+    #[test]
+    fn the_distance_to_a_line_is_to_its_nearest_part() {
+        let line = [Pos2::new(0.0, 0.0), Pos2::new(10.0, 0.0), Pos2::new(10.0, 10.0)];
+        assert_eq!(distance_to(&line, Pos2::new(5.0, 3.0)), 3.0);
+        assert_eq!(distance_to(&line, Pos2::new(12.0, 5.0)), 2.0);
+        assert_eq!(distance_to(&line, Pos2::new(-4.0, 3.0)), 5.0);
+        assert_eq!(distance_to(&[], Pos2::ZERO), f32::INFINITY);
+    }
+
+    /// The pan spreads from left at the bottom to right at the top; the mute is a step.
     #[test]
     fn pan_and_mute_map_across_the_lane() {
         assert_eq!(Scale::Pan.position(-1.0), 0.0);
@@ -1147,6 +1695,7 @@ mod tests {
         assert!(!Scale::Pan.stepped());
     }
 
+    /// Moving values together keeps them in range, and a silent volume stays silent.
     #[test]
     fn a_shift_keeps_values_in_range_and_silence_silent() {
         assert_eq!(Scale::Volume.shift(0.0, 6.0), 0.0);
@@ -1155,6 +1704,7 @@ mod tests {
         assert_eq!(Scale::Mute.shift(1.0, -0.4), 1.0);
     }
 
+    /// A track's lanes, opened the first time, are those with points, or the volume's when none has.
     #[test]
     fn the_first_open_shows_the_lanes_with_points_or_the_volume() {
         let mut project = crate::demo::demo_project();
@@ -1179,6 +1729,7 @@ mod tests {
         assert_eq!(state.height(track, &params), LANE + LINE);
     }
 
+    /// A built-in device's parameters are listed under its name, with their lanes' points.
     #[test]
     fn a_built_in_devices_parameters_can_be_shown_with_its_lanes() {
         let mut project = crate::demo::demo_project();
@@ -1205,6 +1756,7 @@ mod tests {
         assert_eq!(state.shown(track, &params), [LaneKey { device: Some(0), param: "gain".into() }]);
     }
 
+    /// A data-only device's parameters are listed and placed as their controls place them.
     #[test]
     fn sd_parameters_are_listed_and_use_their_control_scale() {
         let mut project = crate::demo::demo_project();
@@ -1246,6 +1798,125 @@ mod tests {
         assert!((frequency.map_or(0.0, |p| p.scale.position(1_000.0)) - position).abs() < 1e-9);
     }
 
+    /// A parameter of device `device` (`None`: the mixer) in `group`.
+    fn param(device: Option<usize>, group: Option<&str>, name: &str) -> Param {
+        Param {
+            key: LaneKey { device, param: name.to_lowercase() },
+            name: name.into(),
+            device_name: device.map(|d| format!("Device {d}")),
+            group: group.map(str::to_string),
+            scale: Scale::Pan,
+            points: Vec::new(),
+            enabled: true,
+            current: 0.0,
+        }
+    }
+
+    /// The names of `params`, in order.
+    fn names<'a>(params: &[&'a Param]) -> Vec<&'a str> {
+        params.iter().map(|p| p.name.as_str()).collect()
+    }
+
+    /// A device's parameters without a group come first, and a group is listed once, under its
+    /// device, even when its parameters are not next to each other.
+    #[test]
+    fn the_menu_lists_each_device_with_loose_parameters_first_and_a_group_once() {
+        let choices = [
+            param(None, None, "Volume"),
+            param(Some(0), Some("Op 1"), "Op 1 Rate"),
+            param(Some(0), None, "Algorithm"),
+            param(Some(0), Some("LFO"), "LFO Speed"),
+            // Not next to the rest of its group: still listed under it.
+            param(Some(0), Some("Op 1"), "Op 1 Level"),
+            param(Some(1), Some("Op 1"), "Op 1 Rate"),
+        ];
+        let sections = sections(&choices, &[]);
+        assert_eq!(sections.len(), 3);
+        assert_eq!((sections[0].device, sections[0].name), (None, None));
+        assert_eq!(names(&sections[0].loose), ["Volume"]);
+        assert_eq!(names(&sections[1].loose), ["Algorithm"]);
+        let groups: Vec<_> = sections[1].groups.iter().map(|(g, params)| (*g, names(params))).collect();
+        assert_eq!(groups, [("Op 1", vec!["Op 1 Rate", "Op 1 Level"]), ("LFO", vec!["LFO Speed"])]);
+        let order: Vec<_> = sections[1].params().map(|p| p.name.as_str()).collect();
+        assert_eq!(order, ["Algorithm", "Op 1 Rate", "Op 1 Level", "LFO Speed"]);
+        // The same group in another device is another group.
+        assert_eq!(sections[2].device, Some(1));
+        assert_eq!(sections[2].groups.len(), 1);
+    }
+
+    /// A search matches its words against the device, group and name together.
+    #[test]
+    fn a_search_matches_a_group_name_and_words_across_device_group_and_name() {
+        let choices = [
+            param(Some(0), Some("Op 1"), "Rate 1"),
+            param(Some(0), Some("Op 3"), "Rate 1"),
+            param(Some(0), Some("LFO"), "Speed"),
+        ];
+        let found = |query: &str| -> Vec<String> {
+            sections(&choices, &query_words(query))
+                .iter()
+                .flat_map(Section::params)
+                .map(|p| format!("{} {}", p.group.as_deref().unwrap_or(""), p.name))
+                .collect()
+        };
+        assert_eq!(found("OP 3 rate"), ["Op 3 Rate 1"]);
+        assert_eq!(found("lfo"), ["LFO Speed"]);
+        assert_eq!(found("device 0 rate"), ["Op 1 Rate 1", "Op 3 Rate 1"]);
+        assert!(found("op 2").is_empty());
+    }
+
+    /// A row under a group's heading drops the group's name in front, unless nothing would be left.
+    #[test]
+    fn a_name_under_its_group_leaves_out_the_group() {
+        assert_eq!(param(Some(0), Some("Op 1"), "Op 1 Rate 1").short_name(), "Rate 1");
+        assert_eq!(param(Some(0), Some("LFO"), "Speed").short_name(), "Speed");
+        // Nothing would be left, or the group is only the start of a word.
+        assert_eq!(param(Some(0), Some("Decay"), "Decay").short_name(), "Decay");
+        assert_eq!(param(Some(0), Some("Op"), "Opacity").short_name(), "Opacity");
+        assert_eq!(param(Some(0), None, "Op 1 Rate").short_name(), "Op 1 Rate");
+        // The lane's own name keeps the whole name.
+        assert_eq!(param(Some(0), Some("Op 1"), "Op 1 Rate 1").label(), "Device 0: Op 1 Rate 1");
+    }
+
+    /// Built-in and `.sd` parameters take their group from the device; the mixer's have none.
+    #[test]
+    fn built_in_and_sd_parameters_carry_their_group() {
+        let mut project = crate::demo::demo_project();
+        let track = project.tracks[0].id;
+        let Some(channel) = project.tracks[0].channel.and_then(|id| project.channels.iter_mut().find(|c| c.id == id))
+        else {
+            return;
+        };
+        channel.devices.push(suhina_engine::model::Device::new("FM Synth", DeviceKind::Builtin("fm-synth".into())));
+        let mut graph =
+            suhina_device_sdk::DeviceGraph::new("test.gain", "Test Gain", suhina_device_sdk::DeviceRole::Effect);
+        let mut parameter = suhina_device_sdk::Parameter::new("level", "Level", (0.0, 1.0), 1.0);
+        parameter.ui.group = "Output".into();
+        graph.parameters.push(parameter);
+        graph.nodes = vec![
+            suhina_device_sdk::Node::audio_input("in"),
+            suhina_device_sdk::Node::gain("gain", "level"),
+            suhina_device_sdk::Node::audio_output("out"),
+        ];
+        graph.connections =
+            vec![suhina_device_sdk::Connection::new("in", "gain"), suhina_device_sdk::Connection::new("gain", "out")];
+        let state = graph.to_sd().ok().map(String::into_bytes);
+        channel.devices.push(suhina_engine::model::Device {
+            state,
+            ..suhina_engine::model::Device::new("Test Gain", DeviceKind::Sd)
+        });
+        let params = Params::build(&project);
+        let group = |device, id: &str| {
+            params.param(track, &LaneKey { device: Some(device), param: id.into() }).and_then(|p| p.group.clone())
+        };
+        assert_eq!(group(0, "op3.rate1").as_deref(), Some("Op 3"));
+        assert_eq!(group(0, "lfoSpeed").as_deref(), Some("LFO"));
+        assert_eq!(group(0, "volume"), None);
+        assert_eq!(group(1, "level").as_deref(), Some("Output"));
+        assert!(params.of(track).iter().filter(|p| p.key.device.is_none()).all(|p| p.group.is_none()));
+    }
+
+    /// A choice point loaded outside a data-only device's range shows its nearest option.
     #[test]
     fn an_sd_choice_point_outside_its_range_names_the_nearest_option() {
         let mut shape = suhina_device_sdk::Parameter::new("shape", "Shape", (1.0, 3.0), 1.0);

@@ -26,6 +26,9 @@ pub struct FrameTrace {
     /// The start of the frame before, and the longest wait between two frame starts.
     previous: Option<Instant>,
     widest_gap: Duration,
+    /// What asked for the second's frames (a source file and line each), and how often: a
+    /// window that keeps drawing while nothing moves says here why.
+    causes: Vec<(String, u32)>,
 }
 
 fn ms(d: Duration) -> f64 {
@@ -62,6 +65,21 @@ impl FrameTrace {
         self.last = Some(now);
     }
 
+    /// Counts the calls that asked for this frame ([`egui::Context::repaint_causes`]).
+    pub fn causes(&mut self, ctx: &egui::Context) {
+        if self.started.is_none() {
+            return;
+        }
+        for cause in ctx.repaint_causes() {
+            let file = cause.file.rsplit(['/', '\\']).next().unwrap_or(cause.file);
+            let name = format!("{file}:{}", cause.line);
+            match self.causes.iter_mut().find(|(n, _)| *n == name) {
+                Some((_, count)) => *count += 1,
+                None => self.causes.push((name, 1)),
+            }
+        }
+    }
+
     /// What was on screen, written with a slow frame; only made while tracing is on.
     pub fn note(&mut self, note: impl FnOnce() -> String) {
         if self.started.is_some() {
@@ -90,15 +108,19 @@ impl FrameTrace {
         let passed = started - second;
         if passed >= Duration::from_secs(1) {
             let frames = f64::from(self.frames);
+            self.causes.sort_by_key(|cause| std::cmp::Reverse(cause.1));
+            let causes: Vec<String> = self.causes.iter().take(3).map(|(name, n)| format!("{name} {n}")).collect();
             suhina_plugins::trace!(
-                "frames: {} in {:.1} s ({:.0} a second), drawing {:.1} ms on average, {:.1} ms the longest; longest wait between frames {:.1} ms",
+                "frames: {} in {:.1} s ({:.0} a second), drawing {:.1} ms on average, {:.1} ms the longest; longest wait between frames {:.1} ms; asked by {}",
                 self.frames,
                 passed.as_secs_f64(),
                 frames / passed.as_secs_f64(),
                 ms(self.total) / frames,
                 ms(self.worst),
                 ms(self.widest_gap),
+                if causes.is_empty() { "input".to_string() } else { causes.join(", ") },
             );
+            self.causes.clear();
             self.second = Some(started);
             self.frames = 0;
             self.total = Duration::ZERO;

@@ -50,10 +50,18 @@
   (`.coderabbit.yaml`) and shows a **CodeRabbit** check beside CI. Its comments are suggestions, not requirements: answer or resolve
   them, and leave DSP and real-time behaviour to the tests and renders. The check is never red and
   never required. Comment `@coderabbitai review` to run it again.
+- **Codex:** the maintainer requests a review with `@codex review` once the `ci` check has
+  finished on the pull request's latest push; contributors ask the maintainer for one. The
+  reviewer runs no tests or builds and reads the CI results of the push it reviews. Codex follows
+  [AGENTS.md](AGENTS.md#code-review-rules) and
+  [`docs/code-review.md`](docs/code-review.md). Actionable inline threads must be answered or
+  resolved before the merge queue takes the pull request; optional suggestions stay in the
+  summary. Hosted review reporting limits are described in the guide.
 - **Asking for a review:** ask a maintainer (**Reviewers** on the pull request). Comments by
   `suhina-bot[bot]` are a maintainer's agent's feedback, posted for them; the bot takes no
   requests, and neither it nor CodeRabbit approves anything: a pull request goes in on a
   maintainer's `ready to merge` label.
+  Codex and CodeRabbit post through their own apps.
 - **Pull request description:** use the sections of `.github/pull_request_template.md`, all of them;
   one line is enough where nothing applies. `.github/workflows/pr-description.yml` warns about a
   missing section (`scripts/pr_description.py`); it never fails.
@@ -84,6 +92,15 @@ GPLv3-compatible, for the crate that needs it, with a comment saying what the cr
 why the licence is fine. To update `cargo-deny`, change `CARGO_DENY_VERSION` and
 `CARGO_DENY_SHA256` in the workflow together, and the version above.
 
+**C libraries.** The program is Rust only ([AGENTS.md](AGENTS.md)), and one dependency bends it,
+recorded here: the Ogg Vorbis encoder, `vorbis_rs`, is bindings to libvorbis — C source packaged
+on crates.io that the build compiles. libvorbis is BSD-3-Clause, and the binding's licence is on
+the allowlist. A C encoder was chosen for what this build needs from one (checked October 2026):
+a bitstream Vorbis encodes strictly, and it is what every player and transcoder has round-tripped
+for twenty years; the pure-Rust encoders tried against it then were young and single-maintained
+where a mixdown's bytes go straight to the user's file. When a credible pure-Rust encoder has
+proved itself, the dependency is revisited ([docs/spec/export.md](docs/spec/export.md) › Formats).
+
 ## Working on an issue
 
 A task's state lives in its issue and on the [Suhina project board](https://github.com/orgs/suhina-daw/projects/1),
@@ -101,15 +118,22 @@ claim. A trusted contributor, named in the repository variable `TRUSTED_CONTRIBU
 feature in `Backlog` without waiting, or move it to `Ready` with `/ready` so others can claim it ([`docs/claim-bot.md`](docs/claim-bot.md) › Who is who). A bug in `Backlog` is free. `Do not start yet` means the order is deliberate: the issue and
 its comments say what the work waits for, so ask there instead of starting.
 
-**Claim it** in a comment on the issue before you write code:
+**Bugs and small changes need no issue and no claim.** Open a pull request that says what it
+fixes. The *Overlap* notice ([`.github/workflows/overlap.yml`](.github/workflows/overlap.yml))
+comments on it when another open pull request or a claim changes the same files, and keeps the
+comment up to date with each push; it never fails. A fix you find along the way that is small and
+in the same code goes in the same pull request, under *Also fixed* in its description; one that is
+larger, elsewhere, or in code someone else is changing gets a pull request or an issue of its own.
+
+**Claim a feature or a piece of an epic** in a comment on the issue before you write code:
 
 > /claim Plan: … When: …
 > Touches: crates/ui/src/detail, crates/session
 
 The claim bot ([`docs/claim-bot.md`](docs/claim-bot.md)) moves the card to `In progress` and
 assigns you, and refuses the claim when the work is not free or another issue it is *Blocked by*
-is still open. The `Touches:` line names the paths you will change; it is optional, and with it the
-bot's answer lists the open pull requests and other claims that touch the same code. Without the bot, a plain comment
+is still open. The `Touches:` line names the paths you will change: give it, because the
+bot's answer and the *Overlap* notice on other people's pull requests find your claim by those paths. Without the bot, a plain comment
 ("I'd like to take this. Plan: …") is the claim, and the first one wins: a bot that is down never
 means the issue is free. Hold at most five claims without a pull request at a time; the bot refuses
 the sixth until a draft pull request or an `/unclaim` frees one.
@@ -194,8 +218,8 @@ says how the queue is set up and what runs in it.
 adds it, and [`ready-to-merge.yml`](.github/workflows/ready-to-merge.yml) approves the commit it was
 added on and turns on *Merge when ready* for that commit: the queue takes the pull request once
 `ci` is green and every review thread is resolved (CodeRabbit's too), and a red check stops it. A
-contributor's pull request also needs `test-build`, so its build was tried first; Dependabot's Cargo
-updates do not, since the queue's build and tests check them (its updates of the Actions do). A push by anyone
+contributor's pull request also needs a maintainer's approving review of the same head commit, or
+`test-build` so its build was tried first; Dependabot's Cargo updates need neither, since the queue's build and tests check them (its updates of the Actions do). A push by anyone
 but a maintainer takes the label off, so new commits are never merged unread; taking the label off
 by hand stops the merge. Only a maintainer adds it: an agent never adds `ready to merge`, also not
 when asked to finish a pull request.
@@ -267,7 +291,10 @@ Signed-off-by: Your Name <you@example.com>
 change or have the right to submit it under the project's licence. For Suhina this includes
 the clean-room rules above: the change does not come from disassembled, decompiled or leaked
 material, from notes based on such material, or from content of a proprietary product, and no
-agent that wrote it was given such material. CI checks the sign-off on pull requests from forks.
+agent that wrote it was given such material. CI checks the sign-off on pull requests from forks,
+on the commits that are not on a branch of this repository already (a pull request built on
+another one's branch here does not answer for that branch's commits). GitHub's temporary pull
+request merge refs do not count as repository branches: the fork's own commits still need sign-off.
 
 ## Reporting a rights problem
 

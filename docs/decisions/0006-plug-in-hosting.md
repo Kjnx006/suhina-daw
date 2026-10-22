@@ -3,7 +3,7 @@ description: How third-party plug-ins are hosted out of process (process model, 
 read_when: plug-in, plugin host, CLAP, VST3, VST2, sandbox, out of process, IPC, shared memory, unsafe, plug-in crash, scanning, plug-in editor
 type: decision
 status: current
-last_verified: 2026-10-20
+last_verified: 2026-10-22
 covers:
   - crates/ipc/**
   - crates/plugins/**
@@ -285,7 +285,15 @@ workspace forbids.
    (`Session::project_as_heard`, which the save uses too) and starts its own offline instances
    with them, so it plays what is heard, edits made in an editor since the project was opened
    included (#363). The running instances are only asked for their state: the render's
-   instances are separate host processes, as for any offline render.
+   instances are separate host processes, as for any offline render. An export from the app
+   gathers the same states over its window's frames, never waited for on its thread
+   (`Session::gather_export_data`): the round of reads is its own ledger, so a project stopped
+   mid-read takes the instances and not the answers, the deadline settles what did not answer
+   by name, and a cancelled export's late replies start nothing. Replies are consumed while
+   the round's ledger is still installed, including replies from detached instances. A failed
+   state read also names the plug-in before falling back. These warnings travel with the
+   export result, even when another tab is active. Attached MCP exports use the same frame
+   gather, including exports in batches; only one gather can own a project's reads at a time.
 6. **`unsafe` only in two crates.** `crates/ipc` (shared memory and block sync, linked into the
    engine) and `crates/plugin-host` (the plug-in host process) may use `unsafe`; every other
    crate stays `forbid`. Both offer safe APIs, keep `unsafe` blocks small, explain each one in a

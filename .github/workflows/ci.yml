@@ -192,7 +192,9 @@ jobs:
       - run: cargo test --workspace
 
   # Pull requests from forks: every commit must carry a Signed-off-by line (Developer
-  # Certificate of Origin, CONTRIBUTING.md). Branches of this repository are the maintainers'.
+  # Certificate of Origin, CONTRIBUTING.md). Branches of this repository are the maintainers', and
+  # so are their commits: a fork's pull request stacked on a branch here carries that branch's
+  # commits too, and those are skipped (the full checkout has every branch of this repository).
   # Skipped in the merge queue: its pull requests were checked here before they were queued.
   dco:
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
@@ -207,6 +209,11 @@ jobs:
         run: |
           missing=0
           for commit in $(git rev-list --no-merges "$BASE..$HEAD"); do
+            # The checkout's pull/<number>/merge ref contains every PR commit; it is not
+            # an upstream branch and must never exempt a fork's own commits.
+            if [ -n "$(git branch -r --contains "$commit" --list 'origin/*')" ]; then
+              continue
+            fi
             author=$(git log -1 --format='%an <%ae>' "$commit")
             if ! git log -1 --format='%B' "$commit" | grep -qiF "Signed-off-by: $author"; then
               echo "::error::Commit $commit has no 'Signed-off-by: $author' line (git commit -s)."

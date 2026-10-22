@@ -145,8 +145,18 @@ refused or suspended, never by losing its edits.
 - **SDK panel composition:** numeric formatting chains, inherited parameter metadata and local
   control-group coordinates simplify panels without changing their saved format or runtime.
 
-- Stock instruments and effects are generated as validated `.sd` files during
-  application builds and embedded for startup; DSP uses registered Rust implementations.
+- Every built-in effect, instrument and MIDI effect has editable controls in the device panel:
+  its layout (the Sampler's), or a parameter list generated from the device's own parameters,
+  260 px wide and at most 168 px high, scrolling past that. Each change is `device.setParam`, so it
+  is one undo step and an automation lane takes it over. Built-ins are native code with a layout
+  loaded by their id, not `.sd` files ([ADR 0021](docs/decisions/0021-device-graph-files.md) ›
+  Amendment: device panels).
+- A device with an expanded panel (`device.expanded` in a `.sd` file, version 5, or in a
+  built-in's layout) has a button in its header that opens it over the main area; Escape or its
+  close button closes it. Both panels change the same parameters.
+- A running plug-in's device panel lists its parameters under its editor button, as a generated
+  list that sets them by id (hidden and read-only ones left out), and follows changes made in
+  its own editor every two seconds.
 
 - **Sampler:** single-source polyphonic sample and granular playback with an editable
   waveform, SDK controls, browser/system sample drops and recording from the armed
@@ -219,8 +229,7 @@ From Live Sets we authored ourselves in Live 12.4 ([format spec](docs/spec/als-f
   (Block, Fold, Limit); a note-off always ends the key its note started
   ([spec](docs/spec/pitch.md)). On a track with no instrument the changed notes play as the
   track's sine tones. It is in the browser under **MIDI Effects** and is set through
-  `device.setParam` or an automation lane; the device panel shows no controls for built-in
-  devices yet.
+  `device.setParam`, an automation lane or its generated parameter list in the device panel.
 - Sends and return tracks play: each track sends to each return before or after its fader; a
   return runs its devices over what it is sent and plays into the main channel or a group, with
   latency compensation on every send; loops are refused (`track.setSend`, `track.setSendMode`,
@@ -271,6 +280,11 @@ From Live Sets we authored ourselves in Live 12.4 ([format spec](docs/spec/als-f
   and moved or deleted together, a segment's curve is bent by dragging it, and a lane a manual
   change turned off is turned on again from its header; each edit one undo step through the
   `automation.*` commands ([#420](https://github.com/suhina-daw/suhina-daw/issues/420),
+  [spec](docs/spec/automation.md#in-the-arrangement-view)).
+- Automation points added on the line: a click on or near an envelope adds a point on it, so a
+  level or straight segment stays exactly so, and a lane without points shows a faint line at
+  the parameter's value that a click puts the first point on
+  ([#736](https://github.com/suhina-daw/suhina-daw/issues/736),
   [spec](docs/spec/automation.md#in-the-arrangement-view)).
 - Backups: each project with unsaved changes is copied to `.backup/` beside its file (a project
   never saved: to the settings folder) every 5 minutes by default, at another interval, before
@@ -478,6 +492,17 @@ From Live Sets we authored ourselves in Live 12.4 ([format spec](docs/spec/als-f
   Save as template writes a copy to the templates folder. The tab and window title mark unsaved
   changes with a dot, and closing a project, opening another in its place or quitting with
   unsaved changes asks whether to save them.
+- **MCP export permissions:** Settings › Export lists allowed write folders, including the
+  optional project-folder grant. The person adds or revokes folders; agents cannot grant
+  themselves permission. Attached exports prepare across frames and render off the window
+  thread, including exports in batches.
+- **Export:** File › Export… renders the mix to an audio file the user chose — wav (32-bit
+  float, 24 or 16 with dither), flac or ogg, at a chosen sample rate, with normalise to
+  −0.3 dBFS and an overwrite question ([spec](docs/spec/export.md)). The same `project.export`
+  command serves the MCP server and scripts, and adds a range and tail, and a source (one node
+  of the track tree), which the command line reaches with `suhina-cli render --source` too. One
+  export runs at a time — a second is refused — and the export reads the running plug-ins'
+  state as it is heard, without changing anything in the project.
 - A change made only in a plug-in's editor counts as an unsaved change: the dot appears within
   about a minute, and closing or quitting asks whether to save it.
 - The **browser** (Ctrl+B shows and hides it, left or right of the view): search (Ctrl+F),

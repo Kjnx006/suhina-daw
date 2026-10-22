@@ -17,6 +17,7 @@ mod commands;
 mod device_groups;
 mod devices;
 mod editing;
+mod export;
 mod files;
 mod follow;
 mod launch;
@@ -52,6 +53,7 @@ pub use ara::ClipNotes;
 pub use audio::{AudioSystem, InputChoice, LiveOutput, OutputChoice, OutputInfo, audio_commands};
 pub use blank::blank_project;
 pub use commands::{CommandKind, CommandSpec, Param, ParamType, Run, commands, parse_quantization};
+pub use export::{ExportData, ExportGather, export_from};
 pub use files::{MAX_FILES, file_tempo};
 pub use library::{Category, Found, file_info, library_commands, search_items};
 pub use mapping::{MAX_MAPPINGS, mapped_command, target_exists};
@@ -332,6 +334,9 @@ pub struct Session {
     /// messages ([`suhina_engine::MIXER_VOLUME`]) instead of a new graph when it can take them.
     /// Unlike `param_edits`, they leave undo as the command's own steps make it.
     pub(crate) mixer_edits: Vec<ParamEdit>,
+    /// Set by a command whose edit changes nothing the engine plays (a send of a muted track):
+    /// the playing graph is kept, as for [`UNHEARD_EDITS`].
+    pub(crate) unheard_edit: bool,
     /// Parameter whose live drag has already recorded its single undo snapshot.
     param_gesture: Option<(suhina_model::TrackId, usize, String)>,
     /// The colours a track without one of its own shows, by its place among the tracks (the
@@ -398,6 +403,7 @@ impl Session {
             note_clipboard: None,
             param_edits: Vec::new(),
             mixer_edits: Vec::new(),
+            unheard_edit: false,
             param_gesture: None,
             track_colours: (Vec::new(), None),
             plugins: rack::Rack::default(),
@@ -833,6 +839,12 @@ impl Session {
         self.plugins.clip_notes(clip)
     }
 
+    /// What an ARA plug-in on `track` is doing with its audio clips: its name, and how far its
+    /// analysis has come, or `None` while it loads. `None` when it is doing neither.
+    pub fn ara_activity(&self, track: suhina_model::TrackId) -> Option<(String, Option<f32>)> {
+        self.plugins.ara_activity(track)
+    }
+
     /// The first device on `track` that runs a plug-in bound to its audio clips (ARA), by its
     /// index in the track's chain.
     pub fn ara_device(&self, track: suhina_model::TrackId) -> Option<usize> {
@@ -928,6 +940,15 @@ impl Session {
         self.plugins.report(key)
     }
 
+    /// Has the plug-in device at `path` on `track` list its parameters again in the background,
+    /// for its generated panel, when its list is a couple of seconds old
+    /// ([`rack::Rack::list_params`]).
+    pub fn list_plugin_params_at(&mut self, track: suhina_model::TrackId, path: &[usize]) {
+        if let Some(key) = plugin_key_at_path(&self.project, track, path) {
+            self.plugins.list_params(key);
+        }
+    }
+
     pub fn player(&self) -> Option<&Player> {
         self.player.as_ref()
     }
@@ -1010,9 +1031,16 @@ impl Session {
 
     /// Reads the running plug-ins' states now, so a change made in a plug-in's editor since
     /// the last read shows in [`Session::has_unsaved_changes`]: before asking whether to save
-    /// on close or quit. Waits at most a second or two for plug-ins that do not answer.
+    /// on close or quit. Waits at most one second for plug-ins that do not answer.
     pub fn check_plugin_edits(&mut self) {
         self.plugins.check_edits();
+    }
+
+    /// Advances a two-read check of all running plug-ins without waiting. Call each frame
+    /// until true before deciding whether to offer saving; processing and MIDI count too.
+    /// All rounds share one second, after which the last known states are used.
+    pub fn poll_plugin_edits(&mut self) -> bool {
+        self.plugins.poll_edits()
     }
 
     /// Saves the project as a Suhina project at `path` (`.suhina` is added when it does not end
@@ -1084,7 +1112,7 @@ impl Session {
     }
 
     /// A copy of the project with `states` (by device key) in its plug-in devices.
-    fn with_states(&self, states: &std::collections::HashMap<u64, suhina_plugins::SavedState>) -> Project {
+    pub(crate) fn with_states(&self, states: &std::collections::HashMap<u64, suhina_plugins::SavedState>) -> Project {
         let mut project = self.project.clone();
         for device in suhina_engine::plugin_devices(&project) {
             let Some(state) = states.get(&device.key) else { continue };
@@ -1210,6 +1238,7 @@ impl Session {
             CommandKind::Edit => {
                 self.param_edits.clear();
                 self.mixer_edits.clear();
+                self.unheard_edit = false;
                 // A command with a `continue` parameter can add to the step it made last time.
                 let step = spec
                     .params
@@ -1282,7 +1311,7 @@ impl Session {
                             // An edit that changes nothing the engine plays (a colour, a name, a
                             // marker) keeps the playing graph: colouring every clip of a large
                             // project built a graph for each of them, six seconds in all.
-                            let unheard = UNHEARD_EDITS.contains(&id);
+                            let unheard = UNHEARD_EDITS.contains(&id) || std::mem::take(&mut self.unheard_edit);
                             let sent = unheard
                                 || match (changes.is_empty(), mixer.is_empty(), self.player.as_mut()) {
                                     (false, _, Some(player)) => {

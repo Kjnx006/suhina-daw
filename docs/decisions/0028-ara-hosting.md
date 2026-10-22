@@ -234,8 +234,13 @@ the list below, in a first form). Where it differs from the decisions above it i
   and once the other track's plug-in runs with the clip, it restores them for the clip's
   modification there (`restoreObjectsFromArchive` with a filter mapping the old persistent id to
   the new one, `ara_import`; protocol version 13). The session keeps each carry until it is done,
-  for at most 60 s, and says when it could not be. With one document per instance (below) the
-  edits cannot be cloned across tracks inside one document, which is why they go by archive.
+  for at most 60 s, and says when it could not be. A clip that keeps its content on the other
+  track keeps its modification in the shared document (below), so its edits are already there;
+  the archive carries them where it gets a content of its own.
+- **Loading and analysis on the clips.** While an ARA plug-in loads, its track's audio clips say
+  so (dimmed, "<plug-in> loading"); while it analyses them, how far (the least done of the
+  track's sources, from the plug-in's analysis progress, sent as `ara_analysis` when it moves by
+  a percent), with a bar filling along the bottom. The clips cannot be edited in it until then.
 - **Notes on the clips** (#720). After a model update in which the plug-in said a region's,
   modification's or source's notes may have changed (not with "note scope remains unchanged"),
   and after the host's own edits, the host reads every region's notes with a playback-region
@@ -248,19 +253,31 @@ the list below, in a first form). Where it differs from the decisions above it i
   finished analysis (its progress Completed) has the notes read too, and while a region has none
   yet they are looked for again every second, as a plug-in may finish without saying the content
   changed.
-- **The document.** `load` carries an optional `ara` document (protocol version 9): the track's
-  name, the tempo, the sources (an id, a name and a shared-memory address each) and the regions
-  (clip id, content id, start, length and offset in seconds). The host queries the component for
-  `IPlugInEntryPoint`, requires ARA 2.0 Final, initialises the factory once per process, makes a
-  document controller with the host interfaces, builds a musical context, one region sequence,
-  the sources (sample access on), one audio modification per content and one playback region per
-  clip in one edit, and binds the instance in every role (`IPlugInEntryPoint2` when there is one)
-  before processing is set up. The plug-in's renderers get every region. On unload the objects
-  go in one edit, then the document controller, as ARA prescribes. A plug-in that cannot be bound
+- **The document** (decision 2). `load` carries an optional `ara` document (protocol version 9):
+  the track's name and place, the project's document key, the tempo, the sources (an id, a name
+  and a shared-memory address each) and the regions (clip id, content id, start, length and
+  offset in seconds). The host queries the component for `IPlugInEntryPoint`, requires ARA 2.0
+  Final and initialises the factory once per process. The instances of one plug-in whose
+  documents carry the same key (one per project: the session's rack makes it) share one document
+  controller in their host process: the first makes it, with the host interfaces and the
+  musical context, and each adds its track as a region sequence (named and ordered as the
+  track), the sources and modifications it lacks (tracks that play the same content share its
+  modification, and so its edits) and one playback region per clip, in one edit, then binds in
+  every role (`IPlugInEntryPoint2` when there is one) before processing is set up. Its renderers
+  get its own track's regions; its editor shows every track, so the plug-in's editor lists the
+  project's tracks and shows the others' notes. On unload the track's regions leave its
+  renderers and go with its sequence in one edit; the last track's unload takes the sources,
+  modifications and context, then the document controller, as ARA prescribes. An instance let
+  go of later (just loaded) leaves the document at once. An offline render's plug-ins share
+  documents the same way, under a key of their own; a document without a key is the instance's
+  own. A plug-in that cannot be bound
   does not load, and the reason is the device's (`... could not start: the plug-in does not
   support ARA`).
 - **Persistent ids.** A source's id is its audio pool key, a modification's is `content-<id>`, a
   region's is `clip-<id>` ([#568](https://github.com/suhina-daw/suhina-daw/issues/568)).
+- **Loops.** A looped clip is a region for each pass through its loop, all of one modification,
+  so an edit plays in every repeat: the first pass's region is `clip-<id>`, the later ones
+  `clip-<id>-<pass>`.
 - **Audio** (decision 4). `suhina_ipc::AudioSource` writes a file's decoded samples once, planar
   32-bit floats after a checked header, into a region the host maps read only; `readAudioSamples`
   copies from it in chunks, as 32- or 64-bit samples, with silence outside the source.
@@ -268,8 +285,9 @@ the list below, in a first form). Where it differs from the decisions above it i
   event (playing, position in samples) and a `Tempo` event with every block to a plug-in loaded
   with a document, and the VST3 host turns them into the block's process context.
 - **The project keeps the edits** (decision 7). The device's state is the component's state and
-  the document archive (`storeObjectsToArchive`, with the factory's `documentArchiveID`) in one
-  blob, so save, autosave, backups and a restart keep them as they keep any plug-in's state. On
+  its track's part of the document archive (`storeObjectsToArchive`, with the factory's
+  `documentArchiveID`, filtered to the sources and modifications its clips played, and the
+  document's own data) in one blob, so save, autosave, backups and a restart keep them as they keep any plug-in's state. On
   load the archive goes back with `restoreObjectsFromArchive` in an edit, once the document is
   built; an archive of a kind the plug-in does not read is refused with the reason.
 - **Clip edits** (decision 3). When the track's clips change (moved, trimmed, added, removed,
@@ -310,9 +328,7 @@ the list below, in a first form). Where it differs from the decisions above it i
 - **An ARA plug-in goes first in its chain**, wherever it is dropped or `device.addPlugin` puts
   it (the result says `moved_first`): it plays the clips from their files, so a device before it
   would not be heard. Observed in another host, which moves it there too.
-- **Other interim limits.** One document per instance, not per plug-in product (decision 2).
-  Warped clips are described at their file's speed (their start and end follow the song), loops
-  are not repeated, and the overlap guard and suspension (decision 6) are not built: overlapping
+- **Other interim limits.** Warped clips are described at their file's speed (their start and end follow the song), and the overlap guard and suspension (decision 6) are not built: overlapping
   clips are both in the document. Offline renders load the plug-in with the same document. The
   `notifyDocumentDataChanged` flag is kept but not read yet: the edits are noticed when the
   state is read. `test:ara` (decision 10) does not exist yet; the test VST3 plug-in, listed as an

@@ -324,12 +324,12 @@ fn a_drag_that_outruns_the_engine_is_kept_and_heard_once_it_catches_up() {
     let (mut session, mut renderer) = playing();
     run(&mut session, "clip.launch", json!({ "track": "Drums", "scene": 1 })).unwrap();
     let loud = beat_peaks(&mut renderer, 2)[1];
-    // Edits while the audio thread takes none fill the engine's queue of new graphs (a pan takes
-    // a new graph; a volume is a message to the playing one).
+    // Edits while the audio thread takes none fill the engine's queue of new graphs (a mute takes
+    // a new graph; a volume or a pan is a message to the playing one).
     let mut full = None;
     for i in 0..64 {
-        let pan = if i % 2 == 0 { 0.5 } else { -0.5 };
-        if let Err(e) = run(&mut session, "track.setPan", json!({ "tracks": ["Drums"], "pan": pan })) {
+        let mute = i % 2 == 0;
+        if let Err(e) = run(&mut session, "track.setMute", json!({ "tracks": ["Pad"], "mute": mute })) {
             full = Some(e);
             break;
         }

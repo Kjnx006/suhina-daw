@@ -60,6 +60,7 @@ impl ParamType {
             Self::Notes => "notes",
             Self::Numbers => "numbers",
             Self::Clips => "clips",
+            Self::Range => "range",
             Self::Clip => "clip",
             Self::DevicePath => "device path",
         }
@@ -107,6 +108,8 @@ pub enum ParamType {
     Numbers,
     /// A list of arrangement clips, each `{ "clip": id }` or (deprecated) `{ "track": …, "index": n }`.
     Clips,
+    /// A range of beats, `{start, end}` from the arrangement's start.
+    Range,
     /// A clip id (integer, from `project.clips` or `project.launcher`) or a clip name (string) that
     /// only one clip has.
     Clip,
@@ -293,6 +296,7 @@ impl<T> CommandSpec<T> {
                 ParamType::Bool => json!("boolean"),
                 ParamType::Track | ParamType::Clip | ParamType::DevicePath => json!(["integer", "string"]),
                 ParamType::Decibels => json!(["number", "string"]),
+                ParamType::Range => json!("object"),
                 ParamType::Text => json!("string"),
             };
             properties.insert(p.name.to_string(), json!({ "type": ty, "description": p.doc }));
@@ -1611,6 +1615,41 @@ static COMMANDS: &[CommandSpec] = &[
         run: files::add_track,
     },
     CommandSpec {
+        id: "project.export",
+        label: "Render the mix, or the named node of the track tree, to an audio file: wav (32-bit float or 16/24-bit PCM), flac or ogg, with sample rate, depth, range, tail, normalise and dither",
+        params: &[
+            optional(
+                "path",
+                ParamType::Text,
+                "the file to write (output is an alias); its extension decides the format when format is left out",
+            ),
+            optional("output", ParamType::Text, "the file to write; an alias of path"),
+            optional("format", ParamType::Text, "wav (default), flac or ogg"),
+            optional("sample_rate", ParamType::Integer, "hertz; 48000 by default"),
+            optional("bit_depth", ParamType::Text, "32f (the default for wav), 24 or 16"),
+            optional("overwrite", ParamType::Bool, "true replaces an existing file; it is never replaced without this"),
+            optional(
+                "range",
+                ParamType::Range,
+                "the beats to render, {start, end} from the arrangement's start; the whole arrangement when left out",
+            ),
+            optional("tail", ParamType::Number, "extra beats rendered after the range's end"),
+            optional("normalize", ParamType::Bool, "true scales the file's peak to -0.3 dBFS"),
+            optional(
+                "dither",
+                ParamType::Bool,
+                "triangular dither for a reduced depth; on there, off at 32f, by default",
+            ),
+            optional(
+                "source",
+                ParamType::Track,
+                "the track or group of the track tree to render, instead of the whole mix (id or name)",
+            ),
+        ],
+        kind: CommandKind::Read,
+        run: crate::export::export,
+    },
+    CommandSpec {
         id: "project.missingFiles",
         label: "List the audio files the project's clips name that cannot be found, with where they were and how many clips play each",
         params: &[],
@@ -2761,8 +2800,11 @@ fn set_volume(session: &mut Session, params: &Value) -> Result<Value, CommandErr
         }
     }
     // A fader move, nothing else: a playing engine takes it as a message where it can (a lane
-    // turned off changes more than the volume).
-    if !off {
+    // turned off changes more than the volume). Tracks not heard (muted, outside a solo) play
+    // nothing it changes.
+    if !off && channels.iter().all(|(track, _)| !suhina_engine::track_heard(&session.project, *track)) {
+        session.unheard_edit = true;
+    } else if !off {
         session.mixer_edits = channels
             .iter()
             .map(|(track, _)| crate::ParamEdit {
@@ -2817,6 +2859,20 @@ fn set_pan(session: &mut Session, params: &Value) -> Result<Value, CommandError>
             off |= automation::override_lane(&mut channel.automation, |l| l.param == suhina_model::automation::PAN);
         }
     }
+    // A pan knob's turn, nothing else: a playing engine takes it as a message where it can.
+    if !off && channels.iter().all(|(track, _)| !suhina_engine::track_heard(&session.project, *track)) {
+        session.unheard_edit = true;
+    } else if !off {
+        session.mixer_edits = channels
+            .iter()
+            .map(|(track, _)| crate::ParamEdit {
+                track: *track,
+                device: suhina_engine::MIXER_PAN,
+                param: 0,
+                value: pan,
+            })
+            .collect();
+    }
     Ok(with_override(json!({ "tracks": track_ids(&channels), "pan": vec![pan; channels.len()] }), off))
 }
 
@@ -2833,6 +2889,18 @@ fn adjust_pan(session: &mut Session, params: &Value) -> Result<Value, CommandErr
         channel.pan = (channel.pan + pan).clamp(-1.0, 1.0);
         off |= automation::override_lane(&mut channel.automation, |l| l.param == suhina_model::automation::PAN);
         pans.push(channel.pan);
+    }
+    if !off {
+        session.mixer_edits = channels
+            .iter()
+            .zip(&pans)
+            .map(|((track, _), pan)| crate::ParamEdit {
+                track: *track,
+                device: suhina_engine::MIXER_PAN,
+                param: 0,
+                value: *pan,
+            })
+            .collect();
     }
     Ok(with_override(json!({ "tracks": track_ids(&channels), "pan": pans }), off))
 }

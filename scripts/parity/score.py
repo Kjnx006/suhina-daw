@@ -42,7 +42,7 @@ CHAPTERS = [
     (1, "Welcome to Live", 1, None, "n/a", "Front matter."),
     (2, "First Steps (installation, Learn/Info view, Settings)", 11, 0.52, "partial",
      "Release and nightly packages for Windows, macOS and Linux; Help > About names the build "
-     "(version, nightly date and commit, platform). Settings pages, grouped by task in headed sections, scrolling and searchable: General, Arrangement, Session and mixer, Clip editor, Transport, Detail area, Browser, Appearance (zoom, theme, graphics), MIDI, Audio (driver/device/rate/buffer/exclusive/cue; "
+     "(version, nightly date and commit, platform). Settings pages, grouped by task in headed sections, scrolling and searchable: General, Export (MCP write folders), Arrangement, Session and mixer, Clip editor, Transport, Detail area, Browser, Appearance (zoom, theme, graphics), MIDI, Audio (driver/device/rate/buffer/exclusive/cue; "
      "a change or a device back after unplugging keeps playback and launched clips going; "
      "input device, MIDI inputs on/off), "
      "Shortcuts, Plug-ins; the detail area beside the browser or across the full width. Missing Link, Tempo & MIDI, File & Folder, Library, Record/Warp/Launch, "
@@ -58,11 +58,17 @@ CHAPTERS = [
      "category as the instruments or the effects by name and format, with pins and tags on them. "
      "Missing collections/tag editor depth, packs, Splice, "
      "Cloud, Push transfer, filter groups, browser history."),
-    (5, "Managing Files and Sets", 43, 0.38, "partial",
+    (5, "Managing Files and Sets", 43, 0.40, "partial",
      ".suhina save/open, File > Open recent, .als import, templates, several projects in tabs, missing-file locate and "
      "relink, backups on an interval or before critical operations with the offer after a crash. "
+     "Export renders the mix to wav (32f, 24 or 16 with dither), flac or ogg, at a sample rate, with normalise and overwrite "
+     "refused until asked: File > Export… (format, rate, depth, normalise, dither, overwrite) and the shared project.export "
+     "(a range and tail, a source, or the whole mix), one export at a time, the state the running plug-ins have now "
+     "(what their editors changed), and the write rules held again where the bytes land. "
+     "Settings > Export grants and revokes MCP write folders, including the project-folder default; "
+     "attached MCP exports prepare over frames and render off the window thread. "
      "Missing project folders/collect, unused files, packing, .asd, decoding cache, set "
-     "merging, file-reference view, export audio/video."),
+     "merging, file-reference view, the export dialog's source and range rows, mp3."),
     (6, "Arrangement View", 22, 0.60, "partial",
      "Layout, zoom, transport, track headers with a band of the track colour that opens the colour palette, ruler/play start, play from the selected clip, clip drag+move, "
      "overlap replace/stack, fades and fade shapes, the control bar's grid value (bars to "
@@ -180,22 +186,28 @@ CHAPTERS = [
      "Roadmap item (Demucs candidate, weights unaudited). The pipeline around a model (chunking, "
      "resampling) exists in crates/separation with a test backend; no model and nothing a user "
      "can run yet."),
-    (23, "Working with Instruments and Effects (Device View)", 34, 0.36, "partial",
+    (23, "Working with Instruments and Effects (Device View)", 34, 0.40, "partial",
      "Device chains per track and bus, parameters through device.* commands and the detail area, "
      "the devices one click from a MIDI clip's editor (a Clip / Devices switch, Ctrl+Shift+D) and "
      "a double-click on a track header or channel strip that shows its devices, "
      "DX7 voices, stock-preset ADR, latency compensation, plug-in state in the panel. "
+     "Every built-in device, .sd device and running plug-in has editable controls in its panel "
+     "(a layout, or a generated parameter list), and a device may open a larger expanded panel "
+     "over the main area. "
      "SDK-authored .sd effects and instruments load onto tracks, embed in projects, expose parameters, "
      "graphs and custom panels, and support explicit revision updates. Missing A/B, "
      "hot-swap, preset browser depth, defaults, device delay review."),
-    (24, "Using Plug-Ins", 12, 0.72, "partial",
+    (24, "Using Plug-Ins", 12, 0.74, "partial",
      "CLAP and VST3 hosted out of process, sandboxed, VST3 bundles on Windows, macOS and Linux, "
      "editors (Windows/X11), scans that try failures again and settle files built for another "
      "processor, a plug-in manager (plug-ins switched off, folders per format and switched off), latency "
      "compensation (followed when a plug-in changes its latency while it plays), saved state "
      "(a change in an editor counts as unsaved), VST2 read and matched to VST3, parameters set "
-     "and automated from the engine, ARA plug-ins on audio tracks (arrangement clips, edits saved, "
-     "clip changes followed live, the editor in the clip's place; warped and looped clips not yet). Missing AU, VST2 hosting, "
+     "and automated from the engine and shown as a generated list in the device panel, the song's tempo, "
+     "transport, position, bar, time signature and loop given to every plug-in, ARA plug-ins on audio "
+     "tracks (arrangement clips, edits saved, clip changes followed live, the editor in the clip's place, "
+     "one document a plug-in and project so its editor shows every track; warped and looped clips not "
+     "yet). Missing AU, VST2 hosting, "
      "configure mode, VST preset banks, sidechain parameters."),
     (25, "Instrument, Drum and Effect Racks", 20, 0.25, "partial",
      "Device groups: Ctrl+G groups picked devices, parallel branches with volume, pan, mute and "
@@ -203,12 +215,14 @@ CHAPTERS = [
      "layered on the same notes, plug-ins inside, latency compensated, groups nested four deep, "
      "moved and duplicated by command. No macros, key/velocity/chain zones, drum pads or group "
      "presets."),
-    (26, "Automation and Editing Envelopes", 22, 0.46, "partial",
+    (26, "Automation and Editing Envelopes", 22, 0.48, "partial",
      "Envelopes for track volume, pan and mute, built-in, .sd and plug-in device parameters: breakpoints "
      "with curved segments and jumps, saved, played in playback and renders (64-frame steps, ramped "
      "mixer gains), a manual change turning a lane off until re-enabled. Lanes under each track in "
-     "the Arrangement: a parameter chooser, points added, moved on the grid, selected and moved or "
-     "deleted together, curves bent by dragging, re-enabled from the lane. Missing recording, "
+     "the Arrangement: a parameter chooser with a search, the automated parameters first, devices and "
+     "parameter groups folded under headings, points added, moved on the grid, selected and moved or "
+     "deleted together, curves bent by dragging, re-enabled from the lane, a click near the line adding "
+     "a point on it, a faint line at the value of a lane without points. Missing recording, "
      "drawing with a pencil, plug-in lanes in the view, send, master and tempo automation, "
      "locking, simplifying envelopes."),
     (27, "Clip Envelopes", 13, 0.00, "absent", "No clip envelopes."),
