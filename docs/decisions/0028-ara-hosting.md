@@ -115,6 +115,9 @@ protocol (`crates/plugins/src/protocol.rs`).
    silence. A source whose audio changes (relinked, re-recorded) gets a new region, and the host
    disables sample access on the old one before it goes, as ARA prescribes. Nothing new reaches the
    audio callback.
+   The session removes a source's file when it drops the source; the files of a session that
+   crashed or was killed are removed by the next Suhina process that makes a link or a source
+   (ADR 0006 › The boundary, #805).
 
 5. **The model maps onto the document like this:**
 

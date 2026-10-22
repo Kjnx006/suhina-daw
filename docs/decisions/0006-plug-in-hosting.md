@@ -155,6 +155,21 @@ workspace forbids.
      parameter to the next. Nothing allocates on the audio thread: each slot has room for 512
      events a block. Values go to the processor only, so a VST3 plug-in's editor does not move
      with its automation yet.
+   - **Where the shared memory lives, and who removes it.** Each region is a file in `/dev/shm`
+     on Linux and in the temporary folder elsewhere: `suhina-ipc-<pid>-<n>-<nanos>` for a link,
+     `suhina-ara-<pid>-<n>-<nanos>` for an ARA audio source (ADR 0028). The engine's side makes
+     it and removes it when it drops it; the host only opens it. A crash or a kill runs no drop,
+     so each process that makes one first holds an exclusive lock on `suhina-ipc-<pid>.lock` in
+     the same folder for as long as it lives (taken on `suhina-ipc-<pid>.locking` and renamed
+     into place, so it never shows unlocked under its name), and the first region a process
+     makes sweeps the folder (`crates/ipc/src/sweep.rs`, #805): a pid whose lock file is missing
+     or whose lock it gets is gone, and its files and lock file go; a held lock is a live Suhina
+     (a second instance, an agent's `suhina-cli`, a test), whose files stay. A pid an unrelated
+     process reused holds no such lock, so it keeps nothing. A file the sweep cannot remove is
+     left for the next start; the sweep never errors and never runs on the audio thread.
+     *Limits:* a process's lock file stays after it quits, until the next start removes it; a
+     still-running build from before the sweep holds no lock, so a newer one starting beside it
+     removes its files.
    - **Messages** over a local socket or pipe, with a versioned protocol: load and unload,
      state save and load, latency changes, editor open and close, ping. *Built:* protocol
      version 12 (`ara_playback` comes unasked when an ARA plug-in asks the transport to play,

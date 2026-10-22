@@ -63,6 +63,7 @@ impl AudioSource {
             return Err(IpcError::BadLink("audio source too long"));
         }
         let len = size(channels, frames).ok_or(IpcError::BadLink("audio source too long"))?;
+        crate::sweep::before_making_files();
         let path = crate::region::directory().join(unique_name());
         let file = OpenOptions::new().read(true).write(true).create_new(true).open(&path)?;
         file.set_len(len as u64)?;

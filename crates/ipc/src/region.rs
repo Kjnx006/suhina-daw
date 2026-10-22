@@ -7,7 +7,8 @@
 //!
 //! The region is a file mapped by both processes (in `/dev/shm` on Linux, so it stays in
 //! memory; in the temporary directory elsewhere). The engine creates it and removes it when the
-//! link is dropped.
+//! link is dropped; one that a crashed or killed engine left is removed by the next one
+//! ([`crate::sweep`]).
 
 use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
@@ -67,6 +68,7 @@ pub(crate) struct Region {
 impl Region {
     pub(crate) fn create(channels: u32, max_frames: u32) -> Result<Self, IpcError> {
         let len = size(channels, max_frames).ok_or(IpcError::BadSize { channels, max_frames })?;
+        crate::sweep::before_making_files();
         let name = unique_name();
         let path = directory().join(&name);
         let file = OpenOptions::new().read(true).write(true).create_new(true).open(&path)?;

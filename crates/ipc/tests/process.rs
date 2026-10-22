@@ -85,6 +85,10 @@ fn survives(mode: &str) {
     assert!(started.elapsed() < Duration::from_millis(200), "{mode}: {:?}", started.elapsed());
     let _ = child.kill();
     let _ = child.wait();
+    // The failed peer leaves nothing behind: the region goes with the link.
+    let address = link.address();
+    drop(link);
+    assert!(!std::path::Path::new(&address).exists(), "{mode}: {address}");
 }
 
 #[test]

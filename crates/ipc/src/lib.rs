@@ -29,10 +29,12 @@ mod events;
 mod keyboard;
 mod region;
 mod source;
+mod sweep;
 
 pub use events::{Event, EventKind, MAX_EVENTS};
 pub use keyboard::take_keyboard_back;
 pub use source::{AudioSource, MAX_SOURCE_FRAMES};
+pub use sweep::sweep_leftovers;
 
 use std::fmt;
 use std::path::Path;
