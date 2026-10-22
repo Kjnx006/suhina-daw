@@ -294,6 +294,33 @@ fn a_sampler_in_a_group_plays_its_sample() {
     assert_eq!(plain, nested);
 }
 
+/// The sampler playing slices set by hand: the key above the root key plays the second slice.
+fn sliced_sampler(slices: &[f64]) -> Device {
+    let mut sampler = device("sampler", &[("playback", 3.0), ("slice_by", 3.0)]);
+    sampler.set_sample_file("noise.wav");
+    if !slices.is_empty() {
+        let _ = sampler.set_sample_slices(slices);
+    }
+    sampler
+}
+
+#[test]
+fn a_sampler_in_a_group_plays_its_manual_slices() {
+    let pool = noise_pool();
+    let play = |devices: Vec<Device>| {
+        let project = project(vec![note(0.0, 1.0, 61)], 1.0, devices);
+        crate::render_offline_with_audio(&project, &pool, SR, 512).unwrap_or_default()
+    };
+    let slices = [0.25, 0.5, 0.75];
+    let plain = play(vec![sliced_sampler(&slices)]);
+    assert!(peak(&plain) > 0.01, "the slice sounds at all");
+    assert_ne!(plain, play(vec![sliced_sampler(&[])]), "the stored slices decide what is heard");
+    let grouped = play(vec![group(vec![branch(vec![sliced_sampler(&slices)])], &[])]);
+    assert_eq!(plain, grouped, "bit for bit, as in the chain");
+    let nested = play(vec![group(vec![branch(vec![group(vec![branch(vec![sliced_sampler(&slices)])], &[])])], &[])]);
+    assert_eq!(plain, nested);
+}
+
 fn lane(param: &str, points: &[(f64, f64)]) -> AutomationLane {
     AutomationLane {
         param: param.into(),
