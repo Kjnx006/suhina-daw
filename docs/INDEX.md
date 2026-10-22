@@ -127,6 +127,7 @@ Change this code, and check these documents.
 | `.github/workflows/claim.yml` | [The claim bot](claim-bot.md) |
 | `.github/workflows/depends-on.yml` | [The claim bot](claim-bot.md) |
 | `.github/workflows/discord.yml` | [Releasing](releasing.md) |
+| `.github/workflows/overlap.yml` | [The claim bot](claim-bot.md) |
 | `.github/workflows/parity-notice.yml` | [parity-live-12](research/parity-live-12.md) |
 | `.github/workflows/project-sync.yml` | [The claim bot](claim-bot.md) |
 | `.github/workflows/ready-to-merge.yml` | [Releasing](releasing.md) |
@@ -443,6 +444,7 @@ Change this code, and check these documents.
 | `scripts/shortcuts_guide.py` | [Website shortcut export](spec/shortcuts-guide-export.md) |
 | `scripts/stems-fixture.py` | [Stems files](spec/stems-format.md) |
 | `scripts/test-signal.py` | [Making the `.als` test corpus](spec/als-corpus.md) |
+| `scripts/test_pr_workflows.py` | [The claim bot](claim-bot.md) |
 | `scripts/test_project_sync.py` | [The claim bot](claim-bot.md) |
 | `scripts/test_settings_guide.py` | [Settings guide export](spec/settings-guide-export.md) |
 | `scripts/test_shortcuts_guide.py` | [Website shortcut export](spec/shortcuts-guide-export.md) |
