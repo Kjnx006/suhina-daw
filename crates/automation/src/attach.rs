@@ -25,8 +25,8 @@ use tokio::sync::{Notify, watch};
 use crate::endpoint::{self, Endpoint, Listener, Stream};
 use crate::server::SuhinaMcp;
 
-/// Work an agent's tool call asks of the window's projects.
-pub type Job = Box<dyn FnOnce(&mut Projects) + Send>;
+/// Work an agent's tool call advances once per frame; true finishes the job.
+pub type Job = Box<dyn FnMut(&mut Projects) -> bool + Send>;
 
 /// Asks the window to draw a frame soon (`egui::Context::request_repaint`).
 pub type Wake = Arc<dyn Fn() + Send + Sync>;
@@ -95,6 +95,22 @@ impl AppHost {
         &self,
         f: impl FnOnce(&mut Projects) -> Result<T, String> + Send + 'static,
     ) -> Result<T, String> {
+        let mut f = Some(f);
+        self.poll(move |projects, cancelled| {
+            if cancelled {
+                return Some(Err("the request was cancelled".into()));
+            }
+            f.take().map(|f| f(projects))
+        })
+        .await
+    }
+
+    /// Advances bounded preparation on frames, without retaining access to the projects.
+    /// Cancellation is delivered once so the operation can release its pending state reads.
+    pub(crate) async fn poll<T: Send + 'static>(
+        &self,
+        mut f: impl FnMut(&mut Projects, bool) -> Option<Result<T, String>> + Send + 'static,
+    ) -> Result<T, String> {
         let mut consent = self.consent.clone();
         loop {
             let now = *consent.borrow_and_update();
@@ -109,8 +125,17 @@ impl AppHost {
             }
         }
         let (send, receive) = tokio::sync::oneshot::channel();
+        let mut send = Some(send);
         let job: Job = Box::new(move |projects| {
-            let _ = send.send(f(projects));
+            let cancelled = send.as_ref().is_none_or(|s| s.is_closed());
+            if let Some(result) = f(projects, cancelled) {
+                if let Some(send) = send.take() {
+                    let _ = send.send(result);
+                }
+                true
+            } else {
+                cancelled
+            }
         });
         self.jobs.send(job).map_err(|_| "Suhina has closed".to_string())?;
         (self.wake)();
@@ -192,6 +217,7 @@ pub struct AppEndpoints {
     shared: Arc<Shared>,
     jobs: mpsc::Receiver<Job>,
     job_sender: mpsc::Sender<Job>,
+    pending: std::cell::RefCell<Vec<Job>>,
     events: mpsc::Receiver<AppEvent>,
     opens: mpsc::Receiver<Vec<PathBuf>>,
     enabled: watch::Sender<bool>,
@@ -224,7 +250,7 @@ impl AppEndpoints {
         let shared = Arc::new(Shared { connections: Mutex::new(HashMap::new()), events: events_tx, wake });
         runtime.spawn(serve_app(lock, opens_tx, Arc::clone(&shared)));
         runtime.spawn(serve_agents(key, enabled_rx, job_sender.clone(), Arc::clone(&shared)));
-        Ok(Self { runtime, shared, jobs, job_sender, events, opens, enabled })
+        Ok(Self { runtime, shared, jobs, job_sender, pending: Default::default(), events, opens, enabled })
     }
 
     /// Lets agents connect, or stops listening and ends every connection.
@@ -241,13 +267,17 @@ impl AppEndpoints {
 
     /// Runs the jobs agents have sent, in order, on the window's projects. Returns how many ran.
     pub fn run_jobs(&self, projects: &mut Projects) -> usize {
-        let mut ran = 0;
+        let mut pending = self.pending.borrow_mut();
+        let mut ran = pending.len();
+        pending.retain_mut(|job| !job(projects));
         while ran < JOBS_PER_FRAME {
-            let Ok(job) = self.jobs.try_recv() else { break };
-            job(projects);
+            let Ok(mut job) = self.jobs.try_recv() else { break };
+            if !job(projects) {
+                pending.push(job);
+            }
             ran += 1;
         }
-        if ran == JOBS_PER_FRAME {
+        if ran == JOBS_PER_FRAME || !pending.is_empty() {
             (self.shared.wake)();
         }
         ran

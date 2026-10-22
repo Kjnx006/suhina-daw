@@ -1525,5 +1525,38 @@
       "crates/ui/src/settings/workflow.rs",
       "docs/shortcuts.md"
     ]
+  },
+  "Export/MCP write permissions/mcp_project_folder": {
+    "sourceFingerprint": "30c921230b0703d21dfd0b270f2a1d20be0509af39997d58f693e0edde8b9e3a",
+    "description": "Allow attached agents to write in the folder of the project they act on, including its subfolders. This is on by default. Turn it off to require an explicitly added folder for writes. An unsaved project has no project folder. This does not restrict exports you choose yourself in File > Export.",
+    "options": [
+      {
+        "name": "On",
+        "description": "Allow writes in the project's folder and its subfolders."
+      },
+      {
+        "name": "Off",
+        "description": "Allow writes only in explicitly added folders."
+      }
+    ],
+    "whenToChange": "Turn this off when agents should write only to a separate export folder.",
+    "references": [
+      "crates/ui/src/settings/settings_rows.rs",
+      "crates/ui/src/settings.rs",
+      "crates/automation/src/workspace.rs",
+      "crates/automation/src/server.rs"
+    ]
+  },
+  "Export/MCP write permissions/mcp_write_folders": {
+    "sourceFingerprint": "45a8a72936ca1d790f8f8401e7783728baeed19cb5501dc650db86e4fc3d732b",
+    "description": "Choose the folders where attached agents may save projects and export audio. Add folder opens the system folder picker; Remove revokes that folder's grant. Each grant includes subfolders and is saved across restarts. Missing folders grant no access. Agents cannot change these permissions. Revocation applies to new operations and exports still gathering plug-in state, but does not cancel a render already running.",
+    "options": [],
+    "whenToChange": "Add a destination before asking an agent to export outside your project folder, or to export an unsaved project. Remove folders when access is no longer needed.",
+    "references": [
+      "crates/ui/src/settings/settings_rows.rs",
+      "crates/ui/src/settings.rs",
+      "crates/automation/src/workspace.rs",
+      "crates/automation/src/server.rs"
+    ]
   }
 }

@@ -92,6 +92,15 @@ GPLv3-compatible, for the crate that needs it, with a comment saying what the cr
 why the licence is fine. To update `cargo-deny`, change `CARGO_DENY_VERSION` and
 `CARGO_DENY_SHA256` in the workflow together, and the version above.
 
+**C libraries.** The program is Rust only ([AGENTS.md](AGENTS.md)), and one dependency bends it,
+recorded here: the Ogg Vorbis encoder, `vorbis_rs`, is bindings to libvorbis — C source packaged
+on crates.io that the build compiles. libvorbis is BSD-3-Clause, and the binding's licence is on
+the allowlist. A C encoder was chosen for what this build needs from one (checked October 2026):
+a bitstream Vorbis encodes strictly, and it is what every player and transcoder has round-tripped
+for twenty years; the pure-Rust encoders tried against it then were young and single-maintained
+where a mixdown's bytes go straight to the user's file. When a credible pure-Rust encoder has
+proved itself, the dependency is revisited ([docs/spec/export.md](docs/spec/export.md) › Formats).
+
 ## Working on an issue
 
 A task's state lives in its issue and on the [Suhina project board](https://github.com/orgs/suhina-daw/projects/1),

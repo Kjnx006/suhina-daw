@@ -39,6 +39,7 @@ winresource.workspace = true
 [dev-dependencies]
 # Plug-ins in the engine's track chains, run through a session (tests/engine.rs).
 suhina-engine.workspace = true
+suhina-media.workspace = true
 suhina-model.workspace = true
 suhina-session.workspace = true
 serde_json.workspace = true

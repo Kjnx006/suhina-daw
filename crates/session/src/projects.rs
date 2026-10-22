@@ -32,6 +32,10 @@ struct Open {
 /// belongs to Suhina rather than to any one project.
 #[derive(Default)]
 pub struct Projects {
+    /// Host-owned MCP write permissions, never exposed through project commands.
+    mcp_write_folders: Vec<PathBuf>,
+    /// Defaults to allowing the saved project's folder, preserving attached MCP behaviour.
+    mcp_project_writes_disabled: bool,
     open: Vec<Open>,
     active: Option<ProjectId>,
     last_id: u32,
@@ -125,6 +129,19 @@ pub fn project_commands() -> &'static [CommandSpec<Projects>] {
 }
 
 impl Projects {
+    /// Sets permissions from the person's settings, not from an agent command.
+    pub fn set_mcp_write_folders(&mut self, include_project: bool, folders: &[PathBuf]) {
+        self.mcp_project_writes_disabled = !include_project;
+        if self.mcp_write_folders != folders {
+            self.mcp_write_folders = folders.to_vec();
+        }
+    }
+
+    /// The host's current permissions; checked anew for each MCP operation.
+    pub fn mcp_write_folders(&self) -> (bool, &[PathBuf]) {
+        (!self.mcp_project_writes_disabled, &self.mcp_write_folders)
+    }
+
     pub fn new() -> Self {
         Self::default()
     }
@@ -726,7 +743,7 @@ pub fn commands_markdown() -> String {
     out
 }
 
-fn check_params(id: &str, expected: &[Param], params: &Value) -> Result<(), CommandError> {
+pub(crate) fn check_params(id: &str, expected: &[Param], params: &Value) -> Result<(), CommandError> {
     if !(params.is_object() || params.is_null()) {
         return Err(format!("{id}: parameters must be a JSON object").into());
     }

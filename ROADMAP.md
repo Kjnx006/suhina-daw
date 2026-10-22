@@ -492,6 +492,17 @@ From Live Sets we authored ourselves in Live 12.4 ([format spec](docs/spec/als-f
   Save as template writes a copy to the templates folder. The tab and window title mark unsaved
   changes with a dot, and closing a project, opening another in its place or quitting with
   unsaved changes asks whether to save them.
+- **MCP export permissions:** Settings › Export lists allowed write folders, including the
+  optional project-folder grant. The person adds or revokes folders; agents cannot grant
+  themselves permission. Attached exports prepare across frames and render off the window
+  thread, including exports in batches.
+- **Export:** File › Export… renders the mix to an audio file the user chose — wav (32-bit
+  float, 24 or 16 with dither), flac or ogg, at a chosen sample rate, with normalise to
+  −0.3 dBFS and an overwrite question ([spec](docs/spec/export.md)). The same `project.export`
+  command serves the MCP server and scripts, and adds a range and tail, and a source (one node
+  of the track tree), which the command line reaches with `suhina-cli render --source` too. One
+  export runs at a time — a second is refused — and the export reads the running plug-ins'
+  state as it is heard, without changing anything in the project.
 - A change made only in a plug-in's editor counts as an unsaved change: the dot appears within
   about a minute, and closing or quitting asks whether to save it.
 - The **browser** (Ctrl+B shows and hides it, left or right of the view): search (Ctrl+F),

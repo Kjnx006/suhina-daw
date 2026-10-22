@@ -697,6 +697,28 @@ struct Returned {
     done: Done,
 }
 
+/// One state-read round of [`Rack::gather_states`], tracked independently of the live
+/// instances: a project's stop while a read is out takes the instances with it, and the
+/// round's answers, its fallbacks, the not-answered's names and its completion outlive them.
+struct StateGather {
+    /// The keys the reads were lent to.
+    out: Vec<u64>,
+    /// The keys asked for whose control half was out at the launch (a plug-in's editor
+    /// closing): their reads go out when the control comes back, and the deadline settles
+    /// them with their fallback when it never does.
+    deferred: Vec<u64>,
+    /// The ones whose answer came back ([`Rack::take_returned`]).
+    back: std::collections::HashSet<u64>,
+    /// The answers themselves.
+    states: HashMap<u64, SavedState>,
+    /// What each asked plug-in's state stood at, at the launch: the fallback of the ones
+    /// that do not answer.
+    fallback: HashMap<u64, SavedState>,
+    /// Each asked plug-in's name, as it stood at the launch: the not-answered's report
+    /// names it, even after its instance is gone.
+    names: HashMap<u64, String>,
+}
+
 struct Instance {
     status: PluginStatus,
     plugin: Option<(String, String, &'static str)>,
@@ -877,6 +899,10 @@ pub struct Rack {
     env: Option<std::sync::Arc<PluginEnv>>,
     sample_rate: u32,
     instances: HashMap<u64, Instance>,
+    /// The state reads an export gathers with ([`Rack::gather_states`]): a round tracked
+    /// independently of the live instances, so a project's stop while a read is out — the
+    /// read's answer, its fallback and the round's completion — is not lost with them.
+    state_gather: Option<StateGather>,
     /// The last state of plug-ins that were stopped (a device removed, the project no longer
     /// playing), so they come back as they were.
     kept: HashMap<u64, SavedState>,
@@ -937,6 +963,7 @@ impl Default for Rack {
             env: None,
             sample_rate: 0,
             instances: HashMap::new(),
+            state_gather: None,
             kept: HashMap::new(),
             sender,
             receiver,
@@ -981,6 +1008,12 @@ impl Rack {
 
     pub fn env(&self) -> Option<&PluginEnv> {
         self.env.as_deref()
+    }
+
+    /// The environment as a handle ([`std::sync::Arc`]) a worker thread holds while it renders
+    /// an export off the window's.
+    pub fn env_handle(&self) -> Option<std::sync::Arc<PluginEnv>> {
+        self.env.clone()
     }
 
     /// The state of every plug-in device as it is now, by key, for saving the project. Each
@@ -1031,6 +1064,15 @@ impl Rack {
             std::thread::sleep(Duration::from_millis(2));
             self.take_returned(&mut notices);
         }
+        // A host that did not answer in time keeps the state it last gave; the save, render or
+        // export that waited says so, so a change made in its editor may not be in it.
+        let unanswered = self.instances.iter().filter(|(key, i)| asked.contains(key) && i.control.is_none()).count();
+        if unanswered > 0 {
+            notices.push(format!(
+                "{unanswered} plug-in{} did not answer in time; the settings read are the last ones they gave",
+                if unanswered == 1 { "" } else { "s" }
+            ));
+        }
         self.notices.extend(notices);
     }
 
@@ -1068,6 +1110,135 @@ impl Rack {
         }
         self.edit_check = Some((deadline, rounds - 1));
         false
+    }
+
+    /// The state reads an export gathers with, never waiting on the caller's thread: the
+    /// caller runs this once per frame and its frames carry the answers, with `deadline`
+    /// bounding the round the way a save's [`SAVE_WAIT`] does. `true` settles, and the states
+    /// then stand where [`Rack::known_states`] reads them.
+    ///
+    /// The machine: while a control half is out for another reason (an editor opening, a
+    /// track's ARA work), the reads wait for it, as a save's wait does; once lent, the reads
+    /// wait for their answers; and past the deadline, whatever came in stands, the
+    /// not-answered saying so in the notices. A frame's pumping never sleeps.
+    pub(crate) fn gather_states(&mut self, deadline: Instant) -> bool {
+        let mut notices = Vec::new();
+        // Replies must see the active ledger. Taking the round first loses answers
+        // consumed here, particularly after a tab switch removed the live instances.
+        self.take_returned(&mut notices);
+        // Our own reads, in flight: settled when their answers are all in — counted from the
+        // round itself, not from the instances, which a project's stop takes with it.
+        let mut round = self.state_gather.take();
+        let mut settled = Option::<Vec<(u64, SavedState)>>::None;
+        if let Some(gather) = round.as_mut() {
+            // The deferred reads whose control half came back go out now, while the deadline
+            // still leaves them room to be answered.
+            if Instant::now() < deadline {
+                let lendable: Vec<u64> = gather
+                    .deferred
+                    .iter()
+                    .filter(|key| self.instances.get(*key).is_some_and(|i| i.control.is_some()))
+                    .copied()
+                    .collect();
+                for key in &lendable {
+                    if self.lend(*key, read_state).is_ok() {
+                        gather.out.push(*key);
+                    }
+                }
+                gather.deferred.retain(|key| !lendable.contains(key));
+            }
+            // The round's own count: out and not back, plus the deferred that never went.
+            let pending = gather.out.iter().filter(|key| !gather.back.contains(*key)).count() + gather.deferred.len();
+            if pending == 0 || Instant::now() >= deadline {
+                // What came in stands; the not-answered say so by name, and their states at
+                // the launch stand for them, as a save's wait does.
+                for key in gather.out.iter().filter(|key| !gather.back.contains(*key)).chain(&gather.deferred) {
+                    let name = gather.names.get(key).map(String::as_str).unwrap_or("a plug-in");
+                    notices.push(format!("{name} did not answer in time; the settings read are the last ones it gave"));
+                }
+                for key in gather.back.iter().filter(|key| !gather.states.contains_key(*key)) {
+                    let name = gather.names.get(key).map(String::as_str).unwrap_or("a plug-in");
+                    notices.push(format!(
+                        "{name}: reading its settings failed; the settings read are the last ones it gave"
+                    ));
+                }
+                settled = Some(
+                    gather
+                        .out
+                        .iter()
+                        .chain(&gather.deferred)
+                        .filter_map(|key| {
+                            gather.states.get(key).or_else(|| gather.fallback.get(key)).map(|s| (*key, s.clone()))
+                        })
+                        .collect(),
+                );
+            }
+        }
+        if let Some(states) = settled {
+            self.notices.extend(std::mem::take(&mut notices));
+            for (key, state) in states {
+                self.kept.insert(key, state);
+            }
+            return true;
+        }
+        if round.is_some() {
+            // The round is not settled yet: its answers come on later frames.
+            self.notices.extend(std::mem::take(&mut notices));
+            self.state_gather = round;
+            return false;
+        }
+        self.notices.extend(std::mem::take(&mut notices));
+        // The reads go out at the first call, whatever may be holding a control half; the
+        // round defers those and answers for them later. A plug-in still starting is asked
+        // for the same way: its read goes out when it runs, within the round's own deadline.
+        let known = self.known_states();
+        let running: Vec<u64> = self
+            .instances
+            .iter()
+            .filter(|(_, i)| matches!(i.status, PluginStatus::Running | PluginStatus::Loading))
+            .map(|(k, _)| *k)
+            .collect();
+        if running.is_empty() {
+            // Nothing running: the states stand as they are.
+            return true;
+        }
+        let (mut lendable, deferred): (Vec<u64>, Vec<u64>) =
+            running.into_iter().partition(|key| self.instances.get(key).is_some_and(|i| i.control.is_some()));
+        let out: Vec<u64> = lendable.drain(..).filter(|key| self.lend(*key, read_state).is_ok()).collect();
+        self.notices.extend(std::mem::take(&mut notices));
+        if out.is_empty() && deferred.is_empty() {
+            // No thread to ask on, and nothing that runs: the states stand as they are.
+            return true;
+        }
+        let asked: std::collections::HashSet<u64> = out.iter().chain(&deferred).copied().collect();
+        self.state_gather = Some(StateGather {
+            names: asked
+                .iter()
+                .filter_map(|key| self.instances.get(key).and_then(|i| i.plugin.as_ref().map(|p| (*key, p.0.clone()))))
+                .collect(),
+            fallback: asked.iter().filter_map(|key| known.get(key).map(|s| (*key, s.clone()))).collect(),
+            out,
+            deferred,
+            back: std::collections::HashSet::new(),
+            states: HashMap::new(),
+        });
+        false
+    }
+
+    /// Cancels the gather's round, what came in standing where it is: a cancelled export's
+    /// late replies change nothing, and the next export gathers its own round.
+    pub(crate) fn cancel_gather(&mut self) {
+        self.state_gather = None;
+    }
+
+    /// Whether a caller already owns the export preparation round.
+    pub(crate) fn gathering(&self) -> bool {
+        self.state_gather.is_some()
+    }
+
+    /// Transfers preparation notices to the export result so an inactive tab cannot hide them.
+    pub(crate) fn take_export_notices(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.notices)
     }
 
     /// Whether a plug-in's state changed since the project was last saved or opened, without
@@ -1125,6 +1296,17 @@ impl Rack {
     fn take_returned(&mut self, notices: &mut Vec<String>) {
         while let Ok(returned) = self.returned.try_recv() {
             let Returned { key, generation, control, done } = returned;
+            // An export's gather keeps the reads' answers where they land, whether the
+            // instances are still in or were stopped out from under the reads.
+            if let Done::Saved(state) = &done
+                && let Some(gather) = self.state_gather.as_mut()
+                && gather.out.contains(&key)
+            {
+                gather.back.insert(key);
+                if let Some(state) = state {
+                    gather.states.insert(key, state.clone());
+                }
+            }
             if let Done::Stopped(state) = done {
                 // A plug-in loaded again with new clips starts with this state.
                 self.rebinding.remove(&key);
@@ -2265,6 +2447,48 @@ pub fn device_kind(plugin: &PluginInfo) -> DeviceKind {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A pending read whose instance was detached while the host held its control.
+    fn detached_gather() -> Rack {
+        Rack {
+            state_gather: Some(StateGather {
+                out: vec![1],
+                deferred: Vec::new(),
+                back: Default::default(),
+                states: Default::default(),
+                fallback: [(1, SavedState::from(vec![1]))].into(),
+                names: [(1, "Test instrument".to_string())].into(),
+            }),
+            ..Rack::default()
+        }
+    }
+
+    #[test]
+    fn export_gather_consumes_a_detached_reply_without_using_the_cached_state() {
+        let mut rack = detached_gather();
+        let fresh = SavedState::from(vec![2]);
+        rack.returned_sender
+            .send(Returned { key: 1, generation: 0, control: None, done: Done::Saved(Some(fresh.clone())) })
+            .unwrap();
+        assert!(rack.gather_states(Instant::now() + SAVE_WAIT));
+        assert_eq!(rack.known_states().get(&1), Some(&fresh));
+        assert!(rack.notices.is_empty());
+    }
+
+    #[test]
+    fn export_gather_names_a_failed_read_before_using_its_fallback() {
+        let mut rack = detached_gather();
+        rack.returned_sender.send(Returned { key: 1, generation: 0, control: None, done: Done::Saved(None) }).unwrap();
+        // A normal frame may receive the reply before the export pumps its gather.
+        rack.take_returned(&mut Vec::new());
+        assert!(rack.gather_states(Instant::now() + SAVE_WAIT));
+        assert_eq!(rack.known_states().get(&1), Some(&SavedState::from(vec![1])));
+        assert!(
+            rack.notices.iter().any(|n| n.contains("Test instrument") && n.contains("failed")),
+            "{:?}",
+            rack.notices
+        );
+    }
 
     #[test]
     fn a_backup_keeps_the_last_completed_state_while_a_worker_has_the_control_half() {
