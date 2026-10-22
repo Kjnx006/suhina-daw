@@ -5218,3 +5218,43 @@ fn switching_projects_while_the_export_renders_keeps_the_export_and_names_it() {
     assert_eq!(frames, expected, "the exported file is the second project's render");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A slot's right-click menu deletes its clip, MIDI or audio, as the Delete key does, in one
+/// undo step; an empty slot's Delete is greyed out (#842).
+#[test]
+fn a_slots_context_menu_deletes_its_clip() {
+    // A MIDI clip: Walk, in Bass's second slot.
+    let mut harness = window(demo_app());
+    harness.get_by_label("Launch Walk on Bass (scene 2)").click_secondary();
+    harness.run();
+    harness.get_by_label_contains("Delete").click();
+    harness.run();
+    assert!(harness.query_by_label("Launch Walk on Bass (scene 2)").is_none(), "the clip is gone");
+    harness.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    harness.run();
+    assert!(harness.query_by_label("Launch Walk on Bass (scene 2)").is_some(), "one undo brings it back");
+
+    // An empty slot: nothing to delete.
+    harness.get_by_label("Stop Keys (scene 1)").click_secondary();
+    harness.run();
+    assert!(egui_kittest::kittest::NodeT::accesskit_node(&harness.get_by_label_contains("Delete")).is_disabled());
+    harness.key_press(Key::Escape);
+    harness.run();
+
+    // An audio clip: the Loop track's, put in its first slot.
+    let (mut project, waveforms) = project_with_audio();
+    let clip = project.arrangement.lanes.last().and_then(|l| l.clips.first()).cloned().unwrap();
+    project.launcher.columns.push(suhina_engine::model::LauncherColumn {
+        track: suhina_engine::model::TrackId(30),
+        slots: vec![suhina_engine::model::Slot { clip: Some(clip), has_stop: true }],
+    });
+    let mut app = App::new();
+    app.set_session(Session::new(project), &[]);
+    app.set_waveforms(waveforms);
+    let mut harness = window(app);
+    harness.get_by_label("Launch Loop on Loop (scene 1)").click_secondary();
+    harness.run();
+    harness.get_by_label_contains("Delete").click();
+    harness.run();
+    assert!(harness.query_by_label("Launch Loop on Loop (scene 1)").is_none(), "the audio clip is gone");
+}

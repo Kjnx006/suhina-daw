@@ -586,6 +586,11 @@ pub fn slot_menu(
         actions.push(Action::new("clip.paste", json!({ "track": track.0, "scene": scene })));
         ui.close();
     }
+    // A MIDI or an audio clip alike, as the Delete key takes a selected slot's (#842).
+    if ui.add_enabled(has_clip, egui::Button::new("Delete").shortcut_text("Del")).clicked() {
+        actions.push(Action::new("clip.delete", json!({ "track": track.0, "scene": scene })));
+        ui.close();
+    }
 }
 
 #[cfg(test)]
