@@ -42,10 +42,10 @@
   (`engine`, `ui`, `formats`, `browser`, `audio-io`, `plug-ins`, `devices`, `presets`, `tests`),
   plus `windows`, `macos` or `linux` when it concerns one platform. The forms set the type, and
   `.github/workflows/issue-labels.yml` adds area and platform labels from the form's answers.
-- **Pull request labels:** `.github/workflows/pr-labels.yml` adds them as `.github/labeler.yml` maps
+- **Pull request labels:** `.github/workflows/pr-labels.yml` keeps them as `.github/labeler.yml` maps
   them: the kind from the branch name (`feature/` `enhancement`, `fix/` `bug`, `docs/`
   `documentation`, `chore/` `chore`; also `documentation` when every file changed is a document)
-  and the areas from the paths changed. It only adds labels; add a platform label by hand.
+  and the areas from the paths changed. At every push it also takes off the ones that no longer match, so a rebased pull request loses the areas it no longer touches; labels it does not map (a platform, `test-build`, `ready to merge`) are left alone, and a platform label is added by hand.
 - **CodeRabbit:** reviews every pull request that is not a draft against AGENTS.md
   (`.coderabbit.yaml`) and shows a **CodeRabbit** check beside CI. Its comments are suggestions, not requirements: answer or resolve
   them, and leave DSP and real-time behaviour to the tests and renders. The check is never red and
