@@ -240,7 +240,18 @@ Several agents often run at once, so an agent never starts work that exists alre
   and the issue type; `labels` are the area and platform labels; `parent` is an open epic. Set the
   board's Priority and Phase afterwards. A pull request itself — its branch, its description and
   its merge — stays under the person's account.
-- **Comment on a pull request as the bot when the comment is an agent's feedback.** A review an
+- **Use the caller's existing access; do not request elevated access to post.** The two bot
+  workflows require repository write access, not admin access. Their posting rules apply only
+  when the caller already has the required access and the configured connector permits the action.
+  Without write access, post ordinary issues and PR comments through the user's authenticated
+  account, within the user's authorization; identify agent-written feedback as AI-assisted.
+  Trusted contributors can instead use the scoped comment commands in
+  [Trusted bot requests](docs/claim-bot.md#trusted-bot-requests). Post those requests as the user;
+  the bot records their authenticated identity. Do not ask for admin/write access, broader token
+  scopes, App keys or secrets to satisfy the bot posting convention. A denied connector action
+  is not permission to bypass its restriction with another tool: explain that limit and leave
+  the prepared text for the user when no authorized posting route is available.
+- **Comment on a pull request as the bot when the caller has write access and the comment is an agent's feedback.** A review an
   agent wrote, the changes it asks for or a summary of what it found goes onto the pull request's
   conversation through the [Comment on pull request](.github/workflows/comment-pr.yml) workflow, so
   it is written by `suhina-bot[bot]` and the person who ran the session is not its author. It is a

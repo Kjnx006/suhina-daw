@@ -189,14 +189,35 @@ is the bot's comment and not that person's; it is a comment, not a GitHub review
 blocks nothing (`AGENTS.md` › Tasks has the commands). The rules in
 [AI-assisted contributions](#ai-assisted-contributions) apply to what the agent wrote.
 
+**No elevated access just to post.** These bot workflows require existing repository write
+access, not admin access. Without it, an agent uses the user's authenticated account to post
+ordinary issues and PR comments, within the user's authorization, and identifies agent-written
+feedback as AI-assisted. Trusted contributors may use the comment commands below. Agents must
+not request admin/write access, broader token scopes or App secrets to follow the bot posting
+convention. Connector restrictions still apply: if no authorized posting route is available,
+explain the limit and give the user the prepared text.
+
+**Trusted bot actions.** Contributors listed in `TRUSTED_CONTRIBUTORS` may ask `suhina-bot`
+to create issues with `/open-issue`, close/reopen issues with `/close` and `/reopen`, and request
+a PR test build with `/test-build`. Each action records **On behalf of @login**, taken from
+the authenticated commenter. See [Trusted bot requests](docs/claim-bot.md#trusted-bot-requests)
+for the issue JSON and limits. The list grants neither repository write access nor merge approval.
+
+The repository variable `MAINTAINERS` controls the maintainer role across all bot workflows,
+including merge authorization. Both lists use comma/whitespace-separated GitHub logins, ignore
+case and accept an optional `@`. There is no hardcoded maintainer fallback when the variable
+is empty. Maintain the lists in Settings → Secrets and variables → Actions → Variables.
+For fork PR test builds, maintainers also use `/test-build`: fork runs may lack repository
+variables and therefore cannot identify a maintainer from a direct label alone.
+
 ## Trying a pull request
 
 A pull request can be tried without building it: GitHub Actions builds packages of it for
 Windows, macOS and Linux ([`docs/releasing.md` › Test builds](docs/releasing.md#test-builds)) and
 links the downloads from the pull request in a comment, updated with every new build. A maintainer's own pull requests are
 built on every push. A contributor's pull request is built once a maintainer has read the diff and
-added the `test-build` label; a later push takes the label off, and the new commits are built when
-the label is added again.
+added the `test-build` label, or a trusted contributor requests it with `/test-build`; a later
+push takes the label off, and the new commits need a new request.
 
 ## Merging many pull requests
 
