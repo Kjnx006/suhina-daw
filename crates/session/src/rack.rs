@@ -278,15 +278,22 @@ fn take_carried(carried: &mut Vec<Event>, params: &mut Vec<Event>, notes: &mut V
     });
 }
 
-/// Keeps the releases among `events` in `carried`, and the latest value of each parameter,
-/// within its capacity. Never allocates.
+/// Keeps the releases among `events` in `carried`, and the latest value of each parameter and
+/// of each channel's pitch bend and pressure, within its capacity: a wheel let go in a block
+/// that was not sent still comes back to rest. Never allocates.
 fn carry_releases(events: &[Event], carried: &mut Vec<Event>) {
     let room = carried.capacity();
-    for event in events.iter().filter(|e| releases(e) || matches!(e.kind, EventKind::Param { .. })) {
-        if let EventKind::Param { id, .. } = event.kind
-            && let Some(older) =
-                carried.iter_mut().find(|c| matches!(c.kind, EventKind::Param { id: other, .. } if other == id))
-        {
+    let latest = |e: &Event| {
+        matches!(e.kind, EventKind::Param { .. } | EventKind::PitchBend { .. } | EventKind::Pressure { .. })
+    };
+    for event in events.iter().filter(|e| releases(e) || latest(e)) {
+        let same = |c: &Event| match (c.kind, event.kind) {
+            (EventKind::Param { id: a, .. }, EventKind::Param { id: b, .. }) => a == b,
+            (EventKind::PitchBend { channel: a, .. }, EventKind::PitchBend { channel: b, .. }) => a == b,
+            (EventKind::Pressure { channel: a, .. }, EventKind::Pressure { channel: b, .. }) => a == b,
+            _ => false,
+        };
+        if let Some(older) = carried.iter_mut().find(|c| same(c)) {
             *older = *event;
             continue;
         }
@@ -2632,6 +2639,17 @@ mod tests {
         let mut carried = Vec::with_capacity(4);
         carry_releases(&events, &mut carried);
         assert_eq!(carried, [Event::param(5, 3, 0.2), Event::param(6, 4, 1.0)]);
+    }
+
+    #[test]
+    fn a_bend_and_pressure_of_a_block_not_sent_are_kept_the_latest_of_each_channel() {
+        let bend = |frame, channel, value| Event { frame, note: -1, kind: EventKind::PitchBend { channel, value } };
+        let pressure = |frame, channel, value| Event { frame, note: -1, kind: EventKind::Pressure { channel, value } };
+        // The wheel let go (back to 0) and the key's pressure released, in the block not sent.
+        let events = [bend(0, 0, 0.8), pressure(1, 0, 0.6), bend(2, 1, -0.5), bend(3, 0, 0.0), pressure(4, 0, 0.0)];
+        let mut carried = Vec::with_capacity(8);
+        carry_releases(&events, &mut carried);
+        assert_eq!(carried, [bend(3, 0, 0.0), pressure(4, 0, 0.0), bend(2, 1, -0.5)]);
     }
 
     #[test]
