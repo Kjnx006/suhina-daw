@@ -154,7 +154,8 @@ selected or under the pointer; clicking it previews the sample (a second click s
 *Adding without dragging*); on a project file it opens the project as a project dropped on the
 window does (Settings › General › When opening a project).
 
-**Right-click menu:** Pin or Unpin; Tag ▸ (each tag, ticked when set; a *New tag…* field that
+**Right-click menu:** Pin or Unpin; Tag ▸ (each tag as a painted checkbox, ticked when set, its colour's swatch and its name; a
+click anywhere on the entry sets or clears it; a *New tag…* field that
 makes a tag in the next default colour and sets it at once — clicks inside the menu, in the
 field included, do not close it; a click outside does, and every button closes it by its
 action); Show in folder (a file: selects its folder

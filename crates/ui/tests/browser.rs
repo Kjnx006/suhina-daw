@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use egui::{Key, Modifiers, Pos2};
 use egui_kittest::Harness;
-use egui_kittest::kittest::Queryable;
+use egui_kittest::kittest::{NodeT, Queryable};
 use serde_json::json;
 use suhina_engine::model::{ChannelId, LaneData};
 use suhina_library::Library;
@@ -1229,6 +1229,39 @@ fn hovering_an_items_tag_dot_says_the_tag_in_the_status_bar() {
         "{:?}",
         harness.state().status()
     );
+    let _ = std::fs::remove_dir_all(&settings);
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
+#[test]
+fn an_items_tag_menu_ticks_its_tags_with_painted_boxes_and_toggles_them() {
+    let (settings, folder) = (temp("tag-menu-settings"), temp("tag-menu"));
+    pack(&folder);
+    let mut harness = window(&settings, &folder);
+    let name = folder.file_name().unwrap().to_string_lossy().to_string();
+    double_click(&mut harness, &row(&name));
+    harness.run();
+    let item = folder.join("Loop 120bpm.wav").display().to_string();
+    harness
+        .state_mut()
+        .projects_mut()
+        .execute("library.tag", &json!({ "item": item, "tag": "Red", "on": true }))
+        .unwrap();
+    harness.run();
+    harness.get_by_label(&row("Loop 120bpm.wav")).click_secondary();
+    harness.run();
+    let at = harness.get_by_label("Tag ⏵").rect().center();
+    harness.hover_at(at);
+    harness.run();
+    // Each entry is a checkbox named by the tag alone: no check mark or padding in its text,
+    // which a font without the glyph draws as an empty box (#853).
+    assert_eq!(harness.get_by_label("Red").accesskit_node().toggled(), Some(egui::accesskit::Toggled::True));
+    assert_eq!(harness.get_by_label("Orange").accesskit_node().toggled(), Some(egui::accesskit::Toggled::False));
+    assert!(harness.query_by_label_contains("✓").is_none());
+    harness.get_by_label("Orange").click();
+    harness.run();
+    let tags = harness.state_mut().projects_mut().file_library_mut().item_tags(&item);
+    assert!(tags.contains(&"Orange".to_string()) && tags.contains(&"Red".to_string()), "{tags:?}");
     let _ = std::fs::remove_dir_all(&settings);
     let _ = std::fs::remove_dir_all(&folder);
 }

@@ -995,8 +995,7 @@ fn row_menu(
     ui.menu_button("Tag", |ui| {
         for tag in tags {
             let on = carried.contains(&tag.name);
-            let label = format!("{} {}", if on { "✓" } else { "  " }, tag.name);
-            if ui.button(label).clicked() {
+            if tag_entry(ui, tag, on).clicked() {
                 run(projects, "library.tag", json!({ "item": item.key, "tag": tag.name, "on": !on }), out);
                 state.relist();
                 ui.close();
@@ -1034,6 +1033,44 @@ fn row_menu(
         state.relist();
         ui.close();
     }
+}
+
+/// One entry of an item's Tag menu: a box, ticked while the item carries the tag, a swatch in
+/// the tag's colour and its name. The box and the swatch are painted, not text, so no font
+/// has to hold a check mark (#853). A click anywhere on the row toggles the tag.
+fn tag_entry(ui: &mut Ui, tag: &suhina_library::Tag, on: bool) -> egui::Response {
+    const BOX: f32 = 12.0;
+    const SWATCH: f32 = 8.0;
+    let font = theme::ui_font(theme::TEXT);
+    let text_left = 6.0 + BOX + 6.0 + SWATCH + 6.0;
+    // As wide as its name needs while the menu measures itself, then as wide as the menu, so
+    // the hover fills the row.
+    let needed = text_left + widgets::text_width(ui, &tag.name, font.clone()) + 8.0;
+    let width = if ui.is_sizing_pass() { needed } else { needed.max(ui.available_width()) };
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, ui.spacing().interact_size.y), Sense::click());
+    response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, on, &tag.name));
+    let painter = ui.painter();
+    let hover = widgets::hover(ui, &response);
+    if hover > 0.0 {
+        painter.rect_filled(rect, 3.0, theme::panel_hover().gamma_multiply(hover));
+    }
+    let box_rect = Rect::from_min_size(Pos2::new(rect.left() + 6.0, rect.center().y - BOX / 2.0), Vec2::splat(BOX));
+    painter.rect_filled(box_rect, 3.0, if on { theme::text_value() } else { theme::control_background() });
+    if on {
+        let r = box_rect.shrink(2.5);
+        let tick = [
+            Pos2::new(r.left(), r.center().y),
+            Pos2::new(r.left() + r.width() * 0.4, r.bottom()),
+            Pos2::new(r.right(), r.top()),
+        ];
+        painter.add(egui::Shape::line(tick.to_vec(), Stroke::new(1.5, theme::window_background())));
+    }
+    let swatch = Pos2::new(box_rect.right() + 6.0 + SWATCH / 2.0, rect.center().y);
+    painter.circle_filled(swatch, SWATCH / 2.0, tag_color(&tag.color));
+    let text_rect = Rect::from_min_max(Pos2::new(rect.left() + text_left, rect.top()), rect.right_bottom());
+    let color = motion::mix(theme::text_value(), theme::text_primary(), hover);
+    widgets::text_in(painter, text_rect, Align2::LEFT_CENTER, &tag.name, font, color);
+    response
 }
 
 fn start_preview(
