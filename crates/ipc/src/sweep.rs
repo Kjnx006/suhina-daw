@@ -17,13 +17,14 @@
 //! mistake a starting process for a gone one.
 //!
 //! Nothing here returns an error: a file that cannot be removed is left for the next start, and
-//! a process that cannot take its lock still makes its files. Never reachable from the audio
+//! a process that cannot take its lock still makes its files, and tries for the lock again with
+//! the next one. Until it has the lock, another process's sweep may remove its files. Never reachable from the audio
 //! callback: it runs where links and sources are made.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{File, OpenOptions, TryLockError};
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
 use crate::region::directory;
@@ -33,20 +34,30 @@ const ATTEMPTS: u32 = 20;
 /// Most leftover files one sweep looks at, so a folder full of them costs a bounded start.
 const MOST_FILES: usize = 100_000;
 
-/// This process's lock, taken (and the folder swept) before its first file is made.
-static OWN_LOCK: OnceLock<Option<File>> = OnceLock::new();
+/// This process's lock, and whether the folder has been swept.
+struct Own {
+    lock: Option<File>,
+    swept: bool,
+}
 
-/// Takes this process's lock and sweeps the folder, the first time a region or a source is made;
-/// a cheap check after that.
+/// Taken before every region or source is made, so the first sweep runs before any of them.
+static OWN: Mutex<Own> = Mutex::new(Own { lock: None, swept: false });
+
+/// Takes this process's lock and sweeps the folder, the first time a region or a source is made.
+/// After that it only checks the lock is held, and tries again if taking it failed: without it,
+/// another process's sweep would take this one's files for a gone process's.
 pub(crate) fn before_making_files() {
-    OWN_LOCK.get_or_init(|| {
-        let (dir, own) = (directory(), std::process::id());
-        let lock = hold_lock(&dir, own);
+    let mut own = OWN.lock().unwrap_or_else(PoisonError::into_inner);
+    let (dir, pid) = (directory(), std::process::id());
+    if own.lock.is_none() {
+        own.lock = hold_lock(&dir, pid);
+    }
+    if !own.swept {
         // Nothing of this process exists yet, so files named after its pid are from an earlier
         // process that had the same pid and is gone.
-        sweep(&dir, own, true);
-        lock
-    });
+        sweep(&dir, pid, true);
+        own.swept = true;
+    }
 }
 
 /// Removes the shared-memory files of Suhina processes that are gone, and never those of a live

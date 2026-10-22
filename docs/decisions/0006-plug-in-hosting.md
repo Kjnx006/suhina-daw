@@ -173,7 +173,9 @@ workspace forbids.
      process with the same pid that renames its lock into place at that moment can lose its lock
      file, and its files to the sweep after that. On Unix the sweep first checks that the name
      still holds the file it locked (device and inode), which leaves only the moment between that
-     check and the removal; elsewhere the name is not checked.
+     check and the removal; elsewhere the name is not checked. A process that cannot take its
+     lock still makes its files (it tries again with each new one): until it has the lock,
+     another process's sweep takes them for a gone process's and may remove them.
    - **Messages** over a local socket or pipe, with a versioned protocol: load and unload,
      state save and load, latency changes, editor open and close, ping. *Built:* protocol
      version 12 (`ara_playback` comes unasked when an ARA plug-in asks the transport to play,
