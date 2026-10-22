@@ -35,7 +35,7 @@ jobs:
       - uses: actions/github-script@v9
         env:
           # As in claim.yml, which accepts `/claim @login` only from them.
-          MAINTAINERS: juhamikael
+          MAINTAINERS: ${{ vars.MAINTAINERS }}
         with:
           script: |
             const pr = context.payload.pull_request;
@@ -181,7 +181,7 @@ jobs:
                 assignee: "*",
                 per_page: 100,
               });
-              const maintainers = String(process.env.MAINTAINERS || "").toLowerCase().split(/[\s,]+/).filter(Boolean);
+              const maintainers = String(process.env.MAINTAINERS || '').split(/[\s,]+/).map(s => s.replace(/^@/, '').toLowerCase()).filter(Boolean);
               for (const issue of assigned) {
                 if (issue.pull_request || closes.includes(issue.number)) continue;
                 const comments = await github.paginate(github.rest.issues.listComments, {

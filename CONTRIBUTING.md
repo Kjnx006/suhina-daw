@@ -203,6 +203,13 @@ a PR test build with `/test-build`. Each action records **On behalf of @login**,
 the authenticated commenter. See [Trusted bot requests](docs/claim-bot.md#trusted-bot-requests)
 for the issue JSON and limits. The list grants neither repository write access nor merge approval.
 
+The repository variable `MAINTAINERS` controls the maintainer role across all bot workflows,
+including merge authorization. Both lists use comma/whitespace-separated GitHub logins, ignore
+case and accept an optional `@`. There is no hardcoded maintainer fallback when the variable
+is empty. Maintain the lists in Settings → Secrets and variables → Actions → Variables.
+For fork PR test builds, maintainers also use `/test-build`: fork runs may lack repository
+variables and therefore cannot identify a maintainer from a direct label alone.
+
 ## Trying a pull request
 
 A pull request can be tried without building it: GitHub Actions builds packages of it for

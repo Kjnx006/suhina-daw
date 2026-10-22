@@ -58,13 +58,7 @@ jobs:
     name: what to build
     # A maintainer's own pull request on every push; labelled requests are authorized below,
     # and a run by hand (only people who can write to the repository can start one). The
-    # maintainers are listed here and in test-build-links.yml.
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (contains(fromJSON('["juhamikael"]'), github.triggering_actor) &&
-        github.event.action != 'labeled' &&
-        contains(fromJSON('["juhamikael"]'), github.event.pull_request.user.login)) ||
-      (github.event.action == 'labeled' && github.event.label.name == 'test-build')
+    # maintainers come from the repository variable MAINTAINERS.
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -77,13 +71,16 @@ jobs:
       matrix: ${{ steps.decide.outputs.matrix }}
     steps:
       - name: Authorize the labelled commit
+        id: authorize
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          MAINTAINERS: ${{ vars.MAINTAINERS }}
         with:
           script: |
-            const trusted = ['juhamikael', ...String(process.env.TRUSTED_CONTRIBUTORS || '')
+            const trusted = [...String(process.env.MAINTAINERS || '').split(/[\s,]+/).map(s => s.replace(/^@/, '').toLowerCase()).filter(Boolean), ...String(process.env.TRUSTED_CONTRIBUTORS || '')
               .split(/[\s,]+/).map(s => s.replace(/^@/, '').toLowerCase())];
             const authorizedBuild = async (actor, number, sha, at, checkMembership = true) => {
-              if (String(actor).toLowerCase() === 'juhamikael') return true;
+              if (String(process.env.MAINTAINERS || '').split(/[\s,]+/).map(s => s.replace(/^@/, '').toLowerCase()).filter(Boolean).includes(String(actor).toLowerCase())) return true;
               if (actor !== 'suhina-bot[bot]') return false;
               const comments = await github.paginate(github.rest.issues.listComments, {
                 ...context.repo, issue_number: number, per_page: 100,
@@ -103,23 +100,35 @@ jobs:
               }
               return false;
             };
-            if (context.eventName !== 'pull_request' || context.payload.action !== 'labeled') return;
+            const maintainers = String(process.env.MAINTAINERS || '').split(/[\s,]+/).map(s => s.replace(/^@/, '').toLowerCase()).filter(Boolean);
+            const member = login => maintainers.includes(String(login || '').toLowerCase());
+            if (context.eventName === 'workflow_dispatch') {
+              core.setOutput('allowed', member(context.actor));
+              return;
+            }
+            if (context.payload.action !== 'labeled') {
+              core.setOutput('allowed', member(context.actor) && member(context.payload.pull_request.user.login));
+              return;
+            }
+            if (context.payload.label?.name !== 'test-build') return;
             const pr = context.payload.pull_request;
             // Fork pull_request runs may not receive repository variables. Trust the App's
             // commit-bound proof here; the default-branch gateway and linker check membership.
             if (!(await authorizedBuild(context.actor, pr.number, pr.head.sha, new Date().toISOString(), false))) {
-              throw new Error('No authorized test-build request for this commit.');
+              throw new Error('No authorized test-build request for this commit. Use /test-build on fork PRs.');
             }
+            core.setOutput('allowed', true);
       # Every branch and the pull request's merge commit, whose second parent is its head; no
       # code is built or run but scripts/branch_update.py.
       - uses: actions/checkout@v7
-        if: github.event.action == 'synchronize'
+        if: steps.authorize.outputs.allowed == 'true' && github.event.action == 'synchronize'
         with:
           fetch-depth: 0
           persist-credentials: false
       # Skipped only when the push merged main and nothing else into a head whose run succeeded
       # (built, or skipped the same way): a failed or cancelled build is never left as the last one.
       - id: decide
+        if: steps.authorize.outputs.allowed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           ACTION: ${{ github.event.action }}

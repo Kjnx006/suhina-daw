@@ -24,6 +24,7 @@ jobs:
         id: check
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
+          MAINTAINERS: ${{ vars.MAINTAINERS }}
           TRUSTED_CONTRIBUTORS: ${{ vars.TRUSTED_CONTRIBUTORS }}
         with:
           script: |
@@ -31,7 +32,7 @@ jobs:
             const text = String(comment.body || '').replace(/\r\n/g, '\n');
             const [first, ...rest] = text.split('\n');
             if (!['/open-issue', '/close', '/reopen', '/test-build'].includes(first.trim())) return;
-            const trusted = ['juhamikael', ...String(process.env.TRUSTED_CONTRIBUTORS || '')
+            const trusted = [...String(process.env.MAINTAINERS || '').split(/[\s,]+/).map(s => s.replace(/^@/, '').toLowerCase()).filter(Boolean), ...String(process.env.TRUSTED_CONTRIBUTORS || '')
               .split(/[\s,]+/).map(s => s.replace(/^@/, '').toLowerCase())];
             if (comment.user.type !== 'User' || !trusted.includes(comment.user.login.toLowerCase())) {
               throw new Error('Only a maintainer or trusted contributor may use this command.');
@@ -92,6 +93,14 @@ jobs:
           script: |
             const request = JSON.parse(process.env.REQUEST);
             const { command, actor, comment, number } = request;
+            const original = context.payload.comment;
+            const { data: current } = await github.rest.issues.getComment({
+              ...context.repo, comment_id: comment,
+            });
+            if (current.body !== original.body || current.user.id !== original.user.id ||
+                current.updated_at !== original.updated_at) {
+              throw new Error('The request changed; post a new comment.');
+            }
             const scope = { ...context.repo, issue_number: number };
             const marker = `<!-- trusted-request ${comment} -->`;
             const bot = c => c.user?.login === 'suhina-bot[bot]' && c.user?.type === 'Bot';

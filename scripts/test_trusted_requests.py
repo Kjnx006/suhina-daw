@@ -4,7 +4,10 @@
 """Run the shipped privileged workflow scripts against fake GitHub APIs, never the network."""
 
 import json
+import os
 from pathlib import Path
+import re
+import shutil
 import subprocess
 import unittest
 
@@ -30,12 +33,13 @@ const user = {login: 'Trusted', id: 7, type: 'User'};
 const bot = {login: 'suhina-bot[bot]', type: 'Bot'};
 const comment = {id: 12, body: '/close', user, updated_at: '2026-10-22T10:00:00Z',
   issue_url: 'https://api.github.com/repos/owner/repo/issues/4', ...input.comment};
-const context = {repo: {owner: 'owner', repo: 'repo'}, actor: 'suhina-bot[bot]',
-  eventName: 'pull_request', payload: {action: 'labeled', comment,
-    issue: {number: 4, ...input.issue}, pull_request: {number: 4, head: {sha}},
+const context = {repo: {owner: 'owner', repo: 'repo'}, actor: input.actor || 'suhina-bot[bot]',
+  eventName: input.eventName || 'pull_request', payload: {action: input.action || 'labeled', label: {name:'test-build'}, sender:{login:input.sender}, comment,
+    issue: {number: 4, ...input.issue}, pull_request: {number: 4, head: {sha}, user:{login: input.author || 'Maintainer'}},
     workflow_run: input.run}};
 const outputs = {}, calls = [];
 const core = {setOutput: (k,v) => outputs[k]=v, info: () => {}};
+process.env.MAINTAINERS = input.maintainers ?? 'Maintainer';
 process.env.TRUSTED_CONTRIBUTORS = input.trusted ?? 'other, @TRUSTED';
 process.env.REQUEST = JSON.stringify(input.request || {command:'close',actor:'Trusted',comment:12,number:4});
 const comments = (input.comments || []).map(c => ({user:bot, ...c}));
@@ -71,7 +75,7 @@ class TrustedRequests(unittest.TestCase):
 
     def test_roles(self):
         self.assertIn('request', self.check()['outputs'])
-        self.assertIn('request', self.check(trusted='', comment={'user': {'login':'juhamikael','id':7,'type':'User'}})['outputs'])
+        self.assertIn('request', self.check(trusted='', comment={'user': {'login':'Maintainer','id':7,'type':'User'}})['outputs'])
         self.assertIsNotNone(self.check(trusted='')['error'])
         self.assertIsNotNone(self.check(comment={'user': {'login':'Trusted','id':7,'type':'Bot'}})['error'])
         self.assertEqual(self.check(comment={'body':'/ready'})['outputs'], {})
@@ -80,6 +84,57 @@ class TrustedRequests(unittest.TestCase):
         for current in [{'body':'/reopen','user':{'id':7}}, {'body':'/close','user':{'id':8}}]:
             self.assertIsNotNone(self.check(current=current)['error'])
         self.assertIsNotNone(self.check(deleted=True)['error'])
+
+    def test_changed_comment_cannot_reach_any_write(self):
+        for command in ['open-issue', 'close', 'reopen', 'test-build']:
+            request = {'command':command, 'actor':'Trusted', 'comment':12, 'number':4}
+            for change in [dict(deleted=True), dict(current={'body':'changed','user':{'id':7}}),
+                           dict(current={'body':'/close','user':{'id':8}}),
+                           dict(current={'body':'/close','user':{'id':7},'updated_at':'later'})]:
+                with self.subTest(command=command, change=change):
+                    result = self.act(request=request, **change)
+                    self.assertIsNotNone(result['error'])
+                    self.assertEqual(result['calls'], [])
+
+    def test_maintainer_changes_and_exact_matching(self):
+        person = {'user':{'login':'New-Boss','id':7,'type':'User'}}
+        self.assertIn('request', self.check(maintainers='other, @NEW-BOSS\nthird', trusted='', comment=person)['outputs'])
+        for names in ['', 'New', 'New-Boss-extra', 'old-boss']:
+            self.assertIsNotNone(self.check(maintainers=names, trusted='', comment=person)['error'])
+        # The former hardcoded owner has no special fallback privilege.
+        self.assertIsNotNone(self.check(maintainers='', trusted='', comment={'user':{'login':'juhamikael','id':7,'type':'User'}})['error'])
+
+    def test_merge_and_link_role_outputs(self):
+        for workflow in ['ready-to-merge.yml', 'test-build-links.yml']:
+            source = script(workflow, '  roles:')
+            allowed = self.run_script(source, maintainers='first, @NEW-BOSS\nlast', sender='New-Boss', actor='LAST')
+            self.assertEqual(allowed['outputs'], {'sender':True, 'actor':True})
+            denied = self.run_script(source, maintainers='', sender='juhamikael', actor='juhamikael')
+            self.assertEqual(denied['outputs'], {'sender':False, 'actor':False})
+
+    def test_merge_shell_uses_the_same_login_rules(self):
+        workflow = (ROOT / '.github/workflows/ready-to-merge.yml').read_text(encoding='utf-8')
+        function = re.search(r'          is_maintainer\(\) \{\n.*?\n          \}', workflow, re.S).group()
+        bash = shutil.which('bash')
+        if os.name == 'nt':
+            bash = str(Path(os.environ.get('ProgramFiles', 'C:/Program Files')) / 'Git/bin/bash.exe')
+        for names, login, expected in [('other, @NEW-BOSS\nthird', 'New-Boss', 0),
+                                       ('New-Boss-extra', 'New-Boss', 1), ('', 'juhamikael', 1)]:
+            result = subprocess.run([bash, '--noprofile', '--norc', '-o', 'pipefail', '-c',
+                                     function + '\nis_maintainer "$CHECK_LOGIN"'],
+                                    env=dict(os.environ, MAINTAINERS=names, CHECK_LOGIN=login),
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, expected, result.stderr)
+
+    def test_automatic_and_manual_build_roles(self):
+        source = script('test-build.yml', '- name: Authorize the labelled commit')
+        allowed = self.run_script(source, maintainers='@NEW-BOSS', actor='new-boss', author='New-Boss', action='synchronize')
+        self.assertTrue(allowed['outputs']['allowed'])
+        denied = self.run_script(source, maintainers='', actor='juhamikael', author='juhamikael', action='synchronize')
+        self.assertFalse(denied['outputs']['allowed'])
+        for names, expected in [('New-Boss', True), ('', False)]:
+            result = self.run_script(source, maintainers=names, actor='new-boss', eventName='workflow_dispatch')
+            self.assertEqual(result['outputs']['allowed'], expected)
 
     def test_commands_and_targets(self):
         for cmd in ['/close', '/reopen']:
@@ -166,7 +221,7 @@ class TrustedRequests(unittest.TestCase):
     def test_linker_does_not_borrow_rerunner_authority(self):
         source = script('test-build-links.yml', 'id: link')
         result = self.run_script(source, run={'id': 1, 'actor': {'login':'outsider'},
-                                              'triggering_actor': {'login':'juhamikael'}})
+                                              'triggering_actor': {'login':'Maintainer'}})
         # Reject before reading jobs/artifacts or making any write.
         self.assertIsNone(result['error'])
         self.assertEqual(result['calls'], [])

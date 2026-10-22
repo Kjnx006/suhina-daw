@@ -75,9 +75,17 @@ to the repository, triage included, a `COLLABORATOR`. It reads two lists of logi
 
 | Role | Listed in | May |
 |---|---|---|
-| Maintainer | `MAINTAINERS` in [`claim.yml`](../.github/workflows/claim.yml) (also in `ready-to-merge.yml`, `test-build.yml` and `test-build-links.yml`); changed by a pull request | everything in the table above: `/hold`, `/ready`, `/claim @login`, `/unclaim` for anyone, claim a feature in `Backlog`, any number of claims |
+| Maintainer | the repository variable `MAINTAINERS` (Settings → Secrets and variables → Actions → Variables), logins separated by commas or whitespace | everything in the table above: `/hold`, `/ready`, `/claim @login`, `/unclaim` for anyone, claim a feature in `Backlog`, any number of claims |
 | Trusted contributor | the repository variable `TRUSTED_CONTRIBUTORS` (Settings → Secrets and variables → Actions → Variables), logins separated by commas or spaces | claim a feature in `Backlog` without `/ready`, and `/ready` a card in `Backlog` so anyone may claim it; not `/hold`, not release a held card, not claim for others |
 | Anyone else | | claim free work for themselves, `/unclaim` their own claim |
+
+Both lists accept an optional `@` and match whole logins without case. `MAINTAINERS` is shared
+by Claim, Overlap, Ready to merge, Test build, Test build links and Trusted requests. Changing
+maintainers requires editing that variable only; there is no hardcoded fallback. An unset or
+empty list grants nobody the maintainer role. Keep these as repository variables, not environment
+overrides, so all workflows see the same policy. Only people allowed to administer repository
+variables should manage these lists: `MAINTAINERS` controls merge authorization as well as bot
+commands. Membership does not grant GitHub's own write/admin permissions.
 
 Trusted contributors may also request the bot actions below; no repository write access comes with the list. Merging stays a maintainer's: only a maintainer's
 `ready to merge` label queues a pull request ([`CONTRIBUTING.md`](../CONTRIBUTING.md) › Merging many
@@ -99,7 +107,11 @@ or whitespace; an optional `@` is accepted.
 | `/open-issue` followed by JSON | An existing issue or pull request | Create a new issue as the bot and reply with its number |
 
 Post a **new comment**, with the command on its own first line. Editing a comment does not
-run it. Close/reopen and test-build take no arguments; close/reopen never act on pull requests.
+run it. The source comment is fetched again immediately before carrying out the request;
+changed authors, bodies, update timestamps and deleted comments are rejected before any write.
+This is a second check, not an atomic transaction with GitHub: an edit after the final read
+cannot cancel a write already starting. Close/reopen and test-build take no arguments;
+close/reopen never act on pull requests.
 A completed request is not repeated when its Actions run is rerun. Issue creation recovers an
 issue created before a failed reply. A partially failed test-build request may repeat a label
 event for the same commit, but cannot authorize another commit. Runs for the same comment are

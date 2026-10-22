@@ -175,7 +175,12 @@ on repository variables, which may be unavailable in fork PR runs; the default-b
 and linker check membership. A rerun retains the original run actor's authorization, not the
 rerunner's. Both workflows verify the commit-bound proof;
 a forged or stale proof, removed trusted user, edited/deleted request or another PR's comment
-cannot authorize a link. The maintainers are listed in both workflows.
+cannot authorize a link. All role checks read the repository variable `MAINTAINERS`, using
+comma/whitespace-separated logins, optional `@` prefixes and case-insensitive exact matching.
+An empty list grants no maintainer authority. Set it at repository level, not as an environment
+override. For fork PRs, maintainers also use `/test-build`: the build may not receive repository
+variables, so direct maintainer labels cannot reliably be authorized there. Automatic builds
+of maintainer PRs continue for branches in this repository.
 
 Trusted contributors use `/test-build` on an open PR, as described in
 [Trusted bot requests](claim-bot.md#trusted-bot-requests). The bot attributes the request, records
@@ -243,8 +248,9 @@ permissions › **Contents** and **Pull requests**: Read and write; its public C
 `DOCS_BOT_CLIENT_ID` variable and its private key the `DOCS_BOT_PRIVATE_KEY` secret in the
 `docs-bot` environment, which `pull_request_target` may use
 because it runs on `main`; and Settings › General › **Allow auto-merge** is on. Without that setting the
-*approve and queue* job fails, and nothing merges. The maintainers are listed in the workflow as in
-the test build's.
+*approve and queue* job fails, and nothing merges. Maintain the shared `MAINTAINERS` repository
+variable in Settings → Secrets and variables → Actions → Variables. Changing that list controls
+who may authorize a merge; there is no maintainer name embedded in the workflows.
 
 Use the Client ID from the app's GitHub settings (or the public `GET /apps/{app_slug}` response),
 not its numeric App ID. `actions/create-github-app-token` v3 deprecates the `app-id` input.
