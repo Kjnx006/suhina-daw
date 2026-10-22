@@ -63,10 +63,11 @@ engine code.
    `Chain::live_control`, as a `NoteEvent` the device already takes (#812). A track that stops
    hearing a source (disarmed, given another input, or the port closed) has the pitch bend and
    pressure that source moved set back to the centre and to none, so its instrument is not left
-   bent. A stamped control waits for its frame as a note does, but in place of the one before it
-   that moves the same control, so a wheel's stream takes one place of the waiting notes, and
-   controls take at most half of them: a stream never leaves a note-off playing ahead of its
-   note-on. Nothing on the render thread allocates, locks or frees.
+   bent. A stamped control waits for its frame as a note does, each value at its own frame so a
+   wheel moves smoothly, but controls take at most half of the waiting places: past that, a new
+   value takes the place of the one before it that moves the same control, at that one's frame,
+   so a stream never leaves a note-off playing ahead of its note-on. Nothing on the render
+   thread allocates, locks or frees.
 3. **Arming is playing state, not an edit.** An armed track's instrument plays the live notes,
    whether the transport runs or not. Which tracks are armed is kept by the `Session` beside the
    project, not in it: `track.setArm` is a transport command, is not undone and is not saved

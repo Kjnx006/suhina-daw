@@ -43,9 +43,10 @@ const UNTIL_RELEASED: u64 = u64::MAX - 1;
 /// Stamped notes waiting for their frame in a later block: more than a hand plays within the
 /// delay. Past that, a note plays at once.
 const MAX_WAITING: usize = 256;
-/// Of those, what controllers, pitch bend and pressure may take, so that a stream of them never
-/// leaves a note without a place: a note that played at once could overtake the one before it
-/// (a release before its key), and hang.
+/// Of those, what controllers, pitch bend and pressure may take, each in a place of its own;
+/// past that, a new value takes the place of the one before it. A stream of them never leaves a
+/// note without a place: a note that played at once could overtake the one before it (a release
+/// before its key), and hang.
 const MAX_WAITING_CONTROLS: usize = MAX_WAITING / 2;
 /// How much of the difference between the render thread's clock and the steady block cadence
 /// is taken in each block: enough to follow a device clock that drifts, too little to follow
@@ -479,7 +480,7 @@ impl Live {
                 .unwrap_or(0);
             let at = at.max(after);
             let place =
-                if at > position && is_control(&event) { self.place_control(source, event, at) } else { Place::Own };
+                if at > position && is_control(&event) { self.place_control(source, event) } else { Place::Own };
             if place == Place::Merged {
                 continue;
             }
@@ -497,30 +498,20 @@ impl Live {
         self.frame(chains, recorder, 0, position);
     }
 
-    /// Where a stamped control from `source` waits: in place of the latest one waiting that
-    /// moves the same control when no key or pedal from the source came after it, so a wheel's
-    /// stream takes one place, not hundreds; else in a place of its own while controls have
-    /// fewer than [`MAX_WAITING_CONTROLS`]; once they have that many, in place of the latest one
-    /// moving the same control even past a key, or, with none, nowhere: it plays at once (a
-    /// control has no key to overtake). Never allocates.
-    fn place_control(&mut self, source: LiveSource, event: LiveEvent, at: u64) -> Place {
+    /// Where a stamped control from `source` waits: in a place of its own, as a note does, while
+    /// controls have fewer than [`MAX_WAITING_CONTROLS`], so every value plays at its own frame
+    /// and a wheel moves smoothly. Once they have that many, the latest one waiting from the
+    /// source that moves the same control takes its value, at that one's frame (never a later
+    /// one, which a stream would keep pushing back); with none, it plays at once (a control has
+    /// no key to overtake). Never allocates.
+    fn place_control(&mut self, source: LiveSource, event: LiveEvent) -> Place {
         let waiting = self.waiting.get(..self.waiting_count).unwrap_or_default();
-        let mut same = None;
-        let mut passed_key = false;
-        for (index, w) in waiting.iter().enumerate().rev().filter(|(_, w)| w.source == source) {
-            if same_control(&w.event, &event) {
-                same = Some(index);
-                break;
-            }
-            passed_key |= !is_control(&w.event);
+        if waiting.iter().filter(|w| is_control(&w.event)).count() < MAX_WAITING_CONTROLS {
+            return Place::Own;
         }
-        let controls = waiting.iter().filter(|w| is_control(&w.event)).count();
-        let full = controls >= MAX_WAITING_CONTROLS;
-        let Some(slot) = same.filter(|_| !passed_key || full).and_then(|index| self.waiting.get_mut(index)) else {
-            return if full { Place::Now } else { Place::Own };
-        };
+        let same = waiting.iter().rposition(|w| w.source == source && same_control(&w.event, &event));
+        let Some(slot) = same.and_then(|index| self.waiting.get_mut(index)) else { return Place::Now };
         slot.event = event;
-        slot.at = slot.at.max(at);
         Place::Merged
     }
 

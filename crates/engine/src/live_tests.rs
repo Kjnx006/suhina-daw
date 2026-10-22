@@ -514,7 +514,7 @@ fn a_stamped_note_waits_for_a_later_block_and_keeps_its_order() {
 
 /// A stream of pressure between a stamped key-down and key-up, more than the waiting notes have
 /// room for, does not let the key-up overtake its key-down and leave the note hanging (#812):
-/// each control's stream waits in one place, the latest value taking it.
+/// past the places controls may take, the latest value takes the place of the one before it.
 #[test]
 fn a_stream_of_controls_never_lets_a_release_overtake_its_key() {
     let (mut renderer, mut live) = armed_synth();
@@ -551,6 +551,31 @@ fn a_stream_of_controls_never_lets_a_release_overtake_its_key() {
     });
     assert_eq!(last, Some(f32::from(599u16 % 128) / 127.0));
     assert!(peak(&out[390 * frames * 2..]) < 1e-3, "released");
+}
+
+/// A wheel moved while notes wait: every value it sends plays, each at its own frame, in order,
+/// so the instrument (and a plug-in's on-screen wheel) follows it smoothly rather than in jumps.
+#[test]
+fn a_wheels_stamped_stream_plays_every_value_at_its_own_frame() {
+    let (mut renderer, mut live) = armed_synth();
+    let frames = 64;
+    let block_us = |n: usize| micros(frames * n);
+    let delay = (frames * 4) as u32;
+    // One value every 16 frames, over 10 blocks: always some waiting while more come.
+    let steps: Vec<(usize, u64)> = (0..40).map(|i| (i, block_us(1) + micros(16 * i))).collect();
+    clocked(&mut renderer, 30, frames, delay, block_us, |index| {
+        for &(i, time) in steps.iter().filter(|(i, _)| 1 + i / 4 == index) {
+            live.send_at(Default::default(), LiveEvent::PitchBend(i as f32 / 40.0), time);
+        }
+    });
+    let bends: Vec<(u64, f32)> = renderer
+        .live
+        .played
+        .iter()
+        .filter_map(|(at, e)| if let LiveEvent::PitchBend(v) = e { Some((*at, *v)) } else { None })
+        .collect();
+    assert_eq!(bends.len(), steps.len(), "every value plays");
+    assert!(bends.windows(2).all(|w| w[0].0 < w[1].0 && w[0].1 < w[1].1), "each at its own, later frame: {bends:?}");
 }
 
 #[test]
