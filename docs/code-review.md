@@ -75,6 +75,12 @@ When sources disagree, describe the disagreement instead of choosing silently. D
 deferred feature because a broader issue mentions it, or accept reduced scope without checking
 the recorded decisions. Check that `Closes #N` matches the work delivered.
 
+Check whether an open pull request, or one merged since this one's base, already solves the same
+problem, so that one of them would be left with nothing to do once the other merges. Start from
+the pull requests the *Overlap* notice lists and those that name the same issue or symptom. When
+one does, say so as the first finding, with both numbers and what each does, and leave the choice
+to a maintainer.
+
 ## 3. Check the repository's rules
 
 Use [AGENTS.md](../AGENTS.md) as the source of truth instead of maintaining another copy of its
