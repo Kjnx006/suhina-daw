@@ -34,6 +34,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import NamedTuple
 
 ROOT = Path(
     subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, check=True, text=True).stdout.strip()
@@ -70,49 +71,131 @@ WAITING = {
     "crates/ui/src/settings.rs",
 }
 
-OPENING = re.compile(r"^(\s*)(?:pub(?:\([\w:]+\))? )?mod (\w+) \{\s*$")
+OPENING = re.compile(r"^(\s*)((?:pub(?:\([\w:]+\))? )?)mod (\w+) \{\s*$")
+ATTRIBUTE = re.compile(r"^\s*#\[.*\]\s*$")
 
 
-def test_modules(text: str) -> list[tuple[int, int, str, str]]:
-    """Each inline test module in `text`: (index of its `#[cfg(test)]` line, index of its
-    closing brace, its indent, its name). A module counts when `#[cfg(test)]` stands on the line
-    right above `mod name {` and its closing brace is the first line holding only `}` at the same
-    indent."""
+class Module(NamedTuple):
+    """An inline test module: the indices of its `#[cfg(test)]` line, its `mod name {` line and
+    its closing brace's line, its indent, its visibility (`""`, `"pub "`, `"pub(crate) "`) and
+    its name."""
+
+    start: int
+    opening: int
+    end: int
+    indent: str
+    visibility: str
+    name: str
+
+    def lines(self) -> int:
+        return self.end - self.start + 1
+
+
+def word_before(text: str, i: int) -> bool:
+    """Whether the character before `i` is part of a word, so `text[i:]` is inside one."""
+    return i > 0 and (text[i - 1].isalnum() or text[i - 1] == "_")
+
+
+def closing_line(lines: list[str], opening: int) -> int | None:
+    """The index of the line where the block opened by the last `{` on line `opening` closes.
+    Braces inside comments, string, raw string, byte string and character literals do not
+    count."""
+    text = "\n".join(lines[opening:])
+    i = text.rfind("{", 0, len(lines[opening]))
+    depth, line = 0, opening
+    while i < len(text):
+        c = text[i]
+        if c == "\n":
+            line += 1
+        elif text.startswith("//", i):
+            i = text.find("\n", i)
+            if i < 0:
+                return None
+            continue
+        elif text.startswith("/*", i):
+            nested, i = 1, i + 2
+            while i < len(text) and nested:
+                if text.startswith("/*", i):
+                    nested, i = nested + 1, i + 2
+                elif text.startswith("*/", i):
+                    nested, i = nested - 1, i + 2
+                else:
+                    line += text[i] == "\n"
+                    i += 1
+            continue
+        elif not word_before(text, i) and (raw := re.match(r'b?r(#*)"', text[i:])):
+            close = text.find('"' + raw.group(1), i + raw.end())
+            if close < 0:
+                return None
+            line += text.count("\n", i, close)
+            i = close + 1 + len(raw.group(1))
+            continue
+        elif c == '"':
+            i += 1
+            while i < len(text) and text[i] != '"':
+                step = 2 if text[i] == "\\" else 1
+                line += text.count("\n", i, i + step)
+                i += step
+        elif c == "'" and (char := re.match(r"'(?:\\(?:x[0-9a-fA-F]{2}|u\{[0-9a-fA-F]+\}|.)|[^\\'\n])'", text[i:])):
+            i += char.end()
+            continue
+        elif c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return line
+        i += 1
+    return None
+
+
+def test_modules(text: str) -> list[Module]:
+    """Each inline test module in `text`: a `#[cfg(test)]` line, then any more attributes, each
+    on a line of its own, then `mod name {`, which closes at its matching brace."""
     lines = text.split("\n")
     found = []
-    for i, line in enumerate(lines[:-1]):
-        opening = OPENING.match(lines[i + 1])
-        if line.strip() != "#[cfg(test)]" or not opening:
+    for i, line in enumerate(lines):
+        if line.strip() != "#[cfg(test)]":
             continue
-        indent, name = opening.group(1), opening.group(2)
-        end = next((j for j in range(i + 2, len(lines)) if lines[j] == indent + "}"), None)
+        opening = i + 1
+        while opening < len(lines) and ATTRIBUTE.match(lines[opening]) and not OPENING.match(lines[opening]):
+            opening += 1
+        matched = OPENING.match(lines[opening]) if opening < len(lines) else None
+        if not matched:
+            continue
+        end = closing_line(lines, opening)
         if end is not None:
-            found.append((i, end, indent, name))
+            indent, visibility, name = matched.groups()
+            found.append(Module(i, opening, end, indent, visibility, name))
     return found
 
 
-def long_module(text: str) -> tuple[int, int, str, str] | None:
+def long_module(text: str) -> Module | None:
     """The first inline test module of `text` over `LIMIT` lines, if any."""
-    return next((m for m in test_modules(text) if m[1] - m[0] + 1 > LIMIT), None)
+    return next((m for m in test_modules(text) if m.lines() > LIMIT), None)
 
 
 def moved(text: str, test_file: str) -> tuple[str, str] | None:
-    """`text` with its long test module replaced by a `#[path]` module, and the test file's
-    text, or `None` when it has no long module."""
+    """`text` with its long test module replaced by a `#[path]` module, which keeps the module's
+    attributes and visibility, and the test file's text, or `None` when it has no long module."""
     module = long_module(text)
     if module is None:
         return None
-    start, end, indent, name = module
     lines = text.split("\n")
     # The body keeps its indent: rustfmt takes it off the code, and leaves string literals that
     # run over several lines exactly as they are, as a hand-made dedent would not.
-    body = lines[start + 2 : end]
+    body = lines[module.opening + 1 : module.end]
     while body and not body[0].strip():
         body.pop(0)
     while body and not body[-1].strip():
         body.pop()
-    stub = [f"{indent}#[cfg(test)]", f'{indent}#[path = "{test_file}"]', f"{indent}mod {name};"]
-    source = "\n".join(lines[:start] + stub + lines[end + 1 :])
+    indent = module.indent
+    stub = [
+        *lines[module.start : module.opening],
+        f'{indent}#[path = "{test_file}"]',
+        f"{indent}{module.visibility}mod {module.name};",
+    ]
+    source = "\n".join(lines[: module.start] + stub + lines[module.end + 1 :])
     return source, HEADER + "\n" + "\n".join(body) + "\n"
 
 
@@ -135,9 +218,8 @@ def check(paths: list[str]) -> list[str]:
             continue
         long.add(path)
         if path not in WAITING:
-            lines = module[1] - module[0] + 1
             problems.append(
-                f"{path}:{module[0] + 1}: an inline test module of {lines} lines (over {LIMIT}); "
+                f"{path}:{module.start + 1}: an inline test module of {module.lines()} lines (over {LIMIT}); "
                 f"move it out with `python scripts/inline_tests.py move {path}`"
             )
     for path in sorted(WAITING - long):

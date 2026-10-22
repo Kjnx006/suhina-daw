@@ -22,11 +22,39 @@ def source(test_lines: int, name: str = "tests") -> str:
 class InlineTests(unittest.TestCase):
     def test_a_module_over_the_limit_is_long_and_one_at_it_is_not(self):
         self.assertIsNone(inline_tests.long_module(source(inline_tests.LIMIT)))
+        self.assertEqual(inline_tests.test_modules(source(inline_tests.LIMIT))[0].lines(), inline_tests.LIMIT)
         self.assertIsNotNone(inline_tests.long_module(source(inline_tests.LIMIT + 1)))
 
-    def test_a_module_without_cfg_test_right_above_it_does_not_count(self):
+    def test_attributes_between_cfg_test_and_the_module_stay_on_it(self):
         text = source(400).replace("#[cfg(test)]\n", "#[cfg(test)]\n#[allow(dead_code)]\n")
-        self.assertEqual(inline_tests.test_modules(text), [])
+        result = inline_tests.moved(text, "foo_tests.rs")
+        assert result is not None
+        self.assertIn('#[cfg(test)]\n#[allow(dead_code)]\n#[path = "foo_tests.rs"]\nmod tests;\n', result[0])
+        self.assertEqual(inline_tests.test_modules(source(400).replace("#[cfg(test)]\n", "#[cfg(test)]\nfn x() {}\n")), [])
+
+    def test_a_public_module_stays_public(self):
+        result = inline_tests.moved(source(200).replace("mod tests {", "pub(crate) mod tests {"), "foo_tests.rs")
+        assert result is not None
+        self.assertIn('#[path = "foo_tests.rs"]\npub(crate) mod tests;\n', result[0])
+
+    def test_braces_in_strings_comments_and_chars_do_not_end_the_module(self):
+        tricky = [
+            '    const RAW: &str = r#"',
+            "}",
+            '"#;',
+            '    const S: &str = "} \\" {";',
+            "    // }",
+            "    /* } /* } */ } */",
+            "    const C: char = '}';",
+            "    fn f<'a>(x: &'a str) -> &'a str { x }",
+            '    const E: &str = "a \\',
+            '        b";',
+        ]
+        text = source(200).replace("    // line 0\n", "\n".join(tricky) + "\n")
+        (module,) = inline_tests.test_modules(text)
+        lines = text.split("\n")
+        self.assertEqual(lines[module.end], "}")
+        self.assertEqual(lines[module.end - 1], f"    // line {200 - 4}")
 
     def test_moving_leaves_a_path_module_and_the_body_under_the_header(self):
         text = source(200, "checks")
