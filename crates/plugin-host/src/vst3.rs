@@ -32,7 +32,7 @@ use suhina_ipc::Served;
 use suhina_plugins::ParamInfo;
 use suhina_plugins::scan::PluginInfo;
 
-use crate::vst3_events::{BlockEvents, MidiMapping};
+use crate::vst3_events::{BlockEvents, MidiMapping, Shown};
 use crate::vst3_params::{BlockChanges, Pending};
 use vst3::Steinberg::Vst::*;
 use vst3::Steinberg::*;
@@ -599,6 +599,9 @@ pub(crate) struct Vst3Plugin {
     separate_controller: bool,
     /// Parameter values for the processor's next block.
     pending: Pending,
+    /// The values the audio thread gave mapped MIDI controllers, given to the controller too
+    /// on the main thread ([`Vst3Plugin::tick`]) so the editor shows them.
+    shown: Option<Shown>,
     /// The plug-in's name, for its editor's window.
     name: String,
     editor: Option<crate::vst3_editor::Editor>,
@@ -677,6 +680,7 @@ impl Vst3Plugin {
             controller,
             separate_controller,
             pending,
+            shown: None,
             name,
             editor: None,
             ara: None,
@@ -735,6 +739,7 @@ impl Vst3Plugin {
         let (stop, flush) = (self.stop.clone(), self.flush.clone());
         let pending = self.pending.clone();
         let mapping = MidiMapping::of(self.controller.as_ref());
+        self.shown = Some(mapping.shown());
         let (buses, sample_rate, instance) = (self.buses.clone(), self.sample_rate, self.instance);
         // An ARA-bound instance's output is traced with its track's name.
         let bound = self.ara.as_ref().map(|ara| ara.track().to_string());
@@ -977,10 +982,20 @@ impl Vst3Plugin {
     /// Moved or trimmed clips change in place while it plays; adding or taking out regions
     /// needs its renderers changed, which ARA allows only while it does not render, so its
     /// processing stops for that and starts again, as for a latency change.
-    /// Between messages: lets a bound ARA document send its queued model changes (#718).
+    /// Between messages: lets a bound ARA document send its queued model changes (#718), and
+    /// gives the controller what MIDI controllers moved, so the editor shows it (#812).
     pub(crate) fn tick(&self) {
         if let Some(ara) = &self.ara {
             ara.tick();
+        }
+        // What a MIDI controller moved goes to the controller as well, which the editor draws
+        // from: the processor alone has it otherwise.
+        if let (Some(shown), Some(controller)) = (&self.shown, &self.controller) {
+            for (id, value) in shown.take() {
+                // SAFETY: a live controller, on the main thread, for a parameter its own
+                // `IMidiMapping` named.
+                let _ = unsafe { controller.setParamNormalized(id, value) };
+            }
         }
     }
 
@@ -1241,6 +1256,9 @@ fn serve(
     if let Some(track) = ara_track.filter(|_| suhina_plugins::trace::on()) {
         block.watch = Some(Watch { instance, track, frames: 0, peak: 0.0 });
     }
+    if suhina_plugins::trace::on() {
+        block.midi_watch = Some(MidiWatch { instance, ..MidiWatch::default() });
+    }
     if let Some(mut block) = crate::audio::serve(instance, block, &mut served, stop) {
         if flush.load(Ordering::Acquire) && waiting.lock().is_ok_and(|w| !w.is_empty()) {
             block.flush();
@@ -1273,6 +1291,23 @@ struct Vst3Block {
     context: ProcessContext,
     /// With a trace, an ARA-bound plug-in's output summed up once a second (`docs/debugging.md`).
     watch: Option<Watch>,
+    /// With a trace, the notes, controllers and parameter changes it was given, summed up once
+    /// a second (`docs/debugging.md`).
+    midi_watch: Option<MidiWatch>,
+}
+
+/// What a plug-in was given since the last trace line: events by kind, and the parameter
+/// changes the controllers, pitch bend and pressure became through its MIDI mapping.
+#[derive(Default)]
+struct MidiWatch {
+    instance: u32,
+    frames: u64,
+    notes: u32,
+    controllers: u32,
+    bends: u32,
+    pressures: u32,
+    mapped: u32,
+    last: Option<(ParamID, ParamValue)>,
 }
 
 /// What an ARA-bound plug-in played since the last trace line: its instance, the frames and the
@@ -1340,6 +1375,7 @@ impl Vst3Block {
             outputs,
             context,
             watch: None,
+            midi_watch: None,
         }
     }
 }
@@ -1443,6 +1479,45 @@ impl Vst3Block {
         watch.frames = 0;
         watch.peak = 0.0;
     }
+
+    /// With a trace, counts what the block gives the plug-in, and once a second of audio writes
+    /// it when anything came: whether a wheel moved on a controller reaches the plug-in, and as
+    /// which parameter. Formats only on the second it writes, and only with a trace.
+    fn watch_events(&mut self, events: &[suhina_ipc::Event], frames: usize) {
+        use suhina_ipc::EventKind;
+        let rate = self.context.sampleRate;
+        let Some(watch) = self.midi_watch.as_mut() else { return };
+        for event in events {
+            match event.kind {
+                EventKind::NoteOn { .. } | EventKind::NoteOff { .. } => watch.notes += 1,
+                EventKind::Controller { .. } => watch.controllers += 1,
+                EventKind::PitchBend { .. } => watch.bends += 1,
+                EventKind::Pressure { .. } => watch.pressures += 1,
+                _ => continue,
+            }
+            if let Some((_, id, value)) = self.mapping.controller(event) {
+                watch.mapped += 1;
+                watch.last = Some((id, value));
+            }
+        }
+        watch.frames += frames as u64;
+        if rate <= 0.0 || (watch.frames as f64) < rate {
+            return;
+        }
+        if watch.notes + watch.controllers + watch.bends + watch.pressures > 0 {
+            suhina_plugins::trace!(
+                "vst3 events {}: notes {}, controllers {}, bends {}, pressure {}; mapped {}, last {:?}",
+                watch.instance,
+                watch.notes,
+                watch.controllers,
+                watch.bends,
+                watch.pressures,
+                watch.mapped,
+                watch.last
+            );
+        }
+        *watch = MidiWatch { instance: watch.instance, ..MidiWatch::default() };
+    }
 }
 
 impl crate::audio::Block for Vst3Block {
@@ -1463,6 +1538,7 @@ impl crate::audio::Block for Vst3Block {
             }
         }
         follow_song(&mut self.context, events);
+        self.watch_events(events, frames);
         let mapping = &self.mapping;
         let mut data = ProcessData {
             processMode: ProcessModes_::kRealtime as int32,
