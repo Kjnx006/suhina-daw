@@ -512,6 +512,47 @@ fn a_stamped_note_waits_for_a_later_block_and_keeps_its_order() {
     assert!(peak(&out[390 * frames * 2..]) < 1e-3, "released");
 }
 
+/// A stream of pressure between a stamped key-down and key-up, more than the waiting notes have
+/// room for, does not let the key-up overtake its key-down and leave the note hanging (#812):
+/// each control's stream waits in one place, the latest value taking it.
+#[test]
+fn a_stream_of_controls_never_lets_a_release_overtake_its_key() {
+    let (mut renderer, mut live) = armed_synth();
+    let frames = 64;
+    let block_us = |n: usize| micros(frames * n);
+    let delay = (frames * 4) as u32;
+    let out = clocked(&mut renderer, 400, frames, delay, block_us, |index| {
+        if index == 1 {
+            let at = block_us(1);
+            live.send_at(Default::default(), LiveEvent::NoteOn { key: 69, velocity: 1.0 }, at);
+            for step in 0..600u16 {
+                let value = f32::from(step % 128) / 127.0;
+                live.send_at(Default::default(), LiveEvent::Pressure(value), at);
+            }
+            live.send_at(Default::default(), LiveEvent::NoteOff { key: 69 }, at);
+        }
+    });
+    let order: Vec<&LiveEvent> = renderer
+        .live
+        .played
+        .iter()
+        .map(|(_, e)| e)
+        .filter(|e| matches!(e, LiveEvent::NoteOn { .. } | LiveEvent::NoteOff { .. }))
+        .collect();
+    assert_eq!(
+        order,
+        [&LiveEvent::NoteOn { key: 69, velocity: 1.0 }, &LiveEvent::NoteOff { key: 69 }],
+        "the key-up after its key-down"
+    );
+    // The last pressure sent is the one the instrument ends with.
+    let last = renderer.live.played.iter().rev().find_map(|(_, e)| match e {
+        LiveEvent::Pressure(v) => Some(*v),
+        _ => None,
+    });
+    assert_eq!(last, Some(f32::from(599u16 % 128) / 127.0));
+    assert!(peak(&out[390 * frames * 2..]) < 1e-3, "released");
+}
+
 #[test]
 fn notes_without_a_time_or_too_late_play_at_the_next_blocks_first_frame() {
     for time in [0, 1] {
