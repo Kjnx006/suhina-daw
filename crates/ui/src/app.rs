@@ -692,10 +692,12 @@ impl App {
     /// Opens `session` in a new tab or in place of the active project, and makes it active.
     /// Returns its id, or `None` when no more projects can be open (the status bar says why).
     pub fn open_project(&mut self, session: Session, warnings: &[String], how: OpenAs) -> Option<ProjectId> {
+        let mut replaced = None;
         if how == OpenAs::Replace
             && let Some(active) = self.projects.active()
             && self.projects.close(active).is_ok()
         {
+            replaced = Some(active);
             self.stashes.remove(&active);
             self.closed.push(active);
             if self.shown_project == Some(active) {
@@ -725,8 +727,12 @@ impl App {
                 return None;
             }
         };
-        // Opening is no command, so it has a line of its own beside the `action` lines (#821).
-        suhina_plugins::trace!("project opened {} {name} {how:?}", id.0);
+        // Opening is no command (ADR 0007), so it has a line of its own beside the `action`
+        // lines; one opened in place of another says which it closed (#821).
+        match replaced {
+            Some(old) => suhina_plugins::trace!("project opened {} {name} in place of {}", id.0, old.0),
+            None => suhina_plugins::trace!("project opened {} {name} in a new tab", id.0),
+        }
         self.restore(id, Stash::default());
         self.plugin_dialog_hidden = false;
         Some(id)

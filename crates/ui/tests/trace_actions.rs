@@ -24,6 +24,7 @@ fn projects_commands_are_written_to_the_trace() {
     app.run(&Action::new("projects.switch", json!({ "project": first.0 })));
     app.run(&Action::new("projects.close", json!({ "project": second.0 })));
     app.run(&Action::new("transport.stop", json!({})));
+    let third = app.open_project(Session::new(demo_project()), &[], OpenAs::Replace).unwrap();
 
     let text = std::fs::read_to_string(&log).unwrap();
     let _ = std::fs::remove_dir_all(&dir);
@@ -36,7 +37,11 @@ fn projects_commands_are_written_to_the_trace() {
     let opened: Vec<&str> = text.lines().filter_map(|l| l.split_once("] project opened ").map(|(_, o)| o)).collect();
     assert_eq!(
         opened,
-        [format!("{} the project NewTab", first.0), format!("{} the project NewTab", second.0)],
+        [
+            format!("{} the project in a new tab", first.0),
+            format!("{} the project in a new tab", second.0),
+            format!("{} the project in place of {}", third.0, first.0),
+        ],
         "opening is traced too:\n{text}"
     );
     assert!(
