@@ -526,5 +526,5 @@ is new, inside an existing folder of the root) or, without one, the folder of th
 file; a blank `folder` is refused, and so is a `Samples` or `Samples/Collected` in it that leads
 outside. A test lists
 every command parameter named like a file or a folder (`path`, `paths`, `folder`, `file`, `to`,
-`item`, `preset`, `sd`) and fails for one that neither `confine()` handles nor the agents are
+`item`, `preset`, `sd`, `output`, `place`) and fails for one that neither `confine()` handles nor the agents are
 refused, so a new command cannot take a path unchecked.

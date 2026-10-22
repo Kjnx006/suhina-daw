@@ -982,7 +982,7 @@ mod refused_tests {
             for (name, schema) in properties {
                 let is_text = |t: &str| t == "string";
                 let kind = &schema["type"];
-                let is_path = ["path", "paths", "folder", "file", "to", "item", "preset", "sd"]
+                let is_path = ["path", "paths", "folder", "file", "to", "item", "preset", "sd", "output", "place"]
                     .contains(&name.as_str())
                     && (kind.as_str().is_some_and(is_text)
                         || (kind == "array" && schema["items"]["type"].as_str().is_some_and(is_text)));
