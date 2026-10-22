@@ -9,7 +9,7 @@
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 use serde_json::json;
-use suhina_engine::model::TrackId;
+use suhina_engine::model::{ContentKinds, Project, TrackId};
 use suhina_engine::{AudioPool, Renderer};
 use suhina_session::Session;
 use suhina_ui::demo::demo_project;
@@ -20,9 +20,14 @@ use suhina_ui::{App, kit::theme};
 const DRUMS: TrackId = TrackId(1);
 const BASS: TrackId = TrackId(2);
 const KEYS: TrackId = TrackId(3);
+const VOX: TrackId = TrackId(4);
 
 fn app(renderer: &mut Renderer, auto_arm: bool) -> Harness<'static, App> {
-    let mut session = Session::new(demo_project());
+    app_on(demo_project(), renderer, auto_arm)
+}
+
+fn app_on(project: Project, renderer: &mut Renderer, auto_arm: bool) -> Harness<'static, App> {
+    let mut session = Session::new(project);
     session.attach_player(suhina_session::Player::new(renderer.controller(), None));
     let mut app = App::new();
     app.set_browser_open(false);
@@ -159,4 +164,19 @@ fn selecting_a_clip_slot_empty_or_not_arms_its_track() {
     harness.get_by_label("Stop Keys (scene 1)").click_secondary();
     harness.run_steps(3);
     assert_eq!(armed(&harness), [KEYS], "a right-click on a slot");
+}
+
+#[test]
+fn an_audio_track_is_armed_too() {
+    // The demo's Vox, made an audio track: it plays audio, not notes.
+    let mut project = demo_project();
+    let vox = project.tracks.iter_mut().find(|t| t.id == VOX).unwrap();
+    vox.content = ContentKinds { notes: false, audio: true };
+    let mut renderer = Renderer::stopped(&project, &AudioPool::new(), 48_000).unwrap();
+    let mut harness = app_on(project, &mut renderer, true);
+    select(&mut harness, "Keys");
+    select(&mut harness, "Vox");
+    assert_eq!(armed(&harness), [VOX]);
+    select(&mut harness, "Keys");
+    assert_eq!(armed(&harness), [KEYS]);
 }

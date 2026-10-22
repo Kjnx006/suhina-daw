@@ -81,8 +81,9 @@ engine code.
    setting of the app, not the project), selecting a track (the one the detail area shows, in
    either view; a clip slot, empty or not, selects its track) arms it through `track.setArm`, and disarms the track auto-arm armed before. A
    track armed by hand is never disarmed by it, and selecting one already armed leaves it as it
-   is. Only a track that takes notes and plays through a regular channel is armed: a return,
-   the main track or a group leaves the arm where it is. While a take records, the selection
+   is. Only a track that plays notes or audio through a regular channel is armed: a return,
+   the main track or a group leaves the arm where it is. An audio track is armed as its arm
+   button arms it: one with no audio input gets the device's first input (#682). While a take records, the selection
    does not move the arm; once the take ends, the track selected then is armed. Turning the
    setting off leaves the arm as it is. The window remembers which track it armed, per project.
 4. **Every port is on until turned off.** `midi.inputs` lists the ports, `midi.setInput` turns

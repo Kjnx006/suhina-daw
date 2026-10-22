@@ -730,7 +730,8 @@ From Live Sets we authored ourselves in Live 12.4 ([format spec](docs/spec/als-f
   `midi.setInput`); a controller plugged in later is found within seconds. The latency follows
   the buffer size.
 - **Auto-arm the selected track:** with Settings › MIDI › Auto-arm on, selecting a track arms
-  it and lets go of the one it armed before, so a MIDI controller plays the track in view; tracks
+  it (a MIDI or an audio track, also by clicking one of its clip slots) and lets go of the one it
+  armed before, so a MIDI controller or the audio input plays into the track in view; tracks
   armed by hand stay armed, returns and groups are skipped, and the arm stays put while a take
   records ([#834](https://github.com/suhina-daw/suhina-daw/issues/834), ADR 0017).
 - **Audio input and monitoring:** choose an input device in Settings › Audio (off by default);

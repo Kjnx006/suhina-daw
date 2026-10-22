@@ -5497,10 +5497,12 @@ impl App {
     }
 
     /// Auto-arm (Settings › MIDI, #834): when the selected track changes, arms it and disarms
-    /// the track auto-arm armed before, so a MIDI controller plays what the user looks at. A
-    /// track armed by hand is never disarmed here, and one already armed is left as it is. A
-    /// track without notes, a return, the main track or a group leaves the arm where it is, and
-    /// so does any change while a take is recording. Through `track.setArm`, as the arm button.
+    /// the track auto-arm armed before, so a MIDI controller or the audio input plays into what
+    /// the user looks at. A track armed by hand is never disarmed here, and one already armed is
+    /// left as it is. A track that plays neither notes nor audio, a return, the main track or a
+    /// group leaves the arm where it is, and so does any change while a take is recording.
+    /// Through `track.setArm`, as the arm button, so an audio track with no input gets the
+    /// device's first one as the button gives it.
     fn follow_selection_with_arm(&mut self) {
         let project = self.projects.active();
         if !self.settings.auto_arm {
@@ -5531,13 +5533,14 @@ impl App {
             return;
         }
         let p = session.project();
-        let takes_notes = p.tracks.iter().find(|t| t.id == track).is_some_and(|t| {
+        let takes_input = p.tracks.iter().find(|t| t.id == track).is_some_and(|t| {
             let role = p.channels.iter().find(|c| Some(c.id) == t.channel).map(|c| c.role);
-            t.content.notes && matches!(role, None | Some(suhina_engine::model::ChannelRole::Regular))
+            (t.content.notes || t.content.audio)
+                && matches!(role, None | Some(suhina_engine::model::ChannelRole::Regular))
         });
         let already = session.is_armed(track);
         self.auto_arm.seen = seen;
-        if !takes_notes {
+        if !takes_input {
             return;
         }
         let before = self.auto_arm.armed.get(&project).copied();
