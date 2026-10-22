@@ -10,6 +10,7 @@ covers:
   - crates/ui/src/detail/piano_roll_ruler.rs
   - crates/ui/src/detail/piano_roll_gestures.rs
   - crates/ui/src/detail/piano_roll_ghosts.rs
+  - crates/ui/src/interaction/timeline_grid.rs
   - crates/ui/src/detail/piano_roll_scale.rs
   - crates/ui/src/detail/midi_tools.rs
   - crates/ui/src/detail/detail_view.rs
@@ -307,9 +308,14 @@ pull up.
   the piano roll has its own grid value; it lives in the window, not the project, and is a
   snapping 1/16 until another is picked. The control bar's grid value (the launch quantisation,
   `launcher.setQuantization`) applies to the Arrangement view only. The grid value draws the
-  vertical lines and is the step that notes snap to. When lines would be closer than a few pixels,
-  every second line is left out until they are far enough apart (snapping uses the same, coarser
-  step, so what snaps is what is drawn).
+  vertical lines and is the step that notes snap to. The lines and snapping are the
+  Arrangement view's ([arrangement editing](arrangement-editing.md) › The grid), from the same code
+  ([#734](https://github.com/suhina-daw/suhina-daw/issues/734)): lines start again at every bar
+  line, and when they would be closer than 6 points the grid coarsens (a straight value doubles
+  up to the beat, a triplet goes to the beat, then the bar, then bars double), so lines always
+  land on bar lines, in 5/4 or 3/8 and with triplets too. Snapping uses the same lines, so what
+  snaps is what is drawn. A move by dragging or by the arrow keys goes by whole steps, so a note
+  off the grid stays as far off it.
 - **Built ([#346](https://github.com/suhina-daw/suhina-daw/issues/346)): the grid menu.** The
   button at the right end of the toolbar, after the word **Grid**, shows the value (`1/16`,
   `1/8T`, `2 bars`, `Adaptive`, `Adaptive T`, with ` off` after it while snapping is off; its
@@ -334,7 +340,8 @@ pull up.
      third of a beat), adaptive ones too; bar values stay as they are.
 
   The keys work after a click in the piano roll, like its other keys (› Shortcuts). The grid value
-  and its steps are the `piano_roll_grid` module of the `ui` crate (`crates/ui/src/detail/piano_roll_grid.rs`).
+  and its steps are the `piano_roll_grid` module of the `ui` crate (`crates/ui/src/detail/piano_roll_grid.rs`);
+  the lines and snapping are the shared `TimelineGrid` (`crates/ui/src/interaction/timeline_grid.rs`).
 - **Built:** Settings › Clip editor › Piano roll › **Piano roll grid** set to **Control bar** makes the
   piano roll use the control bar's value instead, and its menu and keys then set the control
   bar's (`launcher.setQuantization`). The control bar has no adaptive grid and no 1/32 triplet,

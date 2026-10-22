@@ -8,6 +8,8 @@ covers:
   - crates/session/src/commands.rs
   - crates/ui/src/arrangement/timeline.rs
   - crates/ui/src/arrangement/arrangement_view.rs
+  - crates/ui/src/arrangement/automation_lanes.rs
+  - crates/ui/src/interaction/timeline_grid.rs
   - crates/model/src/lib.rs
   - crates/model/src/overlap.rs
   - crates/engine/src/audio.rs
@@ -77,8 +79,16 @@ in, a beat has four lines; zoomed out, lines fall on beats, then on bars.
 at that zoom (never before the start): a clip moved by dragging ([moving a clip](#moving-a-clip)),
 samples and MIDI files dragged from the browser onto a lane or the empty space below the tracks
 ([browser](browser.md) › Dragging into the project), fade handles ([fades](#fades)) and ruler
-clicks ([play position](#play-position)). With **Alt** held, each of them goes exactly where the
-pointer is instead (off the grid).
+clicks ([play position](#play-position)), and automation points added or dragged in an
+automation lane. With **Alt** held, each of them goes exactly where the pointer is instead (off the
+grid). So in 3/4 with a `1/2` grid, whose lines are at beats 0, 2, 3, 5, 6 …, an automation point
+goes to beat 3, not 4.
+
+**One grid for every timeline.** The arrangement, its automation lanes and the piano roll
+([clip editor](ui-clip-editor.md) › Grid and snapping) draw and snap with the same code,
+`TimelineGrid` in `crates/ui/src/interaction/timeline_grid.rs` (#734). Each view keeps its own grid
+value (the control bar's here, the piano roll's grid menu there) and its own least spacing between
+lines; only the arithmetic is shared.
 
 **`none`** launches clips at once, and in the Arrangement view nothing snaps (as if Alt were held);
 lines show beats and bars by the zoom alone.

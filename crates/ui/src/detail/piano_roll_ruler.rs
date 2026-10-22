@@ -11,7 +11,8 @@
 use egui::{Color32, CursorIcon, Id, PointerButton, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2};
 use serde_json::{Value, json};
 
-use crate::detail::piano_roll::{NoteGrid, PianoClip, PianoRollState, note_grid};
+use crate::detail::piano_roll::{PianoClip, PianoRollState, note_grid};
+use crate::interaction::timeline_grid::TimelineGrid;
 use crate::kit::theme;
 use crate::kit::widgets::Action;
 
@@ -155,7 +156,7 @@ pub fn part_at(shape: &ClipShape, axis: &Axis, ruler: Rect, pos: Pos2) -> Option
 }
 
 /// The shortest step a dragged loop or clip keeps: a grid step while it snaps, else a hundredth.
-fn least(grid: NoteGrid, free: bool) -> f64 {
+fn least(grid: TimelineGrid, free: bool) -> f64 {
     if grid.snaps && !free { grid.step } else { MIN_LENGTH }
 }
 
@@ -163,7 +164,7 @@ fn least(grid: NoteGrid, free: bool) -> f64 {
 /// `free`, never before beat 0 or past the last beat, a loop or a clip never shorter than
 /// [`least`], and an arrangement clip never longer than its room. The commands take every shape
 /// this gives, so a drag never fails.
-pub fn dragged(shape: &ClipShape, part: Part, from: f64, now: f64, grid: NoteGrid, free: bool) -> ClipShape {
+pub fn dragged(shape: &ClipShape, part: Part, from: f64, now: f64, grid: TimelineGrid, free: bool) -> ClipShape {
     let place = |beat: f64| grid.place(beat, free, false).clamp(0.0, BEAT_LIMIT);
     let least = least(grid, free);
     let (start, end) = shape.bar();
@@ -415,8 +416,8 @@ fn marker(painter: &egui::Painter, numbers: Rect, x: f32, side: f32, color: Colo
 mod tests {
     use super::*;
 
-    fn grid(step: f64) -> NoteGrid {
-        NoteGrid { step, snaps: true }
+    fn grid(step: f64) -> TimelineGrid {
+        TimelineGrid { step, bar_beats: 4.0, snaps: true }
     }
 
     const AXIS: Axis = Axis { origin: 100.0, beat_width: 20.0 };

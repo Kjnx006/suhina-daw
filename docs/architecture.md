@@ -150,7 +150,8 @@ crates/ui/src/
   settings.rs, settings/ the stored settings (settings.rs, view_settings, keymap, workflow) and
                  the Settings window (settings_view, settings_rows, themes)
   interaction/   what views share: drop (dragging between views), pick, menus, nesting, grid
-                 (the tracks and slots as the views see them), colour_picker, empty_space, status
+                 (the tracks and slots as the views see them), colour_picker, empty_space, status,
+                 timeline_grid (the lines and snapping of the arrangement, piano roll and automation)
   kit/           what every view draws with: theme, widgets, meter, motion, logo, waveform
   demo.rs        the demo project the app opens with `--demo` and the tests draw
 ```
