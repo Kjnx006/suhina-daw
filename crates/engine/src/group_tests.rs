@@ -352,6 +352,37 @@ fn a_parameter_of_a_device_in_a_group_follows_its_lane() {
 }
 
 #[test]
+fn a_lane_in_a_group_keeps_playing_through_a_graph_swap() {
+    let mut utility = device("utility", &[("gain", -20.0)]);
+    utility.automation = vec![lane("gain", &[(0.0, 0.0), (2.0, 0.0), (2.0, -6.0206), (3.0, -6.0206)])];
+    let p = project(vec![note(0.0, 8.0, 69)], 8.0, vec![group(vec![branch(vec![utility.clone()])], &[])]);
+    // The edit moves the set value, which the lane overrides, and the jump at beat 2 to a quarter:
+    // the swap adopts the running group and takes the edited lane.
+    let mut edited = p.clone();
+    if let Some(g) = edited.channels[0].devices[0].as_group_mut() {
+        let device = &mut g.branches[0].devices[0];
+        device.params = vec![DeviceParam::new("gain", -40.0)];
+        device.automation = vec![lane("gain", &[(0.0, 0.0), (2.0, 0.0), (2.0, -12.0412), (3.0, -12.0412)])];
+    }
+    let mut renderer = Renderer::with_audio(&p, &crate::AudioPool::new(), SR).unwrap_or_else(|e| panic!("{e:?}"));
+    let mut controller = renderer.controller();
+    let mut out = blocks(&mut renderer, 50, 480);
+    controller.update(&edited).unwrap_or_else(|e| panic!("{e}"));
+    out.extend(blocks(&mut renderer, 100, 480));
+    let mut untouched = Renderer::with_audio(&p, &crate::AudioPool::new(), SR).unwrap_or_else(|e| panic!("{e:?}"));
+    let reference = blocks(&mut untouched, 150, 480);
+    // The swap comes before the jump at beat 2 (frame 48 000): until then the lane's unity is
+    // heard, not the edited value; after it, a quarter of the untouched project's half.
+    let beat = SR as usize / 2;
+    let jump = beat * 2 * 2;
+    assert!(peak(&reference[..jump]) > 0.05);
+    assert!(max_diff(&out[..jump], &reference[..jump]) < 1e-4, "{}", max_diff(&out[..jump], &reference[..jump]));
+    let settled = (beat * 2 + SR as usize / 40) * 2;
+    let half = scaled(&reference[settled..], 0.5);
+    assert!(max_diff(&out[settled..], &half) < 1e-4, "{}", max_diff(&out[settled..], &half));
+}
+
+#[test]
 fn a_file_device_in_a_group_is_known_by_its_file() {
     let assets = crate::DeviceAssets::new();
     let audio = noise_pool();
