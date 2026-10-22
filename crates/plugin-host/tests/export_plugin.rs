@@ -325,7 +325,8 @@ fn a_cancelled_gather_starts_nothing_on_a_late_reply() {
     session.attach_player(Player::new(renderer.controller(), None));
     session.set_plugin_env(env());
     // The responder delay is set before the plug-in's host process is born: the host
-    // inherits it at its spawn, and its first state read holds the reply out, so the cancel
+    // inherits it at its spawn, and its first state read after audio has played holds the
+    // reply out, so the cancel
     // happens while the read is genuinely out, not racing its answer.
     // SAFETY: single-threaded around here for the env (the tests' hosts inherit it); no
     // reader inside this process reads it concurrently.
@@ -364,7 +365,8 @@ fn a_gather_past_its_deadline_says_which_plug_in_did_not_answer() {
     session.attach_player(Player::new(renderer.controller(), None));
     session.set_plugin_env(env());
     // The responder delay is set before the plug-in's host process is born: the host
-    // inherits it at its spawn, and its first state read holds the reply out.
+    // inherits it at its spawn, and its first state read after audio has played (the round's
+    // own, not the one its start makes) holds the reply out.
     // SAFETY: single-threaded around here for the env (the tests' hosts inherit it); no
     // reader inside this process reads it concurrently.
     unsafe { std::env::set_var("SUHINA_TEST_PLUGIN_SAVE_DELAY_MS", "300") };
