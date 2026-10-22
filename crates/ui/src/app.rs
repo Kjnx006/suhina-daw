@@ -5505,18 +5505,19 @@ impl App {
     /// device's first one as the button gives it.
     fn follow_selection_with_arm(&mut self) {
         let project = self.projects.active();
-        if !self.settings.auto_arm {
-            // Turned on again, it arms the track selected then.
-            self.auto_arm.seen = None;
-            return;
-        }
         // A track it armed that is no longer armed (disarmed by hand, or deleted) is not its own
-        // any more: armed by hand later, it stays.
+        // any more: armed by hand later, it stays. Looked at with the setting off too, so a
+        // track disarmed and armed again by hand meanwhile is the user's when it comes back on.
         if let Some(project) = project
             && let Some(&track) = self.auto_arm.armed.get(&project)
             && !self.session().is_some_and(|s| s.is_armed(track))
         {
             self.auto_arm.armed.remove(&project);
+        }
+        if !self.settings.auto_arm {
+            // Turned on again, it arms the track selected then.
+            self.auto_arm.seen = None;
+            return;
         }
         let selected = self.selected_track();
         let seen = project.map(|p| (p, selected));

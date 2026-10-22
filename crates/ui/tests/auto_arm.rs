@@ -122,6 +122,26 @@ fn turning_it_on_arms_the_selected_track_and_off_leaves_the_arm() {
 }
 
 #[test]
+fn a_track_disarmed_and_armed_by_hand_while_it_is_off_is_the_users() {
+    let mut renderer = engine();
+    let mut harness = app(&mut renderer, true);
+    select(&mut harness, "Keys");
+    assert_eq!(armed(&harness), [KEYS], "auto-arm's");
+    let ctx = harness.ctx.clone();
+    harness.state_mut().set_settings(&ctx, Settings { auto_arm: false, ..Default::default() });
+    harness.run_steps(3);
+    // Off, Keys is disarmed and armed again by hand: it is the user's now.
+    harness.state_mut().run(&Action::new("track.setArm", json!({ "track": KEYS.0, "armed": false })));
+    harness.run_steps(3);
+    harness.state_mut().run(&Action::new("track.setArm", json!({ "track": KEYS.0, "armed": true })));
+    harness.run_steps(3);
+    harness.state_mut().set_settings(&ctx, Settings { auto_arm: true, ..Default::default() });
+    harness.run_steps(3);
+    select(&mut harness, "Bass");
+    assert_eq!(armed(&harness), [BASS, KEYS], "Keys, armed by hand, stays armed");
+}
+
+#[test]
 fn the_arm_does_not_move_while_a_take_records() {
     let mut renderer = engine();
     let mut harness = app(&mut renderer, true);
@@ -134,7 +154,10 @@ fn the_arm_does_not_move_while_a_take_records() {
     assert_eq!(armed(&harness), [KEYS], "the take is not cut off");
     harness.get_by_label("End the recording on Keys (scene 1)").click();
     harness.run_steps(3);
-    // Once it ends, the track selected meanwhile is armed.
+    // Once it ends (its notes on their way waited for, a real moment) and is a clip, the track
+    // selected meanwhile is armed. Until then it still records: the session's tests hold that.
+    std::thread::sleep(std::time::Duration::from_millis(400));
+    harness.run_steps(3);
     assert_eq!(armed(&harness), [BASS]);
 }
 
