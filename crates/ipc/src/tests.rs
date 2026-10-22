@@ -166,7 +166,13 @@ fn the_region_goes_with_the_link() {
     let link = Link::create(2, 64).unwrap_or_else(|e| panic!("{e}"));
     let address = link.address();
     let file = cfg!(not(any(windows, target_os = "linux")));
-    assert_eq!(std::path::Path::new(&address).exists(), file);
+    // On Linux the address is the engine's descriptor under /proc, which exists while it holds
+    // it: no file in /dev/shm. On Windows it is a mapping's name, no file at all.
+    if cfg!(target_os = "linux") {
+        assert!(address.starts_with("/proc/") && std::path::Path::new(&address).exists(), "{address}");
+    } else {
+        assert_eq!(std::path::Path::new(&address).exists(), file, "{address}");
+    }
     drop(link);
     // On Linux the address is a descriptor number, which another test may take next.
     if !cfg!(target_os = "linux") {
