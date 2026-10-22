@@ -2300,6 +2300,9 @@ impl App {
             return;
         }
         if action.id.starts_with("projects.") {
+            // Traced like every other command, so a trace shows tabs opened, switched and closed
+            // (#821).
+            suhina_plugins::trace!("action {} {}", action.id, action.params);
             if let Err(e) = self.projects.execute(action.id, &action.params) {
                 self.status = Status::Error(e.0);
             }
