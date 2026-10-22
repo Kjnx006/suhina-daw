@@ -169,7 +169,11 @@ workspace forbids.
      left for the next start; the sweep never errors and never runs on the audio thread.
      *Limits:* a process's lock file stays after it quits, until the next start removes it; a
      still-running build from before the sweep holds no lock, so a newer one starting beside it
-     removes its files.
+     removes its files; and the sweep removes a gone owner's lock file by its name, so a new
+     process with the same pid that renames its lock into place at that moment can lose its lock
+     file, and its files to the sweep after that. On Unix the sweep first checks that the name
+     still holds the file it locked (device and inode), which leaves only the moment between that
+     check and the removal; elsewhere the name is not checked.
    - **Messages** over a local socket or pipe, with a versioned protocol: load and unload,
      state save and load, latency changes, editor open and close, ping. *Built:* protocol
      version 12 (`ara_playback` comes unasked when an ARA plug-in asks the transport to play,

@@ -137,3 +137,20 @@ fn a_missing_folder_is_no_error() {
     let scratch = Scratch::new();
     sweep(&scratch.0.join("missing"), OWN, true);
 }
+
+#[cfg(unix)]
+#[test]
+fn a_lock_renamed_into_place_since_is_kept() {
+    let scratch = Scratch::new();
+    let path = scratch.file(&format!("suhina-ipc-{DEAD}.lock"));
+    let Owner::GoneLocked(stale) = owner(&path) else { panic!("the stale lock is free") };
+    // A new process with the same pid puts its own lock under the name.
+    let newer = scratch.file("newer");
+    std::fs::rename(&newer, &path).unwrap();
+    remove_held(&stale, &path);
+    assert!(path.exists());
+    // Its own file is removed.
+    let Owner::GoneLocked(current) = owner(&path) else { panic!("the new lock is free") };
+    remove_held(&current, &path);
+    assert!(!path.exists());
+}

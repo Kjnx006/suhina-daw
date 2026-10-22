@@ -183,8 +183,7 @@ fn sweep(dir: &Path, own: u32, own_leftovers: bool) {
             Owner::GoneLocked(lock) => {
                 remove(files);
                 // Removed while it is held, so no other sweep takes it in between.
-                let _ = std::fs::remove_file(lock_path(dir, *pid));
-                drop(lock);
+                remove_held(&lock, &lock_path(dir, *pid));
             }
             Owner::Alive => {}
         }
@@ -192,17 +191,39 @@ fn sweep(dir: &Path, own: u32, own_leftovers: bool) {
     // Lock files of processes that are gone and left no other file.
     for pid in locks.iter().filter(|pid| **pid != own && !data.contains_key(pid)) {
         if let Owner::GoneLocked(lock) = owner(&lock_path(dir, *pid)) {
-            let _ = std::fs::remove_file(lock_path(dir, *pid));
-            drop(lock);
+            remove_held(&lock, &lock_path(dir, *pid));
         }
     }
     // A staging file is held only while its process is starting; one that is free is left over.
     for pid in stagings.iter().filter(|pid| **pid != own) {
         if let Owner::GoneLocked(lock) = owner(&staging_path(dir, *pid)) {
-            let _ = std::fs::remove_file(staging_path(dir, *pid));
-            drop(lock);
+            remove_held(&lock, &staging_path(dir, *pid));
         }
     }
+}
+
+/// Removes the lock file at `path` that `held` is locked on, unless a process with the same pid
+/// has renamed its own lock to that name since. Checked on Unix (device and inode); between the
+/// check and the removal the window stays open, a limit ADR 0006 names.
+fn remove_held(held: &File, path: &Path) {
+    if same_file(held, path) {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+#[cfg(unix)]
+fn same_file(held: &File, path: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (held.metadata(), std::fs::symlink_metadata(path)) {
+        (Ok(a), Ok(b)) => a.dev() == b.dev() && a.ino() == b.ino(),
+        _ => false,
+    }
+}
+
+/// Elsewhere the file's identity is not checked: the path is removed.
+#[cfg(not(unix))]
+fn same_file(_held: &File, _path: &Path) -> bool {
+    true
 }
 
 fn remove(files: &[PathBuf]) {
