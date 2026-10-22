@@ -139,6 +139,12 @@ impl Session {
         self.recording.count_in_bars
     }
 
+    /// Whether a take is being recorded now, into the arrangement or a slot: what auto-arm
+    /// (#834) leaves the arm alone for, so a take is not cut off.
+    pub fn is_recording(&self) -> bool {
+        self.recording.takes.iter().any(|t| t.end.is_none())
+    }
+
     /// Whether the arrangement records (`transport.record`).
     pub fn records_arrangement(&self) -> bool {
         self.recording.arrangement

@@ -347,6 +347,9 @@ pub struct Settings {
     /// The MIDI input ports turned off, by name (Settings › MIDI, `midi.setInput`); every
     /// other port is on. One `midi_input_off` line each, since a port's name may hold commas.
     pub midi_inputs_off: Vec<String>,
+    /// Selecting a track arms it, so a MIDI controller plays what the user looks at (Settings ›
+    /// MIDI, #834); off until the person turns it on.
+    pub auto_arm: bool,
     /// The size of the whole window, in percent (`ZOOMS`): everything is drawn this much larger
     /// or smaller.
     pub zoom: u32,
@@ -419,6 +422,7 @@ impl Default for Settings {
             agents: false,
             mcp_project_folder: true,
             mcp_write_folders: Vec::new(),
+            auto_arm: false,
         }
     }
 }
@@ -568,6 +572,7 @@ impl Settings {
             + &format!("agents = {}\n", if self.agents { "on" } else { "off" })
             + &format!("mcp_project_folder = {}\n", if self.mcp_project_folder { "on" } else { "off" })
             + &format!("mcp_write_folders = {}\n", serde_json::json!(self.mcp_write_folders))
+            + &format!("auto_arm = {}\n", if self.auto_arm { "on" } else { "off" })
             + &self.updates.to_text()
             + &self.midi_inputs_off.iter().map(|port| format!("midi_input_off = {port}\n")).collect::<String>()
     }
@@ -601,6 +606,7 @@ impl Settings {
                         warnings.push(format!("settings line {}: expected a list of MCP write folders", number + 1))
                     }
                 },
+                ("auto_arm", "on" | "off") => settings.auto_arm = value == "on",
                 ("midi_stacking", "on" | "off") => settings.midi_stacking = value == "on",
                 ("track_headers", "left") => settings.track_headers = Side::Left,
                 ("track_headers", "right") => settings.track_headers = Side::Right,
@@ -913,6 +919,7 @@ midi_input_off = Keys
             agents: true,
             mcp_project_folder: false,
             mcp_write_folders: vec![r"C:\Music\Mixes = mine".into(), "/tmp/renders".into()],
+            auto_arm: true,
         };
         assert_eq!(Settings::from_text(&settings.to_text()), (settings, Vec::new()));
         assert_eq!(Settings::from_text(&Settings::default().to_text()).0, Settings::default());
