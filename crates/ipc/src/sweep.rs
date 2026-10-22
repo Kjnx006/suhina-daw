@@ -1,247 +1,195 @@
 // Copyright (C) 2026 The Suhina contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Removing the shared-memory files of processes that are gone (#805).
+//! Removing shared-memory files that a crash or a kill left in the temporary folder (#805).
 //!
-//! Regions (`suhina-ipc-<pid>-<n>-<nanos>`) and audio sources (`suhina-ara-<pid>-<n>-<nanos>`)
-//! are removed by their owner's `Drop`, which a crash or a kill never runs. So each process that
-//! makes one first holds an exclusive lock on `suhina-ipc-<pid>.lock` in the same folder for as
-//! long as it lives, and the operating system lets go of it when the process ends, however it
-//! ends. The first file a process makes sweeps the folder: a pid whose lock file is missing, or
-//! whose lock it gets, belongs to a process that is gone, so its files go; a lock it cannot get
-//! belongs to a live Suhina, whose files stay. An unrelated process that reused the pid holds no
-//! such lock, so it does not keep a dead owner's files.
+//! On Windows and Linux the shared memory has no file ([`crate::shm`]), so nothing is left.
+//! On macOS a file has a name from when it is made until the host has opened it (a link) or
+//! until the engine lets go of it (an audio source, which a restarted host opens again). Its name
+//! holds its process's id and that process's start time, `suhina-<kind>-<pid>@<start>-<n>`, and
+//! a pid and a start time together name one process for good: the file's process is gone when no
+//! process has that pid, or the one that has it started at another time. No lock is needed, and a
+//! live process's files are never taken for a gone one's.
 //!
-//! The lock is taken on `suhina-ipc-<pid>.locking` and renamed into place, so the lock file
-//! only ever appears under its own name already locked, and a sweep at the same moment cannot
-//! mistake a starting process for a gone one.
+//! Earlier versions named their files `suhina-<kind>-<pid>-<n>-<nanos>`, in the temporary folder
+//! (`/dev/shm` on Linux) on every system, and left them after a crash. Those go when no process
+//! has their pid; one that reused it keeps them, until it ends.
 //!
-//! Nothing here returns an error: a file that cannot be removed is left for the next start, and
-//! a process that cannot take its lock still makes its files, and tries for the lock again with
-//! the next one. Until it has the lock, another process's sweep may remove its files. Never reachable from the audio
-//! callback: it runs where links and sources are made.
+//! The first shared memory a process makes sweeps once; [`sweep_leftovers`] sweeps again.
+//! Nothing here returns an error: a file that cannot be removed is left for the next sweep. Never
+//! reachable from the audio callback: it runs where links and sources are made.
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::fs::{File, OpenOptions, TryLockError};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, PoisonError};
-use std::time::Duration;
+use std::sync::Once;
 
-use crate::region::directory;
-
-/// Tries at taking this process's lock before making files without it.
-const ATTEMPTS: u32 = 20;
 /// Most leftover files one sweep looks at, so a folder full of them costs a bounded start.
 const MOST_FILES: usize = 100_000;
 
-/// This process's lock, and whether the folder has been swept.
-struct Own {
-    lock: Option<File>,
-    swept: bool,
-}
-
-/// Taken before every region or source is made, so the first sweep runs before any of them.
-static OWN: Mutex<Own> = Mutex::new(Own { lock: None, swept: false });
-
-/// Takes this process's lock and sweeps the folder, the first time a region or a source is made.
-/// After that it only checks the lock is held, and tries again if taking it failed: without it,
-/// another process's sweep would take this one's files for a gone process's.
+/// Sweeps the first time this process makes shared memory.
 pub(crate) fn before_making_files() {
-    let mut own = OWN.lock().unwrap_or_else(PoisonError::into_inner);
-    let (dir, pid) = (directory(), std::process::id());
-    if own.lock.is_none() {
-        own.lock = hold_lock(&dir, pid);
-    }
-    if !own.swept {
-        // Nothing of this process exists yet, so files named after its pid are from an earlier
-        // process that had the same pid and is gone.
-        sweep(&dir, pid, true);
-        own.swept = true;
-    }
+    static ONCE: Once = Once::new();
+    ONCE.call_once(sweep_leftovers);
 }
 
 /// Removes the shared-memory files of Suhina processes that are gone, and never those of a live
-/// one. Making the first link or audio source in a process does this already; this runs it again.
+/// one. Making the first link or audio source in a process does this already.
 pub fn sweep_leftovers() {
-    before_making_files();
-    sweep(&directory(), std::process::id(), false);
+    let own = std::process::id();
+    for dir in folders() {
+        sweep(&dir, own, &mut gone);
+    }
 }
 
-/// What a file name in the folder is.
-#[derive(Debug, PartialEq, Eq)]
+/// Where this and earlier versions put shared-memory files.
+fn folders() -> Vec<PathBuf> {
+    let mut folders = vec![std::env::temp_dir()];
+    let shm = Path::new("/dev/shm");
+    if cfg!(target_os = "linux") && shm.is_dir() {
+        folders.push(shm.to_path_buf());
+    }
+    folders
+}
+
+/// Whose a file name in the folder is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Name {
-    /// A region or an audio source of the process `pid`.
-    Data(u32),
-    /// The lock of the process `pid`.
-    Lock(u32),
-    /// The lock of the process `pid`, before it is renamed into place.
-    Staging(u32),
+    /// Made by this version: the process `pid` that started at `start`.
+    Owned { pid: u32, start: u64 },
+    /// Made by an earlier version, by the process `pid`.
+    Earlier { pid: u32 },
 }
 
 /// Only names this crate makes; anything else in the folder is never touched.
 fn parse(name: &str) -> Option<Name> {
-    if let Some(rest) = name.strip_prefix("suhina-ipc-") {
-        if let Some(p) = rest.strip_suffix(".lock") {
-            return pid(p).map(Name::Lock);
-        }
-        if let Some(p) = rest.strip_suffix(".locking") {
-            return pid(p).map(Name::Staging);
-        }
-        return data(rest);
+    let rest = name.strip_prefix("suhina-ipc-").or_else(|| name.strip_prefix("suhina-ara-"))?;
+    if let Some((pid, rest)) = rest.split_once('@') {
+        let (start, n) = rest.split_once('-')?;
+        return (digits(n) && digits(start)).then_some(Name::Owned { pid: number(pid)?, start: number(start)? });
     }
-    name.strip_prefix("suhina-ara-").and_then(data)
-}
-
-/// `<pid>-<n>-<nanos>`, all digits.
-fn data(rest: &str) -> Option<Name> {
     let mut parts = rest.split('-');
-    let (p, n, nanos) = (parts.next()?, parts.next()?, parts.next()?);
+    let (pid, n, nanos) = (parts.next()?, parts.next()?, parts.next()?);
     if parts.next().is_some() || !digits(n) || !digits(nanos) {
         return None;
     }
-    pid(p).map(Name::Data)
+    Some(Name::Earlier { pid: number(pid)? })
 }
 
 fn digits(s: &str) -> bool {
     !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())
 }
 
-fn pid(s: &str) -> Option<u32> {
+fn number<T: std::str::FromStr>(s: &str) -> Option<T> {
     if digits(s) { s.parse().ok() } else { None }
 }
 
-fn lock_path(dir: &Path, pid: u32) -> PathBuf {
-    dir.join(format!("suhina-ipc-{pid}.lock"))
-}
-
-fn staging_path(dir: &Path, pid: u32) -> PathBuf {
-    dir.join(format!("suhina-ipc-{pid}.locking"))
-}
-
-/// Locks `pid`'s staging file and renames it to its lock file; `None` when that keeps failing.
-fn hold_lock(dir: &Path, pid: u32) -> Option<File> {
-    let (staging, lock) = (staging_path(dir, pid), lock_path(dir, pid));
-    for _ in 0..ATTEMPTS {
-        // A sweep that took a stale staging file of the same name removes it, and then the
-        // rename fails: try again with a new one.
-        if let Ok(file) = OpenOptions::new().read(true).write(true).create(true).truncate(false).open(&staging)
-            && file.try_lock().is_ok()
-            && std::fs::rename(&staging, &lock).is_ok()
-        {
-            return Some(file);
-        }
-        std::thread::sleep(Duration::from_millis(1));
-    }
-    None
-}
-
-/// Whether the owner of a lock file is gone.
-enum Owner {
-    /// Its lock file is missing.
-    Gone,
-    /// Its lock was free, and is held now: the lock file goes with its files.
-    GoneLocked(File),
-    /// A live process holds the lock (or another sweep, removing the files itself), or it could
-    /// not be told.
-    Alive,
-}
-
-fn owner(path: &Path) -> Owner {
-    match OpenOptions::new().read(true).write(true).open(path) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Owner::Gone,
-        Err(_) => Owner::Alive,
-        Ok(file) => match file.try_lock() {
-            Ok(()) => Owner::GoneLocked(file),
-            Err(TryLockError::WouldBlock | TryLockError::Error(_)) => Owner::Alive,
+/// Whether the process a file name belongs to is gone. `own` is this process, which makes no
+/// file of an earlier version.
+fn gone(name: Name, own: u32) -> bool {
+    match name {
+        // A start of 0 is one its process could not tell when it named the file.
+        Name::Owned { pid, start } => match started_at(pid) {
+            Lookup::Gone => true,
+            Lookup::At(now) if start != 0 => now != start,
+            Lookup::At(_) | Lookup::Unknown => !running(pid),
         },
+        Name::Earlier { pid } => pid == own || !running(pid),
     }
 }
 
-/// Removes the files in `dir` of every process that is gone. Files named after `own` (this
-/// process) are removed only with `own_leftovers`, before this process has made any.
-fn sweep(dir: &Path, own: u32, own_leftovers: bool) {
+/// Removes the files in `dir` whose process `is_gone` says is gone, asking once a name.
+fn sweep(dir: &Path, own: u32, is_gone: &mut impl FnMut(Name, u32) -> bool) {
     let Ok(entries) = std::fs::read_dir(dir) else { return };
-    let mut data: BTreeMap<u32, Vec<PathBuf>> = BTreeMap::new();
-    let mut locks = BTreeSet::new();
-    let mut stagings = BTreeSet::new();
-    let mut seen = 0;
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let Some(parsed) = name.to_str().and_then(parse) else { continue };
-        seen += 1;
-        if seen > MOST_FILES {
-            break;
-        }
-        match parsed {
-            Name::Data(pid) => data.entry(pid).or_default().push(entry.path()),
-            Name::Lock(pid) => {
-                locks.insert(pid);
-            }
-            Name::Staging(pid) => {
-                stagings.insert(pid);
-            }
+    let mut files: BTreeMap<Name, Vec<PathBuf>> = BTreeMap::new();
+    for entry in entries.flatten().take(MOST_FILES) {
+        if let Some(name) = entry.file_name().to_str().and_then(parse) {
+            files.entry(name).or_default().push(entry.path());
         }
     }
-    for (pid, files) in &data {
-        if *pid == own {
-            if own_leftovers {
-                remove(files);
+    for (name, paths) in files {
+        if is_gone(name, own) {
+            for path in paths {
+                // Still mapped by a host on Windows: removing it fails, and the next sweep tries
+                // again.
+                let _ = std::fs::remove_file(path);
             }
-            continue;
-        }
-        match owner(&lock_path(dir, *pid)) {
-            Owner::Gone => remove(files),
-            Owner::GoneLocked(lock) => {
-                remove(files);
-                // Removed while it is held, so no other sweep takes it in between.
-                remove_held(&lock, &lock_path(dir, *pid));
-            }
-            Owner::Alive => {}
-        }
-    }
-    // Lock files of processes that are gone and left no other file.
-    for pid in locks.iter().filter(|pid| **pid != own && !data.contains_key(pid)) {
-        if let Owner::GoneLocked(lock) = owner(&lock_path(dir, *pid)) {
-            remove_held(&lock, &lock_path(dir, *pid));
-        }
-    }
-    // A staging file is held only while its process is starting; one that is free is left over.
-    for pid in stagings.iter().filter(|pid| **pid != own) {
-        if let Owner::GoneLocked(lock) = owner(&staging_path(dir, *pid)) {
-            remove_held(&lock, &staging_path(dir, *pid));
         }
     }
 }
 
-/// Removes the lock file at `path` that `held` is locked on, unless a process with the same pid
-/// has renamed its own lock to that name since. Checked on Unix (device and inode); between the
-/// check and the removal the window stays open, a limit ADR 0006 names.
-fn remove_held(held: &File, path: &Path) {
-    if same_file(held, path) {
-        let _ = std::fs::remove_file(path);
+/// When a process started, as far as can be told.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+enum Lookup {
+    /// No process has the pid.
+    Gone,
+    /// It started at this many microseconds after the epoch.
+    At(u64),
+    /// It cannot be told here.
+    Unknown,
+}
+
+/// This process's start time, for the names of its files; 0 where it cannot be told.
+#[cfg_attr(any(windows, target_os = "linux"), allow(dead_code))]
+pub(crate) fn started(pid: u32) -> u64 {
+    match started_at(pid) {
+        Lookup::At(start) => start,
+        Lookup::Gone | Lookup::Unknown => 0,
     }
 }
 
+#[cfg(target_os = "macos")]
+fn started_at(pid: u32) -> Lookup {
+    let Ok(pid) = i32::try_from(pid) else { return Lookup::Gone };
+    let size = size_of::<libc::proc_bsdinfo>() as i32;
+    let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::zeroed();
+    // SAFETY: `info` is writable and `size` bytes long; PROC_PIDTBSDINFO writes at most that.
+    let written = unsafe { libc::proc_pidinfo(pid, libc::PROC_PIDTBSDINFO, 0, info.as_mut_ptr().cast(), size) };
+    if written == size {
+        // SAFETY: proc_pidinfo filled all of it, and every bit pattern is valid for its integers.
+        let info = unsafe { info.assume_init() };
+        Lookup::At(info.pbi_start_tvsec.saturating_mul(1_000_000).saturating_add(info.pbi_start_tvusec))
+    } else if std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
+        Lookup::Gone
+    } else {
+        Lookup::Unknown
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn started_at(_pid: u32) -> Lookup {
+    Lookup::Unknown
+}
+
+/// Whether a process has the pid; `true` when it cannot be told.
 #[cfg(unix)]
-fn same_file(held: &File, path: &Path) -> bool {
-    use std::os::unix::fs::MetadataExt;
-    match (held.metadata(), std::fs::symlink_metadata(path)) {
-        (Ok(a), Ok(b)) => a.dev() == b.dev() && a.ino() == b.ino(),
-        _ => false,
+fn running(pid: u32) -> bool {
+    let Ok(pid) = libc::pid_t::try_from(pid) else { return false };
+    if pid <= 0 {
+        return false;
     }
+    // SAFETY: signal 0 sends nothing; it only checks that the process exists.
+    let sent = unsafe { libc::kill(pid, 0) };
+    sent == 0 || std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
 }
 
-/// Elsewhere the file's identity is not checked: the path is removed.
-#[cfg(not(unix))]
-fn same_file(_held: &File, _path: &Path) -> bool {
+#[cfg(windows)]
+fn running(pid: u32) -> bool {
+    use windows_sys::Win32::Foundation::{CloseHandle, ERROR_INVALID_PARAMETER, GetLastError};
+    use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+    // SAFETY: asks for a handle with the least access; nothing is passed by pointer.
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    if handle.is_null() {
+        // SAFETY: reads this thread's last error, set by the call above.
+        return unsafe { GetLastError() } != ERROR_INVALID_PARAMETER;
+    }
+    // SAFETY: the handle OpenProcess returned, closed once.
+    unsafe { CloseHandle(handle) };
     true
 }
 
-fn remove(files: &[PathBuf]) {
-    for file in files {
-        // Still mapped by a host on Windows: the name goes at once, the memory when it closes.
-        let _ = std::fs::remove_file(file);
-    }
+#[cfg(not(any(unix, windows)))]
+fn running(_pid: u32) -> bool {
+    true
 }
 
 #[cfg(test)]

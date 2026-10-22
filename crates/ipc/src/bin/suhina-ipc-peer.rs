@@ -8,7 +8,7 @@
 //! seconds), `crash` (exits in the middle of block 4, without answering) or `hang` (stops
 //! answering in the middle of block 4).
 //!
-//! For the tests of leftover files: `suhina-ipc-peer make` makes a link and an audio source,
+//! For the tests of leftover memory: `suhina-ipc-peer make` makes a link and an audio source,
 //! prints their addresses, one a line, and keeps them until its standard input closes;
 //! `suhina-ipc-peer idle` prints its process id and waits the same way, making nothing.
 

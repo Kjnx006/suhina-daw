@@ -31,27 +31,25 @@ impl Drop for Scratch {
     }
 }
 
-/// Pids no test process has: the sweep never asks the system whether they run.
-const DEAD: u32 = 4_000_001;
-const LIVE: u32 = 4_000_002;
-const OWN: u32 = 4_000_003;
-
 #[test]
 fn only_the_names_this_crate_makes_are_read() {
-    assert_eq!(parse("suhina-ipc-12-0-345"), Some(Name::Data(12)));
-    assert_eq!(parse("suhina-ara-12-3-0"), Some(Name::Data(12)));
-    assert_eq!(parse("suhina-ipc-12.lock"), Some(Name::Lock(12)));
-    assert_eq!(parse("suhina-ipc-12.locking"), Some(Name::Staging(12)));
+    assert_eq!(parse("suhina-ipc-12@345-0"), Some(Name::Owned { pid: 12, start: 345 }));
+    assert_eq!(parse("suhina-ara-12@0-3"), Some(Name::Owned { pid: 12, start: 0 }));
+    assert_eq!(parse("suhina-ipc-12-0-345"), Some(Name::Earlier { pid: 12 }));
+    assert_eq!(parse("suhina-ara-12-3-0"), Some(Name::Earlier { pid: 12 }));
     for other in [
         "suhina-ipc-short-12",
-        "suhina-ipc-garbage-12",
         "suhina-ipc-12-0",
         "suhina-ipc-12-0-1-2",
         "suhina-ipc-12-0-x",
         "suhina-ipc--0-1",
         "suhina-ipc-+12-0-1",
         "suhina-ipc-99999999999-0-1",
-        "suhina-ara-12.lock",
+        "suhina-ipc-12@345",
+        "suhina-ipc-12@-0",
+        "suhina-ipc-12@3-x",
+        "suhina-ipc-@3-0",
+        "suhina-ipc-12.lock",
         "suhina-ipc-sweep-12-0",
         "suhina-relink-12",
         "notes.txt",
@@ -61,96 +59,58 @@ fn only_the_names_this_crate_makes_are_read() {
 }
 
 #[test]
-fn files_of_a_gone_owner_go_and_those_of_a_live_one_stay() {
-    let scratch = Scratch::new();
-    let dir = &scratch.0;
-    // Gone, with its lock file left behind (the system let go of the lock).
-    let dead = [scratch.file(&format!("suhina-ipc-{DEAD}-0-1")), scratch.file(&format!("suhina-ara-{DEAD}-1-2"))];
-    scratch.file(&format!("suhina-ipc-{DEAD}.lock"));
-    // Gone, and from before there were lock files.
-    let unlocked = scratch.file("suhina-ipc-4000004-0-1");
-    // Alive: its lock is held.
-    let live = [scratch.file(&format!("suhina-ipc-{LIVE}-0-1")), scratch.file(&format!("suhina-ara-{LIVE}-0-1"))];
-    let held = hold_lock(dir, LIVE).unwrap();
-    let stranger = scratch.file("suhina-ipc-short-1");
-
-    sweep(dir, OWN, false);
-
-    assert!(dead.iter().all(|f| !f.exists()));
-    assert!(!lock_path(dir, DEAD).exists());
-    assert!(!unlocked.exists());
-    assert!(live.iter().all(|f| f.exists()));
-    assert!(lock_path(dir, LIVE).exists());
-    assert!(stranger.exists());
-
-    // Once it ends, its files go with the next sweep.
-    drop(held);
-    sweep(dir, OWN, false);
-    assert!(live.iter().all(|f| !f.exists()));
-    assert!(!lock_path(dir, LIVE).exists());
-    assert!(stranger.exists());
+fn files_of_gone_processes_go_and_others_stay() {
+    let dir = Scratch::new();
+    let gone_owned = dir.file("suhina-ipc-7@100-0");
+    let gone_earlier = dir.file("suhina-ara-8-0-1");
+    let live = [dir.file("suhina-ipc-9@200-0"), dir.file("suhina-ara-9@200-1")];
+    let other = dir.file("notes.txt");
+    let mut asked = Vec::new();
+    sweep(&dir.0, 1, &mut |name, own| {
+        asked.push(name);
+        assert_eq!(own, 1);
+        !matches!(name, Name::Owned { pid: 9, .. })
+    });
+    // Asked once a name, however many files it has.
+    asked.sort();
+    assert_eq!(asked.len(), 3, "{asked:?}");
+    assert!(!gone_owned.exists() && !gone_earlier.exists());
+    assert!(live.iter().all(|f| f.exists()) && other.exists());
 }
 
 #[test]
-fn this_processs_files_go_only_before_it_has_made_any() {
-    let scratch = Scratch::new();
-    let dir = &scratch.0;
-    let own = scratch.file(&format!("suhina-ipc-{OWN}-0-1"));
-    sweep(dir, OWN, false);
-    assert!(own.exists());
-    sweep(dir, OWN, true);
-    assert!(!own.exists());
+fn this_process_keeps_its_own_files_and_loses_an_earlier_versions() {
+    let own = std::process::id();
+    let start = started(own);
+    #[cfg(target_os = "macos")]
+    assert_ne!(start, 0);
+    assert!(!gone(Name::Owned { pid: own, start }, own));
+    // A file of an earlier version named after this pid is from a gone process that had it.
+    assert!(gone(Name::Earlier { pid: own }, own));
+    // The same pid with another start time is a process that had it before.
+    #[cfg(target_os = "macos")]
+    assert!(gone(Name::Owned { pid: own, start: start + 1 }, own));
 }
 
 #[test]
-fn the_lock_appears_under_its_name_already_held() {
-    let scratch = Scratch::new();
-    let dir = &scratch.0;
-    // A stale lock and staging file of an earlier process with the same pid.
-    scratch.file(&format!("suhina-ipc-{OWN}.lock"));
-    scratch.file(&format!("suhina-ipc-{OWN}.locking"));
-    let held = hold_lock(dir, OWN).unwrap();
-    assert!(!staging_path(dir, OWN).exists());
-    assert!(matches!(owner(&lock_path(dir, OWN)), Owner::Alive));
-    drop(held);
-    assert!(matches!(owner(&lock_path(dir, OWN)), Owner::GoneLocked(_)));
+fn a_pid_no_process_has_is_gone() {
+    // Above the largest pid the systems this runs on give out.
+    let unused = 4_000_001;
+    assert!(gone(Name::Owned { pid: unused, start: 5 }, 1));
+    assert!(gone(Name::Earlier { pid: unused }, 1));
 }
 
 #[test]
-fn lone_lock_and_staging_files_of_gone_owners_go() {
-    let scratch = Scratch::new();
-    let dir = &scratch.0;
-    scratch.file(&format!("suhina-ipc-{DEAD}.lock"));
-    scratch.file(&format!("suhina-ipc-{DEAD}.locking"));
-    // A process between taking its staging file and renaming it.
-    let starting = scratch.file(&format!("suhina-ipc-{LIVE}.locking"));
-    let starting_lock = File::open(&starting).unwrap();
-    starting_lock.try_lock().unwrap();
-    sweep(dir, OWN, false);
-    assert!(!lock_path(dir, DEAD).exists());
-    assert!(!staging_path(dir, DEAD).exists());
-    assert!(starting.exists());
-}
-
-#[test]
-fn a_missing_folder_is_no_error() {
-    let scratch = Scratch::new();
-    sweep(&scratch.0.join("missing"), OWN, true);
-}
-
-#[cfg(unix)]
-#[test]
-fn a_lock_renamed_into_place_since_is_kept() {
-    let scratch = Scratch::new();
-    let path = scratch.file(&format!("suhina-ipc-{DEAD}.lock"));
-    let Owner::GoneLocked(stale) = owner(&path) else { panic!("the stale lock is free") };
-    // A new process with the same pid puts its own lock under the name.
-    let newer = scratch.file("newer");
-    std::fs::rename(&newer, &path).unwrap();
-    remove_held(&stale, &path);
-    assert!(path.exists());
-    // Its own file is removed.
-    let Owner::GoneLocked(current) = owner(&path) else { panic!("the new lock is free") };
-    remove_held(&current, &path);
-    assert!(!path.exists());
+fn a_process_with_many_files_is_asked_about_once() {
+    let dir = Scratch::new();
+    for n in 0..20 {
+        dir.file(&format!("suhina-ipc-7@100-{n}"));
+    }
+    let mut calls = 0;
+    sweep(&dir.0, 1, &mut |_, _| {
+        calls += 1;
+        true
+    });
+    assert_eq!(calls, 1);
+    assert_eq!(std::fs::read_dir(&dir.0).unwrap().count(), 0);
 }
