@@ -85,6 +85,12 @@ opt-level = 2
 opt-level = 1
 debug = "line-tables-only"
 
+# Test binaries without debug info: each one's .pdb on Windows is about 120 MB, and old copies pile
+# up in target/debug/deps. A panic still names its file and line; for line numbers in a backtrace,
+# run with CARGO_PROFILE_TEST_DEBUG=line-tables-only.
+[profile.test]
+debug = false
+
 [profile.release]
 lto = "thin"
 codegen-units = 1
