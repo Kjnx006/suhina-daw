@@ -177,8 +177,8 @@ workspace forbids.
        for a gone one's.
 
      The same sweep removes files that earlier versions left on every system
-     (`suhina-ipc-<pid>-<n>-<nanos>` in `/dev/shm` or the temporary folder) once no process has
-     their pid. It never errors and never runs on the audio thread; a file it cannot remove is
+     (`suhina-ipc-<pid>-<n>-<nanos>` in `/dev/shm` or the temporary folder, and the
+     `suhina-ipc-<pid>.lock` files of a first fix's test builds) once no process has their pid. It never errors and never runs on the audio thread; a file it cannot remove is
      left for the next start. *Limits:* on Windows a region counts against the commit limit (RAM
      and page file) while it lives, as a source of several hours does; on macOS a crash between
      making a link and the host's answer, or while a source lives, leaves a file until the next
