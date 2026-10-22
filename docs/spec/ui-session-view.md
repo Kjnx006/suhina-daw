@@ -169,8 +169,9 @@ the clip there; on an empty audio track the track takes the clip's name **(obser
 Below the last scene each track has a **stop all clips** button for that track, and the main
 column has **stop all clips** for the whole set.
 
-**Suhina:** a click on a track's slot also selects it (a group's slots only launch), and
-selecting a slot, empty or not, selects its track too, so the detail area shows that track and
+**Suhina:** a click on a track's slot also selects it (a group's slots only launch; with
+**Select on launch** off, a click on an occupied slot's launch control launches without selecting),
+and selecting a slot, empty or not, selects its track too, so the detail area shows that track and
 auto-arm (Settings › MIDI) arms it (#834). A right-click selects it and opens its menu: **Copy** copies its clip (`clip.copy {track,
 scene}`), **Paste** puts the copied clip in it (`clip.paste {track, scene}`), greyed out while
 nothing has been copied. Ctrl+C and Ctrl+V do the same on the selected slot
