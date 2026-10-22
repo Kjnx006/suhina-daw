@@ -5,7 +5,8 @@ name: Test build
 # links it from the pull request. See docs/releasing.md › Test builds.
 #
 # Who gets one: a pull request opened and pushed by a maintainer is built on every push. Any other
-# pull request is built only when a maintainer adds the `test-build` label after reading the diff,
+# pull request is built when a maintainer adds `test-build`, or the bot adds it for an authorized
+# trusted contributor's /test-build request after reading the diff,
 # and the build is of the commit the label was added on; a later push takes the label off
 # (test-build-links.yml), so new code is never built unreviewed. Running the workflow by hand with
 # a list of pull request numbers merges them onto main and builds the result.
@@ -55,24 +56,60 @@ jobs:
   # test-build-links.yml does not count it as one.
   decide:
     name: what to build
-    # A maintainer's own pull request on every push, any pull request when a maintainer labels it,
+    # A maintainer's own pull request on every push; labelled requests are authorized below,
     # and a run by hand (only people who can write to the repository can start one). The
     # maintainers are listed here and in test-build-links.yml.
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (contains(fromJSON('["juhamikael"]'), github.triggering_actor) &&
-        ((github.event.action != 'labeled' &&
-          contains(fromJSON('["juhamikael"]'), github.event.pull_request.user.login)) ||
-         (github.event.action == 'labeled' && github.event.label.name == 'test-build')))
+        github.event.action != 'labeled' &&
+        contains(fromJSON('["juhamikael"]'), github.event.pull_request.user.login)) ||
+      (github.event.action == 'labeled' && github.event.label.name == 'test-build')
     runs-on: ubuntu-latest
     permissions:
       contents: read
       # To find the previous head's run of this workflow.
       actions: read
+      issues: read
+      pull-requests: read
     outputs:
       build: ${{ steps.decide.outputs.build }}
       matrix: ${{ steps.decide.outputs.matrix }}
     steps:
+      - name: Authorize the labelled commit
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          TRUSTED_CONTRIBUTORS: ${{ vars.TRUSTED_CONTRIBUTORS }}
+        with:
+          script: |
+            const trusted = ['juhamikael', ...String(process.env.TRUSTED_CONTRIBUTORS || '')
+              .split(/[\s,]+/).map(s => s.replace(/^@/, '').toLowerCase())];
+            const authorizedBuild = async (actor, number, sha, at) => {
+              if (String(actor).toLowerCase() === 'juhamikael') return true;
+              if (actor !== 'suhina-bot[bot]') return false;
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                ...context.repo, issue_number: number, per_page: 100,
+              });
+              for (const c of comments) {
+                if (c.user?.login !== 'suhina-bot[bot]' || c.user?.type !== 'Bot') continue;
+                const proof = String(c.body || '').match(/<!-- trusted-build ([a-f0-9]{40}) ([a-zA-Z0-9-]+) ([0-9]+) -->$/);
+                if (!proof || proof[1] !== sha || !trusted.includes(proof[2].toLowerCase()) ||
+                    Date.parse(c.created_at) > Date.parse(at)) continue;
+                try {
+                  const { data: source } = await github.rest.issues.getComment({ ...context.repo, comment_id: Number(proof[3]) });
+                  if (source.user?.type === 'User' && source.user.login.toLowerCase() === proof[2].toLowerCase() &&
+                      source.body.trim() === '/test-build' &&
+                      source.issue_url === 'https://api.github.com/repos/' + context.repo.owner + '/' + context.repo.repo + '/issues/' + number &&
+                      Date.parse(source.updated_at) <= Date.parse(c.created_at)) return true;
+                } catch (error) { if (error.status !== 404) throw error; }
+              }
+              return false;
+            };
+            if (context.eventName !== 'pull_request' || context.payload.action !== 'labeled') return;
+            const pr = context.payload.pull_request;
+            if (!(await authorizedBuild(context.actor, pr.number, pr.head.sha, new Date().toISOString()))) {
+              throw new Error('No authorized test-build request for this commit.');
+            }
       # Every branch and the pull request's merge commit, whose second parent is its head; no
       # code is built or run but scripts/branch_update.py.
       - uses: actions/checkout@v7

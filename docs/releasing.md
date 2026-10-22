@@ -127,7 +127,7 @@ request there, and is grouped by its head repository and branch instead.
 | Pull request | Built |
 |---|---|
 | opened and pushed by a maintainer | on every push; a newer push cancels a build still running |
-| anyone else's, from a fork or a branch | when a maintainer adds the `test-build` label, of the commit the label was added on |
+| anyone else's, from a fork or a branch | when a maintainer adds `test-build`, or a trusted contributor comments `/test-build`, for the authorized commit |
 
 A pull request with the `test-build-windows` label is built for Windows only, which keeps the
 shared runners free while only that platform is being tried; its comment lists the other two as
@@ -167,7 +167,17 @@ merge cleanly fails the run and is named in the error.
 
 The build has a read-only token and no secrets, and for a fork GitHub runs `test-build.yml` as the
 fork has it; so `test-build-links.yml`, which runs from `main` and never runs pull request code,
-links only runs a maintainer started. The maintainers are listed in both workflows.
+links only runs a maintainer started or a `suhina-bot[bot]` run with a bot-authored authorization
+for that exact commit, written before the run started. It rechecks the original human comment
+and current `TRUSTED_CONTRIBUTORS` membership. Both workflows perform the authorization check;
+a forged or stale proof, removed trusted user, edited/deleted request or another PR's comment
+cannot authorize a link. The maintainers are listed in both workflows.
+
+Trusted contributors use `/test-build` on an open PR, as described in
+[Trusted bot requests](claim-bot.md#trusted-bot-requests). The bot attributes the request, records
+the head SHA and applies `test-build` using its App token. No extra GitHub label permissions are
+needed. A new push requires a new request; merge approval remains maintainer-only. The first
+fork-run approval required by GitHub is still a separate maintainer action.
 
 Each linked build is also posted to the pull request's thread in the Discord testing forum
 (see [Discord](#discord)).

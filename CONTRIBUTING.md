@@ -165,14 +165,20 @@ is the bot's comment and not that person's; it is a comment, not a GitHub review
 blocks nothing (`AGENTS.md` › Tasks has the commands). The rules in
 [AI-assisted contributions](#ai-assisted-contributions) apply to what the agent wrote.
 
+**Trusted bot actions.** Contributors listed in `TRUSTED_CONTRIBUTORS` may ask `suhina-bot`
+to create issues with `/open-issue`, close/reopen issues with `/close` and `/reopen`, and request
+a PR test build with `/test-build`. Each action records **On behalf of @login**, taken from
+the authenticated commenter. See [Trusted bot requests](docs/claim-bot.md#trusted-bot-requests)
+for the issue JSON and limits. The list grants neither repository write access nor merge approval.
+
 ## Trying a pull request
 
 A pull request can be tried without building it: GitHub Actions builds packages of it for
 Windows, macOS and Linux ([`docs/releasing.md` › Test builds](docs/releasing.md#test-builds)) and
 links the downloads from the pull request in a comment, updated with every new build. A maintainer's own pull requests are
 built on every push. A contributor's pull request is built once a maintainer has read the diff and
-added the `test-build` label; a later push takes the label off, and the new commits are built when
-the label is added again.
+added the `test-build` label, or a trusted contributor requests it with `/test-build`; a later
+push takes the label off, and the new commits need a new request.
 
 ## Merging many pull requests
 

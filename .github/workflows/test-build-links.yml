@@ -71,6 +71,8 @@ jobs:
     steps:
       - uses: actions/github-script@v9
         id: link
+        env:
+          TRUSTED_CONTRIBUTORS: ${{ vars.TRUSTED_CONTRIBUTORS }}
         with:
           script: |
             // The maintainers are listed here, in the backfill job and in test-build.yml.
@@ -80,7 +82,7 @@ jobs:
             const run = context.payload.workflow_run;
 
             const actor = run.triggering_actor && run.triggering_actor.login;
-            if (!MAINTAINERS.includes(actor)) {
+            if (!MAINTAINERS.includes(actor) && actor !== 'suhina-bot[bot]') {
               core.info(`Run ${run.id} was started by ${actor}, not a maintainer: nothing to link.`);
               return;
             }
@@ -108,6 +110,33 @@ jobs:
               number = data[0].number;
             }
             const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: number });
+            const trusted = ['juhamikael', ...String(process.env.TRUSTED_CONTRIBUTORS || '')
+              .split(/[\s,]+/).map(s => s.replace(/^@/, '').toLowerCase())];
+            const authorizedBuild = async (actor, number, sha, at) => {
+              if (String(actor).toLowerCase() === 'juhamikael') return true;
+              if (actor !== 'suhina-bot[bot]') return false;
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                ...context.repo, issue_number: number, per_page: 100,
+              });
+              for (const c of comments) {
+                if (c.user?.login !== 'suhina-bot[bot]' || c.user?.type !== 'Bot') continue;
+                const proof = String(c.body || '').match(/<!-- trusted-build ([a-f0-9]{40}) ([a-zA-Z0-9-]+) ([0-9]+) -->$/);
+                if (!proof || proof[1] !== sha || !trusted.includes(proof[2].toLowerCase()) ||
+                    Date.parse(c.created_at) > Date.parse(at)) continue;
+                try {
+                  const { data: source } = await github.rest.issues.getComment({ ...context.repo, comment_id: Number(proof[3]) });
+                  if (source.user?.type === 'User' && source.user.login.toLowerCase() === proof[2].toLowerCase() &&
+                      source.body.trim() === '/test-build' &&
+                      source.issue_url === 'https://api.github.com/repos/' + context.repo.owner + '/' + context.repo.repo + '/issues/' + number &&
+                      Date.parse(source.updated_at) <= Date.parse(c.created_at)) return true;
+                } catch (error) { if (error.status !== 404) throw error; }
+              }
+              return false;
+            };
+            if (!(await authorizedBuild(actor, number, run.head_sha, run.created_at))) {
+              core.info('No authorized request for this run and commit; nothing to link.');
+              return;
+            }
             const commit = run.head_sha.slice(0, 7);
 
             const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
@@ -153,7 +182,7 @@ jobs:
             if (!MAINTAINERS.includes(pr.user.login)) {
               body.push(
                 '',
-                `> **A contributor's build.** A maintainer added \`test-build\` after reading \`${commit}\`; later pushes are not built until the label is added again. Read the diff before you run it.`,
+                `> **A contributor's build.** A maintainer or trusted contributor requested \`test-build\` after reading \`${commit}\`; later pushes are not built until the label is added again. Read the diff before you run it.`,
               );
             }
 
