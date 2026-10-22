@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! The trace log (`docs/debugging.md`) has an `action` line for every command the window runs,
-//! the `projects.*` ones too (#821). The trace file is one per process, so this test has a test
-//! binary of its own.
+//! the `projects.*` ones too, and a `project opened` line for each project opened (#821). The
+//! trace file is one per process, so this test has a test binary of its own.
 
 use serde_json::json;
 use suhina_session::Session;
@@ -33,6 +33,12 @@ fn projects_commands_are_written_to_the_trace() {
         .collect();
     assert_eq!(actions, ["projects.switch", "projects.close", "transport.stop"], "trace:\n{text}");
     assert!(app.projects().get(second).is_none(), "the second project is closed");
+    let opened: Vec<&str> = text.lines().filter_map(|l| l.split_once("] project opened ").map(|(_, o)| o)).collect();
+    assert_eq!(
+        opened,
+        [format!("{} the project NewTab", first.0), format!("{} the project NewTab", second.0)],
+        "opening is traced too:\n{text}"
+    );
     assert!(
         text.contains(&format!("action projects.close {{\"project\":{}}}", second.0)),
         "with its parameters:\n{text}"

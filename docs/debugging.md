@@ -58,7 +58,8 @@ host process have their own id, so `grep "\[12345\]"` shows one process. To foll
 
 | Line starts with | Written by | When |
 |---|---|---|
-| `action <command> <params>` | app (`App::run`) | every command the window runs, with its parameters; the `projects.*` ones (opening, switching and closing tabs) too |
+| `action <command> <params>` | app (`App::run`) | every command the window runs, with its parameters; the `projects.*` ones (switching and closing tabs) too |
+| `project opened <id> <name> <NewTab or Replace>` | app (`App::open_project`) | a project opened, in a tab of its own or in place of the one shown |
 | `detail: …` | app | the detail area's state when it changes: the ARA editor shown, pulled to the top, focus |
 | `rack starts / started / stops / rebinds key …` | app (`session/src/rack.rs`) | a plug-in starting, its result, stopping, loaded again with an ARA document |
 | `host process started / connected after …` | app (`plugins/src/lib.rs`) | a host process starting and how long until it answers |

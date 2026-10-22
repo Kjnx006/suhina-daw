@@ -725,6 +725,8 @@ impl App {
                 return None;
             }
         };
+        // Opening is no command, so it has a line of its own beside the `action` lines (#821).
+        suhina_plugins::trace!("project opened {} {name} {how:?}", id.0);
         self.restore(id, Stash::default());
         self.plugin_dialog_hidden = false;
         Some(id)
@@ -2300,8 +2302,7 @@ impl App {
             return;
         }
         if action.id.starts_with("projects.") {
-            // Traced like every other command, so a trace shows tabs opened, switched and closed
-            // (#821).
+            // Traced like every other command, so a trace shows tabs switched and closed (#821).
             suhina_plugins::trace!("action {} {}", action.id, action.params);
             if let Err(e) = self.projects.execute(action.id, &action.params) {
                 self.status = Status::Error(e.0);
