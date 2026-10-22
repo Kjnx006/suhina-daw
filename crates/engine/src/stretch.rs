@@ -304,8 +304,9 @@ impl StretchVoice {
     }
 
     /// Builds the stretcher and the buffers, once. Allocates: the worker's thread (or an
-    /// offline render) runs it, before the voice's first frames.
-    fn prepare(&mut self) {
+    /// offline render) runs it, before the voice's first frames, and the launcher's plan does for
+    /// the voices the audio thread plays itself.
+    pub(crate) fn prepare(&mut self) {
         if self.stretch.is_some() {
             return;
         }

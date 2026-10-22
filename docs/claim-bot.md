@@ -3,11 +3,13 @@ description: How the claim bot moves an issue's card on the project board, holds
 read_when: claim, /claim, /claim @user, claim for someone else, on behalf, /unclaim, /hold, /ready, claim bot, project board, PROJECT_TOKEN, status automation, good first issue, lapsed claim, duplicate pull request, feature not agreed, project sync, board out of date, cards missing from the board, Touches, overlapping work, overlap, blocked by, blocked, dependency, Depends on, stacked pull requests, merge order, trusted contributor, TRUSTED_CONTRIBUTORS, maintainer, who may claim, claim limit, too many claims
 type: howto
 status: current
-last_verified: 2026-10-17
+last_verified: 2026-10-22
 covers:
   - .github/workflows/claim.yml
   - scripts/claim_bot_test.py
   - .github/workflows/depends-on.yml
+  - .github/workflows/overlap.yml
+  - scripts/test_pr_workflows.py
   - scripts/depends_on_test.py
   - .github/workflows/project-sync.yml
   - scripts/project_sync.py
@@ -114,6 +116,16 @@ do about them. It never refuses a claim for an overlap: two pieces of work on th
 often fine, and only the people doing them can tell. A claim without the line is answered with a
 sentence saying what the line does. A lookup that fails leaves its part out of the answer.
 
+A bug fix or a small change needs no issue and no claim, so the same lookup runs on pull requests
+too: the [Overlap](../.github/workflows/overlap.yml) workflow comments on a pull request when
+another open pull request or a claim's `Touches:` line covers its files, and keeps that one comment
+current with each push. It reads every page of open pull requests before checking overlaps and
+stack relationships. If a later page fails, known overlaps are still compared; an existing notice
+is preserved, and any new notice says the scan is incomplete. Renamed files count under both their old and new names in either pull
+request. If one pull request's full file lookup fails, the notice compares its already known files
+and continues with the other pull requests; the run log warns about the incomplete lookup.
+It skips pull requests in the same stack and `Cargo.lock` and the generated documents, and it never fails.
+
 ## The Depends on check
 
 [`.github/workflows/depends-on.yml`](../.github/workflows/depends-on.yml) orders pull requests that
@@ -210,6 +222,7 @@ maintainer who finds such a pull request abandoned closes it, or moves the card 
 python scripts/claim_bot_test.py
 python scripts/depends_on_test.py
 python -m unittest discover -s scripts -p 'test_project_sync.py'
+python -m unittest discover -s scripts -p 'test_pr_workflows.py'
 ```
 
 The first runs the workflow's script against mocked API clients, because a wrong branch would write
@@ -231,3 +244,9 @@ The third, which the CI `docs` job runs with the other script tests, runs the pr
 recorded GraphQL answers, with no network: every row of the table above, refused commands, paging,
 a dry run that writes nothing, and a missing Status option that stops the run before its first
 write.
+
+The PR workflow tests run the Overlap script against mocked API clients, including renamed files
+on either side and a failed file lookup followed by another overlapping pull request. They also
+run the CI DCO shell step in a temporary Git repository with upstream branches and a synthetic PR
+merge ref: upstream commits are exempt, but unsigned fork commits fail even when stacked on an
+upstream branch. These tests need Git, Bash and Node.js and run in the CI `docs` job.

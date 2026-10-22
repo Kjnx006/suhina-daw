@@ -3,22 +3,12 @@
 
 //! Sample instrument: shared SDK runtime and theme-aware SDK panel.
 pub use suhina_device_sdk::sampler::{INFO, PARAMS, Sampler};
-use suhina_device_sdk::{Parameter, ParameterControl, ui::*};
+use suhina_device_sdk::ui::*;
 
-pub fn parameters() -> Vec<Parameter> {
-    PARAMS
-        .iter()
-        .map(|p| {
-            let mut param = Parameter::new(p.id, p.name, (p.min, p.max), p.default);
-            param.control = match p.kind {
-                suhina_device_api::ParamKind::Choice(_) => ParameterControl::Choice,
-                suhina_device_api::ParamKind::Integer => ParameterControl::Integer,
-                suhina_device_api::ParamKind::Toggle => ParameterControl::Toggle,
-                _ => ParameterControl::Knob,
-            };
-            param
-        })
-        .collect()
+/// The sampler's layout: its compact panel, every parameter drawn by the canvas (ADR 0021 ›
+/// Amendment: device panels for built-in devices).
+pub fn layout() -> suhina_device_sdk::builtin::Layout {
+    suhina_device_sdk::builtin::Layout { ui: Some(panel()), ..Default::default() }
 }
 
 const ACCENT: [u8; 4] = [166, 163, 255, 255];

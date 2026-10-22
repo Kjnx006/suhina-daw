@@ -9,6 +9,14 @@
 
 use suhina_model::{Meter, TempoMap};
 
+/// The arrangement frame `beat` starts at, through the project's tempo map, at `sample_rate`;
+/// the same placement the engine's renders use. A beat before 0, or one that is not a number,
+/// is frame 0. Never allocates.
+pub fn frame_of_beat(project: &suhina_model::Project, beat: f64, sample_rate: u32) -> u64 {
+    let map = project.transport.tempo_map(f64::from(sample_rate));
+    frame_of(&map, beat)
+}
+
 /// The arrangement frame of `beat`, rounded; a beat before 0, or one that is not a number, is
 /// frame 0, and one too far for a frame number is the last frame (never reached). Never
 /// allocates.

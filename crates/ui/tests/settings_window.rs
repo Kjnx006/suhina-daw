@@ -15,6 +15,46 @@ use suhina_ui::{App, kit::theme};
 /// A window too short for most pages.
 const SHORT: (f32, f32) = (1000.0, 420.0);
 
+#[test]
+fn export_permissions_are_added_by_picker_removed_and_saved() {
+    use suhina_ui::interaction::pick::PickField;
+    let mut harness = short_window();
+    harness.get_by_label("Settings page: Export").click();
+    harness.run();
+    harness.get_by_label("Add MCP write folder").click();
+    harness.run();
+    assert_eq!(harness.state_mut().take_pick_request().map(|r| r.field), Some(PickField::McpWriteFolder));
+    let folder = std::env::temp_dir().join("Suhina exports");
+    harness.state_mut().set_picked(PickField::McpWriteFolder, folder.clone());
+    harness.run();
+    let settings = harness.state().settings().clone();
+    assert_eq!(settings.mcp_write_folders, vec![folder.display().to_string()]);
+    assert_eq!(suhina_ui::settings::Settings::from_text(&settings.to_text()).0, settings);
+    harness.get_by_label(&format!("Remove MCP write folder {}", folder.display())).click();
+    harness.run();
+    assert!(harness.state().settings().mcp_write_folders.is_empty());
+    harness.get_by_label("Allow the project's folder: Off").click();
+    harness.run();
+    assert!(!harness.state().settings().mcp_project_folder);
+}
+
+/// A small-window visual check with a long folder name; run with --ignored.
+#[test]
+#[ignore = "writes a settings screenshot for visual inspection; needs a GPU"]
+fn export_permissions_snapshot() {
+    let mut harness = short_window();
+    harness.get_by_label("Settings page: Export").click();
+    harness.run();
+    harness.state_mut().set_picked(
+        suhina_ui::interaction::pick::PickField::McpWriteFolder,
+        std::path::PathBuf::from("C:/Music/Projects/Export destinations/Albums and arrangements/Final mixes"),
+    );
+    harness.run();
+    let folder = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/ui-snapshots");
+    std::fs::create_dir_all(&folder).unwrap();
+    harness.render().unwrap().save(folder.join("export-permissions.png")).unwrap();
+}
+
 fn short_window() -> Harness<'static, App> {
     let mut app = App::new();
     app.set_browser_open(false);
@@ -71,6 +111,7 @@ fn every_page_scrolls_to_its_last_setting_in_a_short_window() {
     // Each page, and the control at its end (MIDI has none with no controller connected).
     let pages = [
         ("General", Some("Warp mode: Re-pitch")),
+        ("Export", Some("Add MCP write folder")),
         ("Audio", Some("List the audio devices again")),
         ("MIDI", None),
         ("Plug-ins", Some("Open the plug-in manager")),

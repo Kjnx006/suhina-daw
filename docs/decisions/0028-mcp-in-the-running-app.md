@@ -3,7 +3,7 @@ description: Why the desktop app serves MCP for the projects it has open, how an
 read_when: MCP in the app, attach, suhina-cli mcp --attach, live agent edits, agent and window share a project, shared undo, agent connection, allow agent, consent, named pipe, unix socket, control channel, single instance, one instance per build, --new-instance, open file in running app, agent roots
 type: decision
 status: current
-last_verified: 2026-10-18
+last_verified: 2026-10-22
 covers:
   - crates/automation/src/attach.rs
   - crates/automation/src/endpoint.rs
@@ -84,13 +84,17 @@ stdout to it and back, so a client changes only its arguments.
 - **The person sees and can end it.** While an agent is connected the control bar says so, with a
   **Disconnect** button. Turning the setting off disconnects every agent.
 
-### 4. Files: the project's folder to write, and the library to read
+### 4. Files: the person's allowed folders to write, and the library to read
 
 An attached agent works on the projects open as tabs, not on files of its choosing.
 
-- **It writes only inside the folder of the project it acts on**: saving that project, renders,
-  backups and consolidated audio. A project that has never been saved has no folder; the agent can
-  edit it, but writes nothing until the person has saved it once.
+- **It writes inside the folders the person allows in Settings › Export**, including their
+  subfolders. The saved project's folder is allowed by default, shown on that page, and can be
+  switched off. Additional folders are added through a folder picker and can be removed. An
+  unsaved project can write only when the person has granted an additional folder. With no
+  effective grant, writes are refused. Grants persist in the existing settings file, cannot be
+  changed through commands, and are checked again on subsequent operations and before a prepared
+  export starts its worker. Removing a grant does not cancel a render already started.
 - **It reads that folder and the library folders the browser shows**, so it can add the samples the
   person sees. Nothing else.
 - **It cannot open other projects from disk**: `project_open` is refused over an attached
@@ -133,6 +137,13 @@ cannot overwrite each other, and an agent has one app to reach. The lock is the 
   reaches.
 
 ## Consequences
+
+- Attached `project.export` commands gather plug-in states over window frames, using a bounded,
+  caller-owned preparation round. Rendering, encoding and host cleanup run on a blocking worker
+  after the snapshot has left the window. Batches containing exports await each step in order,
+  releasing project access while the export runs; ordinary batches retain their existing path.
+  Cancelling a request during preparation releases its gather. A tab switch cannot retarget the
+  pending export, and a closed source project ends preparation with an error.
 
 - Agents can work beside a person in the window, and the person keeps control: nothing listens until
   they turn it on, each connection waits for their answer, they see who is connected, and every edit

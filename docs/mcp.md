@@ -3,7 +3,7 @@ description: The MCP server for agents: tools, file roots, errors and how to run
 read_when: MCP, agents, attach, mcp --attach, agents in the app, live agent edits, allow agent, audio output, MIDI input, arm, record, recording, count-in, audio device, buffer size, ASIO, project_open, command_run, file roots, rmcp, suhina-cli mcp, several projects, project id, plug-in commands, device commands, library commands, add samples, track.add, clip.addFiles, preview, preview.noteOn, preview.noteOff, note.split, mute a note, note.setMuted, note.humanize, note.fitToScale, note.invert, note.reverse, note.legato, note.stretch, note.randomizeVelocity, note.rampVelocity, MIDI tools
 type: system
 status: current
-last_verified: 2026-10-20
+last_verified: 2026-10-22
 covers:
   - crates/automation/src/server.rs
   - crates/automation/src/workspace.rs
@@ -45,7 +45,13 @@ suhina-cli mcp --read-root ./projects --write-root ./renders [--audio]
   `--write-root` it cannot write any. Existing files are replaced only with `overwrite: true`.
   `project.save` writes below the write root only: with `path`, or over the project's own file
   when that file is there (`overwrite: true` needed, as for any existing file; `overwrite` is an
-  MCP-only parameter, removed before the command runs).
+  MCP-only parameter, removed before the command runs). `project.export` is checked the same
+  way: the first of `path` and `output` that names a file decides, untrimmed as the command
+  reads it, and the checked file is what both aliases keep, so neither alias can slip past the
+  check the other went through.
+  A launch script's steps are confined like the tool calls', and the file-writing commands
+  (`project.export`, `project.save`) do not run in one, whatever a caller's permission: the
+  render's own output is the only file a script writes, at the path the render was given.
   Commands that read files take the same paths and are checked the same way before they run:
   `clip.addFiles` (`paths`), `preview.play` (`path`), `device.add` and `track.add` (`preset`),
   `library.list` (`folder`), `library.search` (a folder `place`), and a file `item` of
@@ -429,7 +435,7 @@ suhina-cli mcp --read-root ./projects --write-root ./renders [--audio]
 | `command_list` | Command ids with description, kind (`read`, `edit`, `history`, `transport`, `projects`, `plugins`, `plugin`, `library`, `audio`) and parameter schema; optional `filter`. |
 | `command_run` | Run one command: `{"id": "track.setPan", "params": {"tracks": ["Bass"], "pan": -1}}`; optional `project`. |
 | `command_batch` | Run `steps` in order; each editing command is its own undo step; `stop_on_error` (default true); optional `project` for every step. |
-| `project_render` | Render the active project (or `project`): the arrangement, or `scene` (1-based), to a WAV below the write root. Audio files are loaded from the opened set's folder; missing ones are listed in `warnings`. Its plug-ins start with the state the project's running plug-ins have now (what their editors changed included), as `project.save` writes it. With `launches` (and `seconds`), render a launch script instead: transport commands run at times in seconds from a stopped transport, e.g. `[{"at": 0, "id": "scene.launch", "params": {"scene": 1}}, {"at": 4, "id": "track.stop", "params": {"track": "Bass"}}]`; each step's result is returned. |
+| `project_render` | Render the active project (or `project`): the arrangement, or `scene` (1-based), to a WAV below the write root. Audio files are loaded from the opened set's folder; missing ones are listed in `warnings`. Its plug-ins start with the state the project's running plug-ins have now (what their editors changed included), as `project.save` writes it. With `launches` (and `seconds`), render a launch script instead: transport commands run at times in seconds from a stopped transport, e.g. `[{"at": 0, "id": "scene.launch", "params": {"scene": 1}}, {"at": 4, "id": "track.stop", "params": {"track": "Bass"}}]`; each step's result is returned. The steps are confined like the tool calls' and never carry the file-writing commands (`project.export`, `project.save`); the render's output is the only file a script writes. |
 
 Commands are defined once in `suhina-session` (ADR 0002); the MCP server, the CLI and the
 desktop app all run the same ones. [`commands.md`](commands.md) lists every command with its
@@ -458,10 +464,14 @@ suhina-cli mcp --attach
 - **Tabs.** The agent works on the window's tabs: `projects.list`, `projects.switch` and the
   `project` argument act on them. `project_open` is refused (the person opens projects), and so is
   `projects.close`: closing loses a tab's unsaved changes and its undo history.
-- **Files.** The agent writes only in the folder of the project it acts on (`project.save`,
-  `project_render`, `project.autosave` with `now`), and reads that folder and the browser's
-  library folders. Relative paths start in the project's folder. A project never saved has no
-  folder: the agent can edit it but writes nothing until the person saves it once.
+- **Files.** Settings › Export controls where attached agents may write (`project.save`,
+  `project.export`, `project_render`, `project.autosave` with `now`). The project's folder is
+  allowed by default; the person can turn that grant off and add or remove other folders.
+  Each grant includes subfolders and persists across restarts. Relative write paths start in
+  the project's folder when allowed, otherwise the first available allowed folder. An unsaved
+  project can export into an explicitly allowed folder. Reads still use the project's folder
+  and browser library. Agents cannot grant themselves access. Revocation applies to subsequent
+  operations and exports still gathering state; it does not cancel a render already started.
 - **Settings.** Commands that change the app's settings or the person's library rather than a
   project are refused: `audio.setOutput`, `output.setCuePair`, `output.setCueVolume`,
   `midi.setInput`, `plugins.setHosting`, `library.setPluginsView`, `library.pin`, `library.unpin`,
@@ -472,6 +482,12 @@ suhina-cli mcp --attach
   window's thread while plug-ins load; the person scans from the plug-in manager. `project_render`
   takes its snapshot with the window's projects and renders on a thread of its own, so the window
   keeps drawing.
+- **Export.** `project.export`, including a step in `command_batch`, gathers plug-in states
+  across window frames with a deadline, then renders and encodes on a worker. The export stays
+  with its original project when the person switches tabs. Closing that project or cancelling
+  the request during preparation releases its state gather. A failed or late plug-in state
+  read names the plug-in in the result's warnings and uses its last known state. Batch steps
+  remain sequential, but the person and other calls can work while an export runs.
 - **Errors.** With no app of the build running, or with agents not let in, `--attach` says which
   and exits.
 

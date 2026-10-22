@@ -233,18 +233,32 @@ pub(crate) fn set_audio(session: &mut Session, params: &Value) -> Result<Value, 
     }
     let (at, clip) = named(session, params)?;
     let (id, content_id) = (clip.id, clip.content);
+    // Turning warp on keeps the audio at its own speed at the tempo it plays at now, not at the
+    // one it was imported at. An arrangement clip plays by the song's tempo map from where its
+    // content's beat 0 falls, ramps and changes included; a slot's clip has no place on that map
+    // and plays at the song's tempo (a scene's tempo is the launch's, not the clip's).
+    let origin = clip.start - clip.offset;
+    let map = session.project.transport.tempo_map(1.0);
+    let tempo = session.project.transport.tempo_bpm;
+    let in_slot = matches!(at, ClipAt::Slot(..));
+    let beats_for = |seconds: f64| {
+        if in_slot { seconds * tempo / 60.0 } else { map.beat_at(map.time_at(origin) + seconds) - origin }
+    };
     let content =
         session.project.contents.iter_mut().find(|c| c.id == content_id).ok_or("the clip's content is missing")?;
-    let length = content.length;
     let mut found = None;
     for lane in &mut content.lanes {
         let suhina_model::LaneData::Audio(region) = &mut lane.data else { continue };
         if let Some(on) = warp {
             if on && region.warp_markers.is_empty() {
                 let seconds = region.duration_seconds.ok_or("the audio's length is not known, so it cannot warp")?;
+                let beats = beats_for(seconds);
+                if !(beats.is_finite() && beats > 0.0) {
+                    return Err("the audio's length in beats is not known, so it cannot warp".into());
+                }
                 region.warp_markers = vec![
                     suhina_model::WarpMarker { time: 0.0, audio_time: 0.0 },
-                    suhina_model::WarpMarker { time: length, audio_time: seconds },
+                    suhina_model::WarpMarker { time: beats, audio_time: seconds },
                 ];
             }
             region.warped = on;

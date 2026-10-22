@@ -39,9 +39,14 @@ that describe them (*Code and its documents*). Read only the documents that matc
    params and tests. The UI, CLI and MCP all dispatch the same commands.
 7. **Tests are the gate.** Every change comes with tests: round-trip and malformed-input tests for
    formats, golden-file renders for DSP and engine behaviour.
-8. **Build every device on the SDK.** Every built-in MIDI effect, instrument and audio effect
-   must use `device-sdk` shared nodes and its UI/panel system. When a device needs DSP that the
-   shared nodes cannot provide, add it as a native SDK node and use that node in the device graph
+8. **Build every device's panel on the SDK, and its DSP from shared blocks.** Every built-in MIDI
+   effect, instrument and audio effect is native code, never an `.sd` graph, and gets its panel
+   from the `device-sdk` UI system: the generated parameter list, or a layout (the `.sd` UI part
+   only) loaded by its id, whose parameters come from the device's `DeviceInfo`
+   ([ADR 0021](docs/decisions/0021-device-graph-files.md) › Amendment: device panels). Its DSP is
+   built from blocks in `crates/dsp` that the SDK's nodes share: when a device needs DSP the shared
+   blocks cannot provide, add it to `crates/dsp`, with an SDK node over it when `.sd` authors need
+   it too, so each block exists once
    ([issue #406](https://github.com/suhina-daw/suhina-daw/issues/406)).
 9. **Other DAWs are named only where a format is handled.** Product names such as Ableton,
    Live or FL Studio may appear in format crates (`crates/als`), their tests, `docs/spec/` and
@@ -103,9 +108,10 @@ crates/
   ui       L3 the main window, the browser and the views (egui, ADR 0009); every change is a command
   dsp      L0 signal-processing blocks for built-in effects and instruments: smoothing, filters, crossovers, LFOs, shapers, oversampling, delay lines (ADR 0004)
   device-api L0 the Device trait, parameter descriptions, contract tests every device runs
-  device-sdk L0 builds and validates data-only `.sd` effect graphs, compiles DSP primitives and delayed feedback for real-time execution; shared node contracts and embedded custom UI canvases/images for authors and agents; native sampler tempo synchronisation uses stretch
-  device-bundle L1 generates, validates and embeds stock `.sd` definitions at build time
-  device-registry L1 every built-in effect, instrument or MIDI effect by its stable id: makes and lists them (ADR 0004)
+  device-sdk L0 builds and validates data-only `.sd` effect graphs, compiles DSP primitives and delayed feedback for real-time execution; shared node contracts and embedded custom UI canvases/images for authors and agents; the layouts of
+           built-in devices (`builtin`: the UI part only, no graph); native sampler tempo synchronisation uses stretch
+  device-registry L1 every built-in effect, instrument or MIDI effect by its stable id: makes and lists them (ADR 0004),
+           and gives its panel: parameters from DeviceInfo and its layout, or the generated list (ADR 0021)
   ipc      L0 audio blocks to a plug-in host process: shared memory, block sync with a deadline (ADR 0006; may use unsafe)
   realtime L0 real-time priority for audio threads: MMCSS Pro Audio on Windows, SCHED_FIFO or rtkit on Linux
   plugins  L1 the engine's side of plug-in hosting: start a host process, control protocol, health, state, restart; scanning; offline runs
@@ -189,14 +195,22 @@ lists those files and what else is left out (`third_party/`, fixtures, generated
 Work is tracked in the GitHub project **Suhina**
 (<https://github.com/orgs/suhina-daw/projects/1>), and nowhere else. New work, bugs found while
 testing and follow-ups a change leaves open go there as items, written in English, with a
-Status, a Priority (P0 to P2) and a Phase (the ROADMAP milestone). Work that a pull request will
-close gets an issue, so the pull request can say `Closes #N`. An issue gets a type label and
+Status, a Priority (P0 to P2) and a Phase (the ROADMAP milestone). A feature or a piece of an epic
+gets an issue, so the pull request can say `Closes #N`; a bug fixed at once
+or a small change goes straight to a pull request that says what it fixes. An issue gets a type label and
 area labels (`CONTRIBUTING.md` › Issues lists them); a larger piece split into issues is an
 `epic`, and repository, build and release work is a `chore`. Items imported from the earlier
 board keep their old key in the title (`(LOOP-27)`); a pull request for one names that key.
-Before starting, claim the item the way [`CONTRIBUTING.md`](CONTRIBUTING.md) › *Working on an issue*
+Before starting a feature or a piece of an epic, claim it the way [`CONTRIBUTING.md`](CONTRIBUTING.md) › *Working on an issue*
 describes, for a person and for an agent alike: no assignee and no open pull request for it,
 `Backlog` or `Ready` on the board (`Ready` for a feature, unless you are a trusted contributor), and a `/claim` comment with the plan.
+A bug or a small change needs no issue and no claim: the [Overlap](.github/workflows/overlap.yml) notice on the
+pull request lists other open work on the same files.
+
+**What belongs in one pull request.** A fix found while working that is small and in the same code
+goes in the same pull request, under *Also fixed* in its description. Make it a pull request of its
+own, or an issue, when it is larger, in other code, or in code another open pull request or claim
+is changing.
 
 Several agents often run at once, so an agent never starts work that exists already:
 
@@ -246,7 +260,7 @@ Several agents often run at once, so an agent never starts work that exists alre
   This posting rule applies to agents a person runs. Installed reviewers such as Codex and
   CodeRabbit post through their own apps and follow [Code Review Rules](#code-review-rules).
 
-- **Before writing code**, comment `/claim` with the plan and a `Touches:` line naming the paths
+- **Before writing code for a feature or a piece of an epic**, comment `/claim` with the plan and a `Touches:` line naming the paths
   you will change (`Touches: crates/ui/src/detail, crates/session`), and read the bot's answer.
   When it says the work is taken, that it is blocked by another issue, or that it is already yours
   and names a pull request, do not start a second one: continue in that pull request, take the
@@ -269,7 +283,8 @@ the same issue is opened only when the user asks for one, and its description sa
 
 **Overlapping work across issues.** Two issues often need the same code: a helper, a command, a
 model field. The claim bot lists the open pull requests and other claims that touch the paths in
-your `Touches:` line; without one, list them yourself before writing code
+your `Touches:` line, and the Overlap notice lists them again on the pull request as its files
+change; without a claim, list them yourself before writing code
 (`gh pr list --state open --json number,title,files`), and read every one that touches the crates,
 views or commands you will change. Then:
 
@@ -306,11 +321,12 @@ cargo deny check   # when Cargo.lock changed (CONTRIBUTING.md › Dependencies)
 
 Keep the tree building at every step.
 
-**Build and verify built-in devices.** When building the desktop app, build every built-in device
-as an `.sd` definition and bundle it into the app so it is available to users. After changing a
-built-in device, its SDK runtime, parameters or panel, rebuild the affected device and desktop app;
-verify the app contains current `.sd` definitions for all built-in devices and report the app and
-definition paths. Do this automatically without waiting for a separate rebuild request.
+**Build and verify built-in devices.** Built-in devices are compiled into the app and are not
+`.sd` files; nothing is bundled beside it. After changing a built-in device, its parameters or its
+layout, run `cargo test -p suhina-device-registry` (it fails on a layout that names a parameter its
+device lacks or that does not load), rebuild the desktop app, and check the device's panel in it:
+its layout, or the generated parameter list. Report the app's path. Do this automatically without
+waiting for a separate rebuild request.
 
 
 **A change in what Suhina does comes with steps to check it.** When a pull request changes
@@ -418,7 +434,9 @@ procedure, the rules in this file and any more specific instructions for the cha
 review runs no tests or builds: it reads the CI results of the push it reviews.
 
 Trace changed behaviour through callers, shared code and side effects. Check the agreed scope
-against relevant issues and documents, previous fixes and existing review feedback. Equivalent
+against relevant issues and documents, previous fixes and existing review feedback. First check
+whether an open or recently merged pull request already solves the same problem; when one does,
+that is the first finding. Equivalent
 operations share project semantics, but desktop and MCP authorization may deliberately differ;
 batch and nested execution must preserve the caller's restrictions.
 

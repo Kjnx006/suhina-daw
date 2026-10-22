@@ -129,7 +129,7 @@ impl PluginStatus {
 }
 
 /// One plug-in device's running plug-in, as the session sees it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PluginReport {
     pub status: PluginStatus,
     /// The installed plug-in that stands for it: name, vendor, how it was found.
@@ -154,6 +154,9 @@ pub struct PluginReport {
     /// It is bound to an ARA document of its track's audio clips (ADR 0028), so its editor
     /// edits them.
     pub ara: bool,
+    /// Its parameters as it last listed them, for its generated panel (#679); `None` until it
+    /// has, or while it does not run.
+    pub params: Option<Arc<[suhina_plugins::ParamInfo]>>,
 }
 
 /// How far a project's plug-ins have got with starting, for a dialog while they load.
@@ -642,10 +645,26 @@ enum Done {
     Stopped(Option<SavedState>),
     /// Its ARA document was brought in line with its track's clips.
     AraUpdated(Result<(), String>),
+    /// Its parameters were listed for its generated panel; `None` when it did not answer.
+    Listed(Option<Vec<suhina_plugins::ParamInfo>>),
     /// The edits of a clip carried to another track were stored ([`Carry`], by its number).
     AraExported(u64, Result<(String, Vec<u8>), String>),
     /// They were given to the other track's plug-in, or not yet.
     AraImported(u64, Result<(), String>),
+}
+
+/// How often a shown plug-in's parameters are listed again, for its generated panel to follow
+/// changes made in its own editor.
+const LIST_EVERY: Duration = Duration::from_secs(2);
+
+/// How long a listing for the panel waits for the host. It lends out the plug-in's control half
+/// meanwhile, so it must not wait for as long as the start-up timeout does: a host that stops
+/// answering would keep restarts and health checks away for minutes.
+const LIST_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// A parameter list's ids and ranges (lowest, highest), as [`Instance::ranges`] keeps them.
+fn ranges(list: &[suhina_plugins::ParamInfo]) -> Vec<(u32, f64, f64)> {
+    list.iter().map(|p| (p.id, p.min.min(p.max), p.max.max(p.min))).collect()
 }
 
 /// How long a clip's edits wait for the other track's plug-in to run with the clip.
@@ -676,6 +695,28 @@ struct Returned {
     generation: u64,
     control: Option<Plugin>,
     done: Done,
+}
+
+/// One state-read round of [`Rack::gather_states`], tracked independently of the live
+/// instances: a project's stop while a read is out takes the instances with it, and the
+/// round's answers, its fallbacks, the not-answered's names and its completion outlive them.
+struct StateGather {
+    /// The keys the reads were lent to.
+    out: Vec<u64>,
+    /// The keys asked for whose control half was out at the launch (a plug-in's editor
+    /// closing): their reads go out when the control comes back, and the deadline settles
+    /// them with their fallback when it never does.
+    deferred: Vec<u64>,
+    /// The ones whose answer came back ([`Rack::take_returned`]).
+    back: std::collections::HashSet<u64>,
+    /// The answers themselves.
+    states: HashMap<u64, SavedState>,
+    /// What each asked plug-in's state stood at, at the launch: the fallback of the ones
+    /// that do not answer.
+    fallback: HashMap<u64, SavedState>,
+    /// Each asked plug-in's name, as it stood at the launch: the not-answered's report
+    /// names it, even after its instance is gone.
+    names: HashMap<u64, String>,
 }
 
 struct Instance {
@@ -725,6 +766,13 @@ struct Instance {
     counts: Option<Arc<BlockCounts>>,
     /// Its parameters' ids and ranges (lowest, highest), once listed ([`Rack::params`]).
     ranges: Option<Vec<(u32, f64, f64)>>,
+    /// Its parameters as last listed in the background for its generated panel, and when.
+    listed: Option<(Arc<[suhina_plugins::ParamInfo]>, Instant)>,
+    /// A listing for the panel is under way.
+    listing: bool,
+    /// When the last listing for the panel ended, answered or not; a plug-in that refuses to
+    /// list is asked as seldom as one that answers.
+    list_tried: Option<Instant>,
     /// For a plug-in that edits clips (ADR 0028): its track's clips as it was loaded with them.
     ara_layout: Option<crate::ara::Layout>,
     /// The audio sources of the ARA document it was loaded with, kept for as long as it runs;
@@ -745,6 +793,25 @@ struct Instance {
 }
 
 impl Instance {
+    /// Whether its parameters are to be listed again for the panel: it runs, no listing is under
+    /// way and the last one, answered or not, ended [`LIST_EVERY`] ago or never.
+    fn list_due(&self, now: Instant) -> bool {
+        self.status == PluginStatus::Running
+            && !self.listing
+            && self.list_tried.is_none_or(|at| now.saturating_duration_since(at) >= LIST_EVERY)
+    }
+
+    /// A listing for the panel ended at `now` with `list`, or with nothing when the plug-in did
+    /// not answer in time; the old list stays then.
+    fn list_done(&mut self, list: Option<Vec<suhina_plugins::ParamInfo>>, now: Instant) {
+        self.listing = false;
+        self.list_tried = Some(now);
+        if let Some(list) = list {
+            self.ranges = Some(ranges(&list));
+            self.listed = Some((list.into(), now));
+        }
+    }
+
     fn new(status: PluginStatus, plugin: Option<(String, String, &'static str)>, generation: u64) -> Self {
         Self {
             status,
@@ -752,6 +819,9 @@ impl Instance {
             spec: String::new(),
             info: PluginSlotInfo::default(),
             ranges: None,
+            listed: None,
+            listing: false,
+            list_tried: None,
             control: None,
             last_state: None,
             generation,
@@ -829,6 +899,10 @@ pub struct Rack {
     env: Option<std::sync::Arc<PluginEnv>>,
     sample_rate: u32,
     instances: HashMap<u64, Instance>,
+    /// The state reads an export gathers with ([`Rack::gather_states`]): a round tracked
+    /// independently of the live instances, so a project's stop while a read is out — the
+    /// read's answer, its fallback and the round's completion — is not lost with them.
+    state_gather: Option<StateGather>,
     /// The last state of plug-ins that were stopped (a device removed, the project no longer
     /// playing), so they come back as they were.
     kept: HashMap<u64, SavedState>,
@@ -889,6 +963,7 @@ impl Default for Rack {
             env: None,
             sample_rate: 0,
             instances: HashMap::new(),
+            state_gather: None,
             kept: HashMap::new(),
             sender,
             receiver,
@@ -933,6 +1008,12 @@ impl Rack {
 
     pub fn env(&self) -> Option<&PluginEnv> {
         self.env.as_deref()
+    }
+
+    /// The environment as a handle ([`std::sync::Arc`]) a worker thread holds while it renders
+    /// an export off the window's.
+    pub fn env_handle(&self) -> Option<std::sync::Arc<PluginEnv>> {
+        self.env.clone()
     }
 
     /// The state of every plug-in device as it is now, by key, for saving the project. Each
@@ -983,6 +1064,15 @@ impl Rack {
             std::thread::sleep(Duration::from_millis(2));
             self.take_returned(&mut notices);
         }
+        // A host that did not answer in time keeps the state it last gave; the save, render or
+        // export that waited says so, so a change made in its editor may not be in it.
+        let unanswered = self.instances.iter().filter(|(key, i)| asked.contains(key) && i.control.is_none()).count();
+        if unanswered > 0 {
+            notices.push(format!(
+                "{unanswered} plug-in{} did not answer in time; the settings read are the last ones they gave",
+                if unanswered == 1 { "" } else { "s" }
+            ));
+        }
         self.notices.extend(notices);
     }
 
@@ -1020,6 +1110,135 @@ impl Rack {
         }
         self.edit_check = Some((deadline, rounds - 1));
         false
+    }
+
+    /// The state reads an export gathers with, never waiting on the caller's thread: the
+    /// caller runs this once per frame and its frames carry the answers, with `deadline`
+    /// bounding the round the way a save's [`SAVE_WAIT`] does. `true` settles, and the states
+    /// then stand where [`Rack::known_states`] reads them.
+    ///
+    /// The machine: while a control half is out for another reason (an editor opening, a
+    /// track's ARA work), the reads wait for it, as a save's wait does; once lent, the reads
+    /// wait for their answers; and past the deadline, whatever came in stands, the
+    /// not-answered saying so in the notices. A frame's pumping never sleeps.
+    pub(crate) fn gather_states(&mut self, deadline: Instant) -> bool {
+        let mut notices = Vec::new();
+        // Replies must see the active ledger. Taking the round first loses answers
+        // consumed here, particularly after a tab switch removed the live instances.
+        self.take_returned(&mut notices);
+        // Our own reads, in flight: settled when their answers are all in — counted from the
+        // round itself, not from the instances, which a project's stop takes with it.
+        let mut round = self.state_gather.take();
+        let mut settled = Option::<Vec<(u64, SavedState)>>::None;
+        if let Some(gather) = round.as_mut() {
+            // The deferred reads whose control half came back go out now, while the deadline
+            // still leaves them room to be answered.
+            if Instant::now() < deadline {
+                let lendable: Vec<u64> = gather
+                    .deferred
+                    .iter()
+                    .filter(|key| self.instances.get(*key).is_some_and(|i| i.control.is_some()))
+                    .copied()
+                    .collect();
+                for key in &lendable {
+                    if self.lend(*key, read_state).is_ok() {
+                        gather.out.push(*key);
+                    }
+                }
+                gather.deferred.retain(|key| !lendable.contains(key));
+            }
+            // The round's own count: out and not back, plus the deferred that never went.
+            let pending = gather.out.iter().filter(|key| !gather.back.contains(*key)).count() + gather.deferred.len();
+            if pending == 0 || Instant::now() >= deadline {
+                // What came in stands; the not-answered say so by name, and their states at
+                // the launch stand for them, as a save's wait does.
+                for key in gather.out.iter().filter(|key| !gather.back.contains(*key)).chain(&gather.deferred) {
+                    let name = gather.names.get(key).map(String::as_str).unwrap_or("a plug-in");
+                    notices.push(format!("{name} did not answer in time; the settings read are the last ones it gave"));
+                }
+                for key in gather.back.iter().filter(|key| !gather.states.contains_key(*key)) {
+                    let name = gather.names.get(key).map(String::as_str).unwrap_or("a plug-in");
+                    notices.push(format!(
+                        "{name}: reading its settings failed; the settings read are the last ones it gave"
+                    ));
+                }
+                settled = Some(
+                    gather
+                        .out
+                        .iter()
+                        .chain(&gather.deferred)
+                        .filter_map(|key| {
+                            gather.states.get(key).or_else(|| gather.fallback.get(key)).map(|s| (*key, s.clone()))
+                        })
+                        .collect(),
+                );
+            }
+        }
+        if let Some(states) = settled {
+            self.notices.extend(std::mem::take(&mut notices));
+            for (key, state) in states {
+                self.kept.insert(key, state);
+            }
+            return true;
+        }
+        if round.is_some() {
+            // The round is not settled yet: its answers come on later frames.
+            self.notices.extend(std::mem::take(&mut notices));
+            self.state_gather = round;
+            return false;
+        }
+        self.notices.extend(std::mem::take(&mut notices));
+        // The reads go out at the first call, whatever may be holding a control half; the
+        // round defers those and answers for them later. A plug-in still starting is asked
+        // for the same way: its read goes out when it runs, within the round's own deadline.
+        let known = self.known_states();
+        let running: Vec<u64> = self
+            .instances
+            .iter()
+            .filter(|(_, i)| matches!(i.status, PluginStatus::Running | PluginStatus::Loading))
+            .map(|(k, _)| *k)
+            .collect();
+        if running.is_empty() {
+            // Nothing running: the states stand as they are.
+            return true;
+        }
+        let (mut lendable, deferred): (Vec<u64>, Vec<u64>) =
+            running.into_iter().partition(|key| self.instances.get(key).is_some_and(|i| i.control.is_some()));
+        let out: Vec<u64> = lendable.drain(..).filter(|key| self.lend(*key, read_state).is_ok()).collect();
+        self.notices.extend(std::mem::take(&mut notices));
+        if out.is_empty() && deferred.is_empty() {
+            // No thread to ask on, and nothing that runs: the states stand as they are.
+            return true;
+        }
+        let asked: std::collections::HashSet<u64> = out.iter().chain(&deferred).copied().collect();
+        self.state_gather = Some(StateGather {
+            names: asked
+                .iter()
+                .filter_map(|key| self.instances.get(key).and_then(|i| i.plugin.as_ref().map(|p| (*key, p.0.clone()))))
+                .collect(),
+            fallback: asked.iter().filter_map(|key| known.get(key).map(|s| (*key, s.clone()))).collect(),
+            out,
+            deferred,
+            back: std::collections::HashSet::new(),
+            states: HashMap::new(),
+        });
+        false
+    }
+
+    /// Cancels the gather's round, what came in standing where it is: a cancelled export's
+    /// late replies change nothing, and the next export gathers its own round.
+    pub(crate) fn cancel_gather(&mut self) {
+        self.state_gather = None;
+    }
+
+    /// Whether a caller already owns the export preparation round.
+    pub(crate) fn gathering(&self) -> bool {
+        self.state_gather.is_some()
+    }
+
+    /// Transfers preparation notices to the export result so an inactive tab cannot hide them.
+    pub(crate) fn take_export_notices(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.notices)
     }
 
     /// Whether a plug-in's state changed since the project was last saved or opened, without
@@ -1077,6 +1296,17 @@ impl Rack {
     fn take_returned(&mut self, notices: &mut Vec<String>) {
         while let Ok(returned) = self.returned.try_recv() {
             let Returned { key, generation, control, done } = returned;
+            // An export's gather keeps the reads' answers where they land, whether the
+            // instances are still in or were stopped out from under the reads.
+            if let Done::Saved(state) = &done
+                && let Some(gather) = self.state_gather.as_mut()
+                && gather.out.contains(&key)
+            {
+                gather.back.insert(key);
+                if let Some(state) = state {
+                    gather.states.insert(key, state.clone());
+                }
+            }
             if let Done::Stopped(state) = done {
                 // A plug-in loaded again with new clips starts with this state.
                 self.rebinding.remove(&key);
@@ -1129,6 +1359,7 @@ impl Rack {
                             ));
                             instance.ara_failed = true;
                         }
+                        Done::Listed(list) => instance.list_done(list, Instant::now()),
                         Done::Saved(Some(state)) => {
                             self.edits.read(key, &state);
                             instance.last_state = Some(state);
@@ -1190,6 +1421,20 @@ impl Rack {
         }
     }
 
+    /// Lists the parameters of the plug-in device `key` again, in the background, for its
+    /// generated panel, when it runs and its list is older than [`LIST_EVERY`]; the next
+    /// [`Rack::report`] after it answers carries it. The window asks for this while it shows the
+    /// device's panel; commands never do, so they do not find the plug-in busy.
+    pub fn list_params(&mut self, key: u64) {
+        let stale = self.instances.get(&key).is_some_and(|i| i.control.is_some() && i.list_due(Instant::now()));
+        if stale
+            && self.lend(key, |control| Done::Listed(control.params_within(LIST_TIMEOUT).ok())).is_ok()
+            && let Some(instance) = self.instances.get_mut(&key)
+        {
+            instance.listing = true;
+        }
+    }
+
     /// What is known about the plug-in device `key`.
     pub fn report(&mut self, key: u64) -> Option<PluginReport> {
         let instance = self.instances.get_mut(&key)?;
@@ -1214,6 +1459,11 @@ impl Rack {
             no_time: instance.counts.as_ref().map_or(0, |c| c.no_time()),
             state_refused: instance.state_refused.clone(),
             ara: !instance.ara_sources.is_empty(),
+            params: instance
+                .listed
+                .as_ref()
+                .filter(|_| instance.status == PluginStatus::Running)
+                .map(|(list, _)| Arc::clone(list)),
         })
     }
 
@@ -1785,6 +2035,9 @@ impl Rack {
         self.next_generation += 1;
         instance.generation = self.next_generation;
         instance.status = PluginStatus::Loading;
+        // The new process may list other parameters: its panel waits for its own list.
+        instance.listed = None;
+        instance.list_tried = None;
         let (sender, generation) = (self.sender.clone(), self.next_generation);
         let spawned = std::thread::Builder::new().name("suhina-plugin-restart".into()).spawn(move || {
             let mut control = control;
@@ -1846,18 +2099,19 @@ impl Rack {
         Ok(())
     }
 
-    /// Opens the editor of the plug-in device `key`; returns the size of its inside. Over an
-    /// owner window (the desktop app's) it opens on a thread of its own and `None` comes back
-    /// at once: the host making a window that the app's window owns waits for the app's window
-    /// thread, which must not be waiting for the host meanwhile. Embedded (the setting), it
-    /// opens hidden inside that window until [`Rack::place_editor`] puts it somewhere.
     /// The parameters of the plug-in device `key` as its plug-in lists them now (it waits for
     /// the host's answer), remembered so values set later can be kept in range.
     pub fn params(&mut self, key: u64) -> Result<Vec<suhina_plugins::ParamInfo>, CommandError> {
+        // Out for its panel's listing: the list it gave last is as good, and nothing waits.
+        if let Some(instance) = self.instances.get(&key)
+            && instance.listing
+            && let Some((list, _)) = &instance.listed
+        {
+            return Ok(list.to_vec());
+        }
         let list = self.running(key)?.params().map_err(|e| CommandError(e.to_string()))?;
         if let Some(instance) = self.instances.get_mut(&key) {
-            let ranges = list.iter().map(|p| (p.id, p.min.min(p.max), p.max.max(p.min))).collect();
-            instance.ranges = Some(ranges);
+            instance.ranges = Some(ranges(&list));
         }
         Ok(list)
     }
@@ -1869,6 +2123,11 @@ impl Rack {
         Some(ranges.iter().find(|(i, _, _)| *i == id).map(|&(_, min, max)| (min, max)))
     }
 
+    /// Opens the editor of the plug-in device `key`; returns the size of its inside. Over an
+    /// owner window (the desktop app's) it opens on a thread of its own and `None` comes back
+    /// at once: the host making a window that the app's window owns waits for the app's window
+    /// thread, which must not be waiting for the host meanwhile. Embedded (the setting), it
+    /// opens hidden inside that window until [`Rack::place_editor`] puts it somewhere.
     pub fn open_editor(&mut self, key: u64) -> Result<Option<(u32, u32)>, CommandError> {
         if self.lent_out(key, true) {
             return Ok(None);
@@ -2189,6 +2448,48 @@ pub fn device_kind(plugin: &PluginInfo) -> DeviceKind {
 mod tests {
     use super::*;
 
+    /// A pending read whose instance was detached while the host held its control.
+    fn detached_gather() -> Rack {
+        Rack {
+            state_gather: Some(StateGather {
+                out: vec![1],
+                deferred: Vec::new(),
+                back: Default::default(),
+                states: Default::default(),
+                fallback: [(1, SavedState::from(vec![1]))].into(),
+                names: [(1, "Test instrument".to_string())].into(),
+            }),
+            ..Rack::default()
+        }
+    }
+
+    #[test]
+    fn export_gather_consumes_a_detached_reply_without_using_the_cached_state() {
+        let mut rack = detached_gather();
+        let fresh = SavedState::from(vec![2]);
+        rack.returned_sender
+            .send(Returned { key: 1, generation: 0, control: None, done: Done::Saved(Some(fresh.clone())) })
+            .unwrap();
+        assert!(rack.gather_states(Instant::now() + SAVE_WAIT));
+        assert_eq!(rack.known_states().get(&1), Some(&fresh));
+        assert!(rack.notices.is_empty());
+    }
+
+    #[test]
+    fn export_gather_names_a_failed_read_before_using_its_fallback() {
+        let mut rack = detached_gather();
+        rack.returned_sender.send(Returned { key: 1, generation: 0, control: None, done: Done::Saved(None) }).unwrap();
+        // A normal frame may receive the reply before the export pumps its gather.
+        rack.take_returned(&mut Vec::new());
+        assert!(rack.gather_states(Instant::now() + SAVE_WAIT));
+        assert_eq!(rack.known_states().get(&1), Some(&SavedState::from(vec![1])));
+        assert!(
+            rack.notices.iter().any(|n| n.contains("Test instrument") && n.contains("failed")),
+            "{:?}",
+            rack.notices
+        );
+    }
+
     #[test]
     fn a_backup_keeps_the_last_completed_state_while_a_worker_has_the_control_half() {
         let mut rack = Rack::default();
@@ -2251,6 +2552,46 @@ mod tests {
         assert_eq!(rack.progress().missing, 0);
         assert!(rack.progress().failed.is_empty());
         assert_eq!(rack.progress().total, 3);
+    }
+
+    #[test]
+    fn a_failed_listing_is_tried_again_as_seldom_as_a_good_one() {
+        let now = Instant::now();
+        let mut instance = Instance::new(PluginStatus::Running, Some(("A".into(), "V".into(), "same")), 0);
+        assert!(instance.list_due(now), "never listed");
+        instance.listing = true;
+        assert!(!instance.list_due(now + LIST_EVERY * 3), "one is under way");
+        // The plug-in did not answer: nothing is listed, and it is not asked again at once.
+        instance.list_done(None, now);
+        assert!(!instance.listing && instance.listed.is_none());
+        assert!(!instance.list_due(now), "not on the next frame");
+        assert!(!instance.list_due(now + LIST_EVERY - Duration::from_millis(1)));
+        assert!(instance.list_due(now + LIST_EVERY));
+        // An answer is kept and waits as long.
+        let param = suhina_plugins::ParamInfo {
+            id: 7,
+            name: "Gain".into(),
+            group: String::new(),
+            min: 0.0,
+            max: 1.0,
+            default: 0.5,
+            value: 0.5,
+            text: String::new(),
+            steps: 0,
+            automatable: true,
+            read_only: false,
+            hidden: false,
+        };
+        let later = now + LIST_EVERY;
+        instance.list_done(Some(vec![param]), later);
+        assert_eq!(instance.ranges, Some(vec![(7, 0.0, 1.0)]));
+        assert!(!instance.list_due(later) && instance.list_due(later + LIST_EVERY));
+        // A failure afterwards keeps the list it had.
+        instance.list_done(None, later + LIST_EVERY);
+        assert!(instance.listed.is_some());
+        // A plug-in that does not run is not asked.
+        instance.status = PluginStatus::Loading;
+        assert!(!instance.list_due(later + LIST_EVERY * 9));
     }
 
     #[test]

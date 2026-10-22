@@ -3,7 +3,7 @@ description: Author data-only effects, MIDI effects and instruments in Rust or w
 read_when: make an effect, MIDI effect or instrument, SDK tutorial, .sd example, node discovery
 type: howto
 status: current
-last_verified: 2026-10-19
+last_verified: 2026-10-21
 covers:
   - crates/device-sdk/src/author.rs
   - crates/device-sdk/src/ui/widgets.rs
@@ -365,13 +365,16 @@ in order: sine, triangle, rising ramp, falling ramp, square, sample-and-hold and
 colour, alignment, border, prefix and suffix. The widget contains no device-specific
 parameter names. Custom drawings remain available for artwork and specialised controls.
 
-## Stock device packaging
+## Layouts for built-in devices
 
-Application builds generate registered `devices/` packages as `.sd` files in
-the build script's `OUT_DIR/devices/` and embed them for startup. Native DSP uses the explicit
-`native_device` whole-device wrapper, prepared through `DeviceGraph::prepare_native_at`
-and the registry factory. Primitive graphs still use `compile_at`. See the
-[stock bundle specification](spec/stock-device-bundle.md).
+A built-in device (`devices/<name>`) is native Rust, not a `.sd` graph. Its panel uses this
+SDK's UI part only: `suhina_device_sdk::builtin::Layout` holds a compact canvas (`ui`), an
+optional expanded one and how each parameter is presented, by parameter id. Parameters come
+from the device's `DeviceInfo`; a layout cannot declare one. A device crate gives its layout in
+Rust (the Sampler's `layout()`) or as `devices/<name>/panel.json`, listed in
+`suhina_device_registry::LAYOUT_FILES`; `suhina_device_registry::panel(id)` loads it by id, and
+a test fails when it names a parameter its device lacks. A device without a layout gets the
+generated list. See [sdk-custom-ui.md](spec/sdk-custom-ui.md) › Layouts for built-in devices.
 
 Use `Widget::Panel { label }` for themed, non-interactive groups behind controls.
 `UiGesture::Tab(value)` on a Button selects a positive value in a zero-based

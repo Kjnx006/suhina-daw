@@ -48,6 +48,8 @@ mod meters_tests;
 mod metronome;
 #[cfg(test)]
 mod midi_effect_tests;
+#[cfg(test)]
+mod node_tests;
 mod plugin;
 mod plugin_params;
 #[cfg(test)]
@@ -109,6 +111,7 @@ pub use suhina_device_api::NoteEvent as DeviceEvent;
 use suhina_device_api::{MusicalScale, ProcessContext};
 pub use suhina_model as model;
 use suhina_model::{ChannelId, ChannelRole, Clip, ContentLane, LaneData, Project, TempoMap, TrackId};
+pub use tempo::frame_of_beat;
 pub use track_render::render_track;
 
 /// The most frames a plug-in is asked to process at once: the size of a device chain's block.
@@ -187,7 +190,7 @@ const RELEASE_SECONDS: f64 = 0.05;
 /// Attack time, in seconds; long enough to avoid a click at note-on.
 const ATTACK_SECONDS: f64 = 0.002;
 /// Upper bound for an offline render, so a malformed project cannot exhaust memory.
-const MAX_RENDER_SECONDS: f64 = 60.0 * 60.0;
+pub const MAX_RENDER_SECONDS: f64 = 60.0 * 60.0;
 /// Extra length of a render when tracks have devices, for instrument releases and effect tails.
 const CHAIN_TAIL_SECONDS: f64 = 2.0;
 /// Most delay latency compensation makes up for, in seconds.
@@ -198,7 +201,12 @@ pub enum RenderError {
     InvalidProject(Vec<suhina_model::ValidationError>),
     InvalidSampleRate(u32),
     InvalidTempo(f64),
-    TooLong { seconds: f64 },
+    TooLong {
+        seconds: f64,
+    },
+    /// The source of a node render ([`Renderer::with_node_source`]) is not a track of the
+    /// project with a channel.
+    UnknownSource(TrackId),
 }
 
 impl fmt::Display for RenderError {
@@ -216,6 +224,11 @@ impl fmt::Display for RenderError {
             Self::TooLong { seconds } => {
                 write!(f, "render would be {seconds:.0} s long; the limit is {MAX_RENDER_SECONDS:.0} s")
             }
+            Self::UnknownSource(track) => write!(
+                f,
+                "track {} is not a track of the project; the source of a node render is one of its tracks or groups",
+                track.0
+            ),
         }
     }
 }
@@ -298,6 +311,16 @@ struct ArrangedAudio {
     key: (usize, usize, usize),
 }
 
+/// A source render's capture: the chain whose output the render reads, which chains are inside
+/// the source node's subtree (the returns it sends to are not), and the block buffer the
+/// source chain's output is mixed into. The offline render copies `buffer` over each block it
+/// renders ([`Renderer::with_node_source`]).
+struct GraphCapture {
+    chain: usize,
+    keep: Vec<bool>,
+    buffer: Vec<f32>,
+}
+
 /// Plays a project: its arrangement from the start, and launcher clips as they are launched
 /// (see [`Renderer::handle`]). Build it once, then call [`Renderer::process`] block by block.
 /// Everything a renderer derives from the project. An edit builds a new one off the audio thread
@@ -322,6 +345,8 @@ pub(crate) struct Graph {
     loop_beats: Option<(f64, f64)>,
     /// Device chains of the tracks that have devices (ADR 0004).
     chains: Vec<Chain>,
+    /// The source render's capture, when the graph was built for one ([`Renderer::with_node_source`]).
+    capture: Option<GraphCapture>,
     /// Every track's bus and the gains its sources are mixed at (muted tracks at zero), so
     /// sounding voices follow an edit to their track's mix.
     routes: Vec<(TrackId, u32, (f32, f32))>,
@@ -441,9 +466,38 @@ impl Renderer {
         audio: &AudioPool,
         assets: &DeviceAssets,
         sample_rate: u32,
-        mut plugins: Plugins,
+        plugins: Plugins,
     ) -> Result<Self, RenderError> {
-        let graph = Graph::build(project, audio, assets, sample_rate, &mut plugins)?;
+        Self::build_with_source(project, audio, assets, sample_rate, plugins, None)
+    }
+
+    /// [`Renderer::with_assets_plugins`] rendering one node of the track tree instead of the
+    /// whole mix: the source is a track or a group track, and `process` fills its output with
+    /// the sum at that node — everything that plays into it and the node's own devices, and
+    /// nothing after it (the node's own volume, pan and mute are in; its groups' and the
+    /// master's faders are not). The graph is the one playback builds, with the node a bus for
+    /// its subtree and a chain of its own even without devices, so latency compensation is
+    /// unchanged: a node render lines up with the whole mix and with the other nodes' renders.
+    pub fn with_node_source(
+        project: &Project,
+        audio: &AudioPool,
+        assets: &DeviceAssets,
+        sample_rate: u32,
+        plugins: Plugins,
+        source: TrackId,
+    ) -> Result<Self, RenderError> {
+        Self::build_with_source(project, audio, assets, sample_rate, plugins, Some(source))
+    }
+
+    fn build_with_source(
+        project: &Project,
+        audio: &AudioPool,
+        assets: &DeviceAssets,
+        sample_rate: u32,
+        mut plugins: Plugins,
+        source: Option<TrackId>,
+    ) -> Result<Self, RenderError> {
+        let graph = Graph::build(project, audio, assets, sample_rate, &mut plugins, source)?;
         graph.launcher.monitor.running.store(true, std::sync::atomic::Ordering::Relaxed);
         let mut meters = meters::MeterWriter::new(sample_rate);
         meters.assign(graph.levels.tracks());
@@ -644,6 +698,13 @@ impl Renderer {
         self.underruns_before + self.graph.ahead.underruns()
     }
 
+    /// The blocks this render's plug-ins did not answer in time (offline, past
+    /// [`OFFLINE_TIMEOUT`]): what a mixdown's file would otherwise wait whole timeouts for.
+    /// Never allocates.
+    pub fn plugin_misses(&self) -> u64 {
+        self.graph.launcher.monitor.plugin_misses.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     /// Publishes the plug-in blocks missed so far and the plug-in that missed most. Never
     /// allocates.
     fn publish_plugin_misses(&mut self) {
@@ -757,6 +818,14 @@ impl Renderer {
             let (chunk, rest) = std::mem::take(&mut out).split_at_mut(frames * 2);
             let (cue_chunk, cue_after) = split_cue(cue, chunk.len());
             self.process_chunk(chunk, cue_chunk);
+            // A source render's file audio is the node's captured sum; the master mix the chunk
+            // holds first is the whole mix's, which a node render does not read.
+            if let Some(capture) = self.graph.capture.as_ref() {
+                let end = chunk.len().min(capture.buffer.len());
+                if let Some(into) = chunk.get_mut(..end) {
+                    into.copy_from_slice(&capture.buffer[..end]);
+                }
+            }
             cue = cue_after;
             out = rest;
         }
@@ -975,7 +1044,14 @@ impl Renderer {
         }
         run_as_answered(chains, frames, &context);
         // In order, so a bus or a return has every chain that plays into it before it runs.
-        sends::finish(&mut self.graph.chains, out, &mut self.cue.bus, frames, &context);
+        // With a source render's capture, the source chain's output is mixed into the capture
+        // buffer instead of where it plays.
+        let capture = self.graph.capture.as_mut().map(|capture| sends::Capture {
+            chain: capture.chain,
+            keep: &capture.keep,
+            buffer: &mut capture.buffer,
+        });
+        sends::finish(&mut self.graph.chains, out, &mut self.cue.bus, frames, &context, capture);
         self.graph.levels.finish(&self.graph.chains, frames, &mut self.meters);
         // The preview comes after every track and the main channel's mix (ADR 0011), into the
         // cue bus, and into the main output too while the cue plays with it.
@@ -1172,13 +1248,16 @@ pub(crate) fn route(project: &Project, chains: &[Chain], track: TrackId) -> Opti
 
 impl Graph {
     /// Builds the graph for `project`: validates it and prepares every event and voice. Allocates;
-    /// call it off the audio thread. The file-backed devices' files come from `assets`.
+    /// call it off the audio thread. The file-backed devices' files come from `assets`. With
+    /// `source`, the graph is built for a source render: the node has a chain even without
+    /// devices ([`Renderer::with_node_source`]).
     pub(crate) fn build(
         project: &Project,
         audio: &AudioPool,
         assets: &crate::DeviceAssets,
         sample_rate: u32,
         plugins: &mut Plugins,
+        source: Option<TrackId>,
     ) -> Result<Box<Self>, RenderError> {
         if !(8_000..=384_000).contains(&sample_rate) {
             return Err(RenderError::InvalidSampleRate(sample_rate));
@@ -1189,10 +1268,27 @@ impl Graph {
             return Err(RenderError::InvalidTempo(bpm));
         }
         project.validate().map_err(RenderError::InvalidProject)?;
+        if let Some(track) = source
+            && !project.tracks.iter().any(|t| t.id == track && t.channel.is_some())
+        {
+            return Err(RenderError::UnknownSource(track));
+        }
         // Mixer parameters that follow lanes are built at their neutral values and applied
         // after the track's chain, frame by frame (#395).
         let neutral = automation::neutral(project);
         let project = neutral.as_ref().unwrap_or(project);
+        // A source render is one node's mix, and nothing after the node is in it: the graph is
+        // built from a copy whose channels above the source — its groups and the master — are
+        // at unity and unmuted, so their faders are not in the node's file. The node's own
+        // channel, and every channel under it, keep theirs.
+        let above;
+        let project = match source {
+            Some(track) => {
+                above = source_rest(project, track);
+                &above
+            }
+            None => project,
+        };
 
         let tempo = Arc::new(project.transport.tempo_map(f64::from(sample_rate)));
         let frames_per_beat = tempo.start_per_beat();
@@ -1219,9 +1315,19 @@ impl Graph {
             hasher.finish()
         };
         let chains_began = std::time::Instant::now();
-        let (chains, latency) = buses::build(project, audio, sample_rate, plugins, column_of, assets);
+        let (chains, latency) = buses::build(project, audio, sample_rate, plugins, column_of, assets, source);
         let chains_took = chains_began.elapsed();
         let mut voices_took = std::time::Duration::ZERO;
+        // The source render's capture: the node's chain, its subtree's chains and a block
+        // buffer for the sum at the node.
+        let capture = source.map(|track| GraphCapture {
+            chain: chains.iter().position(|c| c.track == track).unwrap_or(usize::MAX),
+            keep: chains
+                .iter()
+                .map(|c| c.track == track || buses::in_source(project, c.track, node_channel(project, track)))
+                .collect(),
+            buffer: vec![0.0; MAX_BLOCK * 2],
+        });
         let mut events = Vec::new();
         let mut audio_events = Vec::new();
         let mut stretch_events = Vec::new();
@@ -1371,10 +1477,49 @@ impl Graph {
                 .collect(),
             levels,
             chains,
+            capture,
             latency,
             direct_delay: Delay::new(latency as usize),
         }))
     }
+}
+
+/// The channel `track`'s sounds play through, or the id the validation keeps out of reach: a
+/// track without a channel has none.
+fn node_channel(project: &Project, track: TrackId) -> ChannelId {
+    project.tracks.iter().find(|t| t.id == track).and_then(|t| t.channel).unwrap_or(ChannelId(u32::MAX))
+}
+
+/// The project for a source render: the channels above the source — its groups and the master
+/// — at unity and unmuted, so nothing after the node is in the render. The node's own channel
+/// and every channel under it keep their volume, pan and mute. Allocates.
+fn source_rest(project: &Project, source: TrackId) -> Project {
+    let mut rest = project.clone();
+    let Some(own) = project.tracks.iter().find(|t| t.id == source).and_then(|t| t.channel) else {
+        return rest;
+    };
+    // Bounded, so a routing cycle in a malformed project cannot loop forever.
+    let mut visited = Vec::new();
+    let mut next = project.channels.iter().find(|c| c.id == own).and_then(|c| c.output);
+    while let Some(id) = next.take() {
+        if visited.len() > 64 || visited.contains(&id) {
+            break;
+        }
+        visited.push(id);
+        if let Some(channel) = rest.channels.iter_mut().find(|c| c.id == id) {
+            channel.volume = 1.0;
+            channel.mute = false;
+        }
+        next = project.channels.iter().find(|c| c.id == id).and_then(|c| c.output);
+    }
+    // A channel with no output plays into the master without naming it: the master is above
+    // every node too, so its fader and mute are not in the render either. The source's own
+    // channel keeps its fader.
+    for channel in rest.channels.iter_mut().filter(|c| c.role == ChannelRole::Master && c.id != own) {
+        channel.volume = 1.0;
+        channel.mute = false;
+    }
+    rest
 }
 
 /// Splits an optional cue buffer at `at` samples, as the main buffer is split; past its end
@@ -1472,6 +1617,37 @@ pub fn render_offline_with_cue(
         renderer.process_with_cue(main, cued);
     }
     Ok((out, cue))
+}
+
+/// Renders the mix of one node of the track tree — `source`, a track or a group track — with
+/// the same offline render the whole mix uses ([`render_offline_with_assets`]): the graph is
+/// the one playback builds, with the node a bus for its subtree and a chain of its own even
+/// without devices, and the output is the sum at the node, nothing after it (the node's own
+/// volume, pan and mute are in; its groups' and the master's faders are not). The same length
+/// as the whole mix's render, so node renders line up with it and with each other.
+#[allow(clippy::too_many_arguments)]
+pub fn render_offline_node(
+    project: &Project,
+    audio: &AudioPool,
+    assets: &DeviceAssets,
+    sample_rate: u32,
+    block_frames: usize,
+    plugins: Plugins,
+    source: TrackId,
+) -> Result<Vec<f32>, RenderError> {
+    let mut renderer = Renderer::with_node_source(project, audio, assets, sample_rate, plugins, source)?;
+    renderer.set_offline(true);
+    // The whole arrangement, once: a render does not repeat the loop region.
+    renderer.set_follow_loop(false);
+    let total = usize::try_from(renderer.length())
+        .ok()
+        .and_then(|frames| frames.checked_mul(2))
+        .ok_or(RenderError::TooLong { seconds: renderer.length() as f64 / f64::from(sample_rate) })?;
+    let mut out = vec![0.0f32; total];
+    for block in out.chunks_mut(block_frames.max(1).saturating_mul(2)) {
+        renderer.process(block);
+    }
+    Ok(out)
 }
 
 /// Renders `seconds` of the project offline, starting with the transport stopped and applying

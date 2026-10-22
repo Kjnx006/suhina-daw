@@ -12,7 +12,7 @@ use std::path::{Component, Path, PathBuf};
 pub struct Workspace {
     /// The first is where relative paths start.
     read_roots: Vec<PathBuf>,
-    write_root: Option<PathBuf>,
+    write_roots: Vec<PathBuf>,
     /// What to say when a root is missing: how this kind of server gets one.
     missing_read: &'static str,
     missing_write: &'static str,
@@ -27,7 +27,7 @@ impl Workspace {
         };
         Ok(Self {
             read_roots: resolve(read_root, "read")?.into_iter().collect(),
-            write_root: resolve(write_root, "write")?,
+            write_roots: resolve(write_root, "write")?.into_iter().collect(),
             missing_read: "no read root was granted (start the server with --read-root)",
             missing_write: "no write root was granted (start the server with --write-root)",
         })
@@ -48,10 +48,28 @@ impl Workspace {
         }
         Self {
             read_roots,
-            write_root: project,
+            write_roots: project.into_iter().collect(),
             missing_read: "this project has no folder yet and the browser has none: save the project first",
             missing_write: "this project has no folder yet: the person saves it once before an agent can write",
         }
+    }
+
+    /// Applies the person's attached-agent write permissions. Read access is unchanged;
+    /// every destination still goes through the same canonical-path checks.
+    pub fn with_write_folders(mut self, include_project: bool, folders: &[PathBuf]) -> Self {
+        if !include_project {
+            self.write_roots.clear();
+        }
+        for folder in folders {
+            if let Ok(real) = folder.canonicalize()
+                && real.is_dir()
+                && !self.write_roots.contains(&real)
+            {
+                self.write_roots.push(real);
+            }
+        }
+        self.missing_write = "no MCP write folder was granted; the person chooses folders in Settings > Export";
+        self
     }
 
     /// An existing file below a read root. `path` is relative to the first root, or absolute and
@@ -88,12 +106,12 @@ impl Workspace {
     /// A file to create below the write root. Its folder must exist inside the root; an existing
     /// file is replaced only when `overwrite` is set, and never through a symlink.
     pub fn writable(&self, path: &str, overwrite: bool) -> Result<PathBuf, String> {
-        let root = self.write_root.as_ref().ok_or(self.missing_write)?;
+        let root = self.write_roots.first().ok_or(self.missing_write)?;
         let candidate = join(root, path)?;
         let name = candidate.file_name().ok_or_else(|| format!("{path} has no file name"))?.to_owned();
         let parent = candidate.parent().ok_or_else(|| format!("{path} has no folder"))?;
         let real_parent = parent.canonicalize().map_err(|e| format!("{path}: folder: {e}"))?;
-        if !real_parent.starts_with(root) {
+        if !self.write_roots.iter().any(|root| real_parent.starts_with(root)) {
             return Err(format!("{path} is outside the write root"));
         }
         let target = real_parent.join(name);
@@ -110,9 +128,11 @@ impl Workspace {
     /// An existing folder below the write root, resolved as [`Workspace::readable`] resolves
     /// files, for something to write into it.
     pub fn writable_folder(&self, path: &Path) -> Result<PathBuf, String> {
-        let root = self.write_root.as_ref().ok_or(self.missing_write)?;
+        if self.write_roots.is_empty() {
+            return Err(self.missing_write.into());
+        }
         let real = path.canonicalize().map_err(|e| format!("{}: {e}", path.display()))?;
-        if !real.starts_with(root) || !real.is_dir() {
+        if !self.write_roots.iter().any(|root| real.starts_with(root)) || !real.is_dir() {
             return Err(format!("{} is not a folder below the write root", path.display()));
         }
         Ok(real)
@@ -147,6 +167,23 @@ fn join(root: &Path, path: &str) -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn attached_write_grants_include_subfolders_and_can_be_revoked() {
+        let dir = temp_dir("write-grants");
+        let project = dir.join("inside");
+        let extra = dir.join("exports");
+        std::fs::create_dir_all(extra.join("nested")).unwrap();
+        let workspace = Workspace::attached(Some(&project), &[]).with_write_folders(true, std::slice::from_ref(&extra));
+        assert!(workspace.writable(&display_path(&extra.join("nested/mix.wav")), false).is_ok());
+        assert!(workspace.writable("mix.wav", false).is_ok());
+        assert!(workspace.writable(&display_path(&dir.join("denied.wav")), false).is_err());
+        let revoked = Workspace::attached(Some(&project), &[]).with_write_folders(false, &[]);
+        assert!(revoked.writable(&display_path(&extra.join("mix.wav")), false).is_err());
+        assert!(revoked.writable(&display_path(&project.join("mix.wav")), false).is_err());
+        // Revoking write permission does not grant or revoke unrelated read access.
+        assert!(revoked.readable("a.als").is_ok());
+    }
 
     fn temp_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("suhina-workspace-{name}-{}", std::process::id()));

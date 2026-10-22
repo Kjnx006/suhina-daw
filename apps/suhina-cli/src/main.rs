@@ -15,7 +15,7 @@ use suhina_engine::model::*;
 
 const USAGE: &str = "\
 usage: suhina-cli render (<project.als> | --demo) -o <out.wav> [--cue <cue.wav>] [--scene <n>] [--sample-rate <hz>]
-                         [<fm>]
+                         [--source <track or group>] [<fm>]
        suhina-cli play (<project.als> | --demo) [--scene <n> | --launcher] [<fm>] [<output>]
        suhina-cli fm-synth voices <file.syx>
        suhina-cli commands [--markdown]
@@ -33,7 +33,9 @@ usage: suhina-cli render (<project.als> | --demo) -o <out.wav> [--cue <cue.wav>]
        suhina-cli plugin (edit <plug-in> | edit-device <project.als> <device>) [--save <file>]
 
 commands:
-  render    render a project offline to a 32-bit float stereo WAV file
+  render    render a project offline to a 32-bit float stereo WAV file; --source renders one
+            track or group (its id or name) through project.export instead — the sum at that
+            node, with the file's extension choosing the format there (wav, flac or ogg)
   play      play a project once on the default audio output, or with --launcher launch its
             clips and scenes by typing commands
   commands  list every command the MCP server and the UI run, with what it does; --markdown
@@ -97,6 +99,8 @@ struct Args {
     output: Option<PathBuf>,
     /// `render --cue`: where the cue bus goes.
     cue: Option<PathBuf>,
+    /// `render --source`: one node of the track tree instead of the whole mix.
+    node: Option<String>,
     scene: Option<usize>,
     launcher: bool,
     sample_rate: u32,
@@ -229,6 +233,7 @@ fn list_commands(args: &[String]) -> Result<(), String> {
 fn parse_args(args: &[String], command: Command) -> Result<Args, String> {
     let mut output = None;
     let mut cue = None;
+    let mut node = None;
     let mut sample_rate = 48_000;
     let mut scene = None;
     let mut launcher = false;
@@ -245,6 +250,10 @@ fn parse_args(args: &[String], command: Command) -> Result<Args, String> {
             }
             "--cue" => {
                 cue = Some(PathBuf::from(it.next().ok_or("--cue needs a path")?));
+                None
+            }
+            "--source" => {
+                node = Some(it.next().ok_or("--source needs a track or group name")?.clone());
                 None
             }
             "--sample-rate" => {
@@ -316,6 +325,12 @@ fn parse_args(args: &[String], command: Command) -> Result<Args, String> {
     if cue.is_some() && command != Command::Render {
         return Err(format!("--cue works with render\n\n{USAGE}"));
     }
+    if node.is_some() && command != Command::Render {
+        return Err(format!("--source works with render\n\n{USAGE}"));
+    }
+    if node.is_some() && cue.is_some() {
+        return Err(format!("a cue goes with the whole mix; --source renders one node of the track tree\n\n{USAGE}"));
+    }
     if launcher && (command != Command::Play || scene.is_some()) {
         return Err(format!("--launcher works with play, without --scene\n\n{USAGE}"));
     }
@@ -323,6 +338,7 @@ fn parse_args(args: &[String], command: Command) -> Result<Args, String> {
         source: source.ok_or(format!("missing project: give a .suhina or .als file, or --demo\n\n{USAGE}"))?,
         output,
         cue,
+        node,
         scene,
         launcher,
         sample_rate,
@@ -444,6 +460,41 @@ fn render(args: &Args) -> Result<(), String> {
     let (project, audio, assets) = load_project(args)?;
     let mut library = suhina_plugins::library::Library::default();
     let env = suhina_session::PluginEnv::from_library(&mut library);
+    if let Some(node) = &args.node {
+        // The node render `project.export` runs: the export's own writer and rules, the file
+        // name's extension choosing the format (wav, flac or ogg).
+        let data = suhina_session::ExportData {
+            warnings: Vec::new(),
+            project,
+            audio,
+            assets,
+            plugins: Some(std::sync::Arc::new(env)),
+            folder: None,
+            trusted: suhina_media::Trusted::default(),
+        };
+        let params = serde_json::json!({
+            "path": path.display().to_string(),
+            "source": node,
+            "sample_rate": args.sample_rate,
+            // An explicit -o is replaced like the mix render's is (its WriteMode::Replace):
+            // the same caller's render of the same command writes over what it wrote before.
+            "overwrite": true,
+        });
+        let summary = suhina_session::export_from(&data, &params).map_err(|e| e.0)?;
+        println!(
+            "wrote {} ({:.2} s, {:.0} Hz, {})",
+            summary["path"].as_str().unwrap_or_default(),
+            summary["seconds"].as_f64().unwrap_or_default(),
+            summary["sample_rate"].as_f64().unwrap_or_default(),
+            summary["format"].as_str().unwrap_or_default()
+        );
+        for warning in summary["warnings"].as_array().into_iter().flatten() {
+            if let Some(text) = warning.as_str() {
+                eprintln!("warning: {text}");
+            }
+        }
+        return Ok(());
+    }
     let summary = render_wavs(&project, &audio, &assets, path, args.cue.as_deref(), args.sample_rate, Some(&env))?;
     for notice in &summary.plugins {
         eprintln!("plug-ins: {notice}");
@@ -1012,6 +1063,56 @@ mod tests {
         assert_eq!(cued.cue, Some(PathBuf::from("cue.wav")));
         assert!(parse_render(&args(&["--demo", "-o", "x.wav", "--cue"])).is_err());
         assert!(parse_args(&args(&["--demo", "--cue", "cue.wav"]), Command::Play).is_err());
+        // --source: a name, render only, and no cue beside it.
+        assert!(parse_render(&args(&["--demo", "-o", "x.wav", "--source"])).is_err());
+        assert!(parse_args(&args(&["--demo", "--source", "Bass"]), Command::Play).is_err());
+        assert!(parse_render(&args(&["--demo", "-o", "x.wav", "--cue", "cue.wav", "--source", "Bass"])).is_err());
+        let ok = parse_render(&args(&["--demo", "-o", "x.wav", "--source", "Chords"])).unwrap();
+        assert_eq!(ok.node.as_deref(), Some("Chords"));
+        assert!(parse_render(&args(&["--demo", "-o", "x.wav"])).unwrap().node.is_none());
+    }
+
+    /// `render --source <track>` renders the sum at that node alone: the same export the
+    /// command runs, and not the whole mix.
+    #[test]
+    fn a_source_render_writes_the_nodes_sum_alone() {
+        let peak_of = |path: &std::path::Path| {
+            hound::WavReader::open(path)
+                .unwrap()
+                .samples::<f32>()
+                .map(Result::unwrap)
+                .fold(0.0f32, |m, s| m.max(s.abs()))
+        };
+        let dir = std::env::temp_dir().join(format!("suhina-cli-source-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let whole = dir.join("whole.wav");
+        let chords = dir.join("chords.wav");
+        let args = |output: &std::path::Path, node: Option<&str>| Args {
+            source: Source::Demo,
+            output: Some(output.to_path_buf()),
+            cue: None,
+            node: node.map(str::to_string),
+            scene: None,
+            launcher: false,
+            sample_rate: 48_000,
+            fm: None,
+            audio_output: suhina_session::OutputChoice::default(),
+        };
+        render(&args(&whole, None)).unwrap();
+        render(&args(&chords, Some("Chords"))).unwrap();
+        let chords_peak = peak_of(&chords);
+        assert!(chords_peak > 0.1, "the node sounds alone: {chords_peak}");
+        assert!(peak_of(&whole) > chords_peak, "the whole mix sums its tracks over one of them");
+        assert!(
+            !hound::WavReader::open(&chords).unwrap().samples::<f32>().map(Result::unwrap).eq(hound::WavReader::open(
+                &whole
+            )
+            .unwrap()
+            .samples::<f32>()
+            .map(Result::unwrap)),
+            "the node render is not the whole mix"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
