@@ -29,17 +29,29 @@ fn texts(params: &Value, name: &str) -> Result<Vec<String>, CommandError> {
 impl Session {
     /// The audio files the project's clips name that cannot be found.
     pub fn missing_files(&self) -> Vec<suhina_media::MissingAudio> {
-        let folder = self.audio_folder().map_or_else(|| PathBuf::from("."), Path::to_path_buf);
-        suhina_media::missing_audio_trusted(self.project(), &folder, self.trusted())
-            .into_iter()
-            .filter(|missing| {
-                // Already decoded paths were explicitly loaded or safely resolved on open.
-                let loaded = self.audio().files.contains_key(&missing.file)
-                    || self.audio().files.contains_key(&suhina_model::stream_key(&missing.file, 0));
-                !loaded || !missing.last_path.is_file()
-            })
-            .collect()
+        missing_of(self.project(), self.audio_folder(), &self.audio, self.trusted())
     }
+}
+
+/// The missing files of `project`, whose audio `folder` sits beside and whose decoded files
+/// `audio` holds: a file already decoded is missing only when its last path left the disk.
+/// The export's warnings name the same files, from [`crate::export::ExportData`]'s copies.
+pub(crate) fn missing_of(
+    project: &suhina_model::Project,
+    folder: Option<&Path>,
+    audio: &suhina_engine::AudioPool,
+    trusted: &suhina_media::Trusted,
+) -> Vec<suhina_media::MissingAudio> {
+    let folder = folder.map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+    suhina_media::missing_audio_trusted(project, &folder, trusted)
+        .into_iter()
+        .filter(|missing| {
+            // Already decoded paths were explicitly loaded or safely resolved on open.
+            let loaded = audio.files.contains_key(&missing.file)
+                || audio.files.contains_key(&suhina_model::stream_key(&missing.file, 0));
+            !loaded || !missing.last_path.is_file()
+        })
+        .collect()
 }
 
 /// `project.missingFiles`.

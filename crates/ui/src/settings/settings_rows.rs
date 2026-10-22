@@ -187,6 +187,27 @@ pub(crate) static ROWS: &[Entry] = &[
         &["developer_mode"],
         |cx, r| cx.on_off(r, |s| &mut s.updates.developer),
     ),
+    // Export.
+    row(
+        Page::Export,
+        "MCP write permissions",
+        "Allow the project's folder",
+        "Includes subfolders; turn off to revoke this default permission",
+        &["mcp_project_folder"],
+        |cx, r| {
+            let note = cx.about.mcp_project_folder.as_deref().unwrap_or("No saved project folder").to_string();
+            cx.note(format!("{note} (including subfolders)"));
+            cx.on_off(r, |s| &mut s.mcp_project_folder);
+        },
+    ),
+    block(
+        Page::Export,
+        "MCP write permissions",
+        "MCP allowed write folders",
+        "Add or remove folders; includes subfolders. Applies to MCP writes, not File > Export.",
+        &["mcp_write_folders"],
+        |cx, y| cx.mcp_write_folders(y),
+    ),
     // Audio.
     block(
         Page::Audio,

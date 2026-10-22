@@ -36,6 +36,7 @@ is on exactly one page, under one heading.
 | General | Agents | Let agents work on open projects (off by default; [ADR 0028](../decisions/0028-mcp-in-the-running-app.md)) |
 | General | Dropping files | Several files, Warp mode |
 | General | Updates | Check for updates, Channel (Test builds only in developer mode), Developer mode ([spec](updates.md)) |
+| Export | MCP write permissions | Allow the project's folder (on by default, with the active folder shown), MCP allowed write folders (Add folder… and Remove); all grants include subfolders |
 | Audio | Output | Driver, Device, Sample rate, Buffer size (or Engine block), Exclusive mode, Input |
 | Audio | Cue | Cue output, Cue volume |
 | Audio | Now | Output, Latency, Key to sound, Input now (read only), List devices again |
@@ -63,6 +64,12 @@ is on exactly one page, under one heading.
 Where a setting is shown never changes how it is saved: each keeps the key it has in
 `settings.json` (or `keymap.json` for keys and the mouse switches), so a settings file written
 before a setting moved loads with the same values.
+
+Export permissions apply to attached MCP writes only. The person adds a folder through the
+system folder picker or removes its grant; the project-folder grant can also be switched off.
+The settings persist across restarts. Missing folders grant no access, and each subsequent
+operation uses the current grants. File › Export still writes to the destination the person
+chooses. Agents cannot change these settings. Standalone MCP keeps its `--write-root` option.
 
 ## Scrolling
 
