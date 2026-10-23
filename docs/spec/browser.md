@@ -137,10 +137,13 @@ then by name. Each row shows the folder it is in after the name.
 on the right the duration of a sample (`0:04.2`, read when the row is first shown) or the kind
 of a device ("instrument", "effect", the plug-in's format). A folder or a heading opens and
 closes with a click on its chevron (every click toggles; the second click of a rapid pair is a
-double and is absorbed, so a double-click on the chevron opens it once). A heading
+double and is absorbed, so a double-click on the chevron opens it once). A folder or a heading
 (*Instruments*, *Effects*, *Plug-ins*, a vendor) also opens and closes with a click on its
-name, by the same rule. A folder also opens with a double-click on the row itself; a click
-elsewhere on it only selects it. A folder's contents are read from disk when it opens, sorted
+name, by the same rule, and the click selects it too; a double-click there leaves it open. A
+preset bank opens with its chevron or a double-click on its row, as a click on it selects and
+previews it. A library folder inside another library folder is listed twice, at the top and
+inside the other, and each copy opens and closes on its own: what is open is kept by the row's
+place in the tree, not by its path alone. A folder's contents are read from disk when it opens, sorted
 folders first then by name (natural order: "Kick 2" before "Kick 10"). A preset bank opens
 into its 32 voices.
 

@@ -282,22 +282,73 @@ fn a_click_on_a_headings_title_opens_it_once_and_a_second_closes_it() {
 }
 
 #[test]
-fn a_click_on_a_folders_chevron_opens_it_and_on_its_title_only_selects_it() {
+fn a_click_on_a_folders_chevron_or_its_title_opens_it_and_a_second_closes_it() {
     let (settings, folder) = (temp("folder-chevron-settings"), temp("folder-chevron"));
     pack(&folder);
     let mut harness = window(&settings, &folder);
     let name = row(&folder.file_name().unwrap().to_string_lossy());
     let title = title_of(&harness, &name);
     click_at(&mut harness, title);
-    assert!(harness.query_by_label(&row("Groove.mid")).is_none(), "a click on the title does not open it");
-    assert_eq!(harness.state().browser.selected().len(), 1, "it selects it");
+    assert!(harness.query_by_label(&row("Groove.mid")).is_some(), "a click on the title opens it (#869)");
+    assert_eq!(harness.state().browser.selected().len(), 1, "and selects it");
+    click_at(&mut harness, title);
+    assert!(harness.query_by_label(&row("Groove.mid")).is_none(), "a second click on the title closes it");
     let at = chevron_of(&harness, &name);
     click_at(&mut harness, at);
     assert!(harness.query_by_label(&row("Groove.mid")).is_some(), "the folder stays open");
     click_at(&mut harness, at);
     assert!(harness.query_by_label(&row("Groove.mid")).is_none(), "a second click closes it");
+    // A double-click on the title leaves it open: its first click opened it.
+    double_click(&mut harness, &name);
+    assert!(harness.query_by_label(&row("Groove.mid")).is_some(), "a double-click leaves it open");
     let _ = std::fs::remove_dir_all(&settings);
     let _ = std::fs::remove_dir_all(&folder);
+}
+
+/// A library folder inside another library folder is listed twice, at the top and inside the
+/// other one, and each opens and closes on its own (#869).
+#[test]
+fn a_library_folder_inside_another_opens_on_its_own_in_both_places() {
+    let (settings, outer) = (temp("nested-settings"), temp("nested"));
+    let inner = outer.join("Inner");
+    wav(&outer.join("Outer Hit.wav"), 0.01);
+    wav(&inner.join("Inner Hit.wav"), 0.01);
+    let mut harness = window(&settings, &outer);
+    harness.state_mut().projects_mut().file_library_mut().add_folder(&inner).unwrap();
+    harness.state_mut().browser.relist();
+    harness.run();
+    let outer_name = row(&outer.file_name().unwrap().to_string_lossy());
+    let inner_name = row("Inner");
+    assert_eq!(harness.get_all_by_label(&inner_name).count(), 1, "the inner folder at the top only");
+    // The inner folder at the top opens without opening the outer one.
+    let at = title_of(&harness, &inner_name);
+    click_at(&mut harness, at);
+    assert_eq!(harness.get_all_by_label(&row("Inner Hit.wav")).count(), 1, "the inner folder opens");
+    assert!(harness.query_by_label(&row("Outer Hit.wav")).is_none(), "the outer one stays closed");
+    // The outer one opens: the inner folder in it is listed closed, its own row.
+    let at = title_of(&harness, &outer_name);
+    click_at(&mut harness, at);
+    assert!(harness.query_by_label(&row("Outer Hit.wav")).is_some(), "the outer folder opens");
+    let copies: Vec<_> = harness.get_all_by_label(&inner_name).map(|n| n.rect()).collect();
+    assert_eq!(copies.len(), 2, "the inner folder at the top and inside the outer one");
+    assert_eq!(harness.get_all_by_label(&row("Inner Hit.wav")).count(), 1, "the copy inside is closed");
+    // The copy inside the outer folder opens on its own, and closes on its own. It is the copy
+    // right under the outer folder: the one at the top is above the outer folder or after all
+    // that is in it.
+    let outer_top = harness.get_by_label(&outer_name).rect().top();
+    let nested = copies
+        .iter()
+        .copied()
+        .filter(|rect| rect.top() > outer_top)
+        .min_by(|a, b| a.top().total_cmp(&b.top()))
+        .unwrap();
+    let nested_title = egui::pos2(nested.left() + 60.0, nested.center().y);
+    click_at(&mut harness, nested_title);
+    assert_eq!(harness.get_all_by_label(&row("Inner Hit.wav")).count(), 2, "both copies are open now");
+    click_at(&mut harness, nested_title);
+    assert_eq!(harness.get_all_by_label(&row("Inner Hit.wav")).count(), 1, "the copy inside closes alone");
+    let _ = std::fs::remove_dir_all(&settings);
+    let _ = std::fs::remove_dir_all(&outer);
 }
 
 /// The list's scroll bar is a scroll area's, so it is dragged like a device panel's (#867).

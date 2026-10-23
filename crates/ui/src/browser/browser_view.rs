@@ -722,7 +722,7 @@ fn results_view(
         if shown.height() <= 0.0 {
             continue;
         }
-        let response = ui.interact(shown, Id::new(("browser-row", &row.item.key)), Sense::click_and_drag());
+        let response = ui.interact(shown, Id::new(("browser-row", row.node())), Sense::click_and_drag());
         response.widget_info(|| {
             egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("Browser {}", row.item.name))
         });
@@ -742,7 +742,7 @@ fn results_view(
             let button = widgets::button_area(
                 ui,
                 lead,
-                Id::new(("browser-play", &row.item.key)),
+                Id::new(("browser-play", row.node())),
                 format!("Preview {}", row.item.name),
             );
             let playing = state.previewing.as_deref() == Some(row.item.key.as_str());
@@ -809,7 +809,7 @@ fn results_view(
                 let dot = ui
                     .interact(
                         Rect::from_center_size(center, Vec2::splat(DOT_HIT)),
-                        Id::new(("browser-tag-dot", &row.item.key, name.as_str())),
+                        Id::new(("browser-tag-dot", row.node(), name.as_str())),
                         Sense::hover(),
                     )
                     .on_hover_text(format!("Tag {name}"));
@@ -862,43 +862,45 @@ fn results_view(
         if state.handled_press.take() != key {
             click_row(state, &rows, index, modifiers);
         }
-        // A heading opens with a click on its name: the same rules as its chevron (right
-        // below), which takes the clicks in the chevron zone instead of this one.
+        // A heading or a folder opens with a click on its name: the same rules as its chevron
+        // (right below), which takes the clicks in the chevron zone instead of this one (#869).
         if let Some(row) = rows.get(index)
-            && row.item.kind == ItemKind::Heading
+            && opens_on_click(row)
             && !ui.input(|i| i.pointer.button_double_clicked(egui::PointerButton::Primary))
             && !ui.input(|i| i.pointer.interact_pos()).is_some_and(|p| p.x < chevron_zone(area.left(), row.depth))
         {
-            state.toggle(&row.item.key);
+            state.toggle(row.node());
         }
     }
     if let Some(index) = double
         && let Some(row) = rows.get(index)
     {
-        // A double-click on the row itself opens it — but not on its chevron: the gesture's
-        // two clicks are within egui's double-click window (0.3 s, 6 pt) and its first one
-        // toggled already, so the double would open and close the folder again (#293); and
-        // not on a heading, whose single clicks toggle above.
+        // A double-click on the row itself opens a preset bank — but not on its chevron: the
+        // gesture's two clicks are within egui's double-click window (0.3 s, 6 pt) and its
+        // first one toggled already, so the double would open and close it again (#293); and
+        // not on a heading or a folder, whose single clicks toggle above, so a double-click
+        // leaves it open.
         let on_chevron = row.opens
             && ui.input(|i| i.pointer.interact_pos()).is_some_and(|p| p.x < chevron_zone(area.left(), row.depth));
-        if row.opens && !on_chevron && row.item.kind != ItemKind::Heading {
-            state.toggle(&row.item.key);
+        if row.opens && !on_chevron && !opens_on_click(row) {
+            state.toggle(row.node());
         } else if row.item.kind == ItemKind::Project {
             out.open_project = row.item.path();
         } else if row.item.kind != ItemKind::Heading && row.item.kind != ItemKind::Folder {
             out.add = vec![row.item.clone()];
         }
     }
-    // A click on a chevron opens; a click elsewhere on a folder only selects it. The second
-    // click of a rapid pair on the same chevron is a double and does not toggle: the first
-    // click of the gesture did, so the two together open the folder once (#293).
+    // A click on a chevron opens; a click elsewhere on a heading or a folder opens it too
+    // (above), on a preset bank only selects it. The second click of a rapid pair on the same
+    // chevron is a double and does not toggle: the first click of the gesture did, so the two
+    // together open the folder once (#293).
     if let Some((index, _)) = clicked
         && let Some(row) = rows.get(index)
         && row.opens
         && !ui.input(|i| i.pointer.button_double_clicked(egui::PointerButton::Primary))
         && ui.input(|i| i.pointer.interact_pos()).is_some_and(|p| p.x < chevron_zone(area.left(), row.depth))
     {
-        state.toggle(&row.item.key);
+        state.toggle(row.node());
     }
     if let Some(index) = play
         && let Some(row) = rows.get(index)
@@ -928,6 +930,12 @@ fn results_view(
     // The scroll bar every scroll area has, dragged and clicked like a device panel's; after
     // the rows, so it takes the pointer over them (#867).
     crate::kit::scroll::vertical_bar(ui, area, "browser-results-scroll", content, &mut state.scroll);
+}
+
+/// A heading or a folder opens and closes with a click anywhere on it; a preset bank only with
+/// its chevron or a double-click, as a click on it previews it (#869).
+fn opens_on_click(row: &Row) -> bool {
+    row.opens && matches!(row.item.kind, ItemKind::Heading | ItemKind::Folder)
 }
 
 fn click_row(state: &mut BrowserState, rows: &[Row], index: usize, modifiers: Modifiers) {
