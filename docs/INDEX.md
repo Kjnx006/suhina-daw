@@ -135,6 +135,7 @@ Change this code, and check these documents.
 | `.github/workflows/settings-guide.yml` | [Settings guide export](spec/settings-guide-export.md), [Website shortcut export](spec/shortcuts-guide-export.md) |
 | `.github/workflows/test-build-links.yml` | [Releasing](releasing.md) |
 | `.github/workflows/test-build.yml` | [Releasing](releasing.md) |
+| `.github/workflows/trusted-requests.yml` | [The claim bot](claim-bot.md) |
 | `AGENTS.md` | [Reviewing a pull request](code-review.md) |
 | `CONTRIBUTING.md` | [Reviewing a pull request](code-review.md) |
 | `Cargo.toml` | [Architecture](architecture.md) |
@@ -448,6 +449,7 @@ Change this code, and check these documents.
 | `scripts/test_project_sync.py` | [The claim bot](claim-bot.md) |
 | `scripts/test_settings_guide.py` | [Settings guide export](spec/settings-guide-export.md) |
 | `scripts/test_shortcuts_guide.py` | [Website shortcut export](spec/shortcuts-guide-export.md) |
+| `scripts/test_trusted_requests.py` | [The claim bot](claim-bot.md) |
 | `scripts/trace-summary.py` | [Debugging the running app](debugging.md) |
 | `scripts/video_frames.py` | [Debugging the running app](debugging.md) |
 | `third_party/ara-api` | [0028: ARA hosting](decisions/0028-ara-hosting.md) |

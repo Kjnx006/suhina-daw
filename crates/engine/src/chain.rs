@@ -162,6 +162,33 @@ pub(crate) struct Chain {
     scale: Option<Option<MusicalScale>>,
 }
 
+/// The identity of built-in device `id` for graph swaps: a device that holds a file changes with
+/// the file, so its identity carries the state's hash, the `.sd` devices' trick, and a model swap
+/// rebuilds one device alone; a Sampler's carries its sample (#600). A chain and the groups in it
+/// give the same device the same identity.
+pub(crate) fn device_identity(id: &str, stored: &suhina_model::Device, audio: &crate::AudioPool) -> String {
+    if suhina_device_registry::is_file_device(id) {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        use std::hash::{Hash, Hasher};
+        let hashed = match std::str::from_utf8(stored.state.as_deref().unwrap_or(&[])) {
+            Ok(text) => {
+                text.hash(&mut hasher);
+                hasher.finish()
+            }
+            Err(_) => hasher.finish(),
+        };
+        format!("{id}:{hashed:016x}")
+    } else {
+        stored.sample_file().map_or_else(
+            || id.to_owned(),
+            |file| {
+                let source = audio.files.get(file).map(std::sync::Arc::as_ptr);
+                format!("{id}:{file}:{source:?}")
+            },
+        )
+    }
+}
+
 impl Chain {
     pub(crate) fn sample_positions(&self) -> Option<(usize, [Option<f32>; 32])> {
         self.slots.iter().zip(&self.positions).find_map(|(slot, &position)| match slot {
@@ -278,6 +305,7 @@ impl Chain {
                     }
                     let mut builder = crate::group::Builder {
                         sample_rate,
+                        audio,
                         assets,
                         plugins: &mut *plugins,
                         keys: &keys,
@@ -319,29 +347,7 @@ impl Chain {
             latency = latency.saturating_add(device.latency());
             slots.push(if info.role == Role::MidiEffect { Slot::MidiDevice(device) } else { Slot::Device(device) });
             positions.push(position);
-            // A device that holds a file changes with the file: its identity carries the state's
-            // hash, the `.sd` devices' trick, so a model swap rebuilds one device alone; a
-            // Sampler's carries its sample (#600).
-            if suhina_device_registry::is_file_device(id) {
-                let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                use std::hash::{Hash, Hasher};
-                let hashed = match std::str::from_utf8(stored.state.as_deref().unwrap_or(&[])) {
-                    Ok(text) => {
-                        text.hash(&mut hasher);
-                        hasher.finish()
-                    }
-                    Err(_) => hasher.finish(),
-                };
-                ids.push(format!("{id}:{hashed:016x}"));
-            } else {
-                ids.push(stored.sample_file().map_or_else(
-                    || id.clone(),
-                    |file| {
-                        let source = audio.files.get(file).map(std::sync::Arc::as_ptr);
-                        format!("{id}:{file}:{source:?}")
-                    },
-                ));
-            }
+            ids.push(device_identity(id, stored, audio));
             params.push(values);
         }
         let mut instrument = slots.iter().any(crate::group::is_instrument);
@@ -406,7 +412,8 @@ impl Chain {
     }
 
     /// A chain without devices for a track that plays into a bus, so its sound reaches the bus
-    /// at its gains and with its share of latency compensation. Allocates.
+    /// at its gains and with its share of latency compensation, at `sample_rate` (which its
+    /// fader's smoothing follows). Allocates.
     pub(crate) fn passthrough(track: TrackId, column: u32, sample_rate: u32) -> Self {
         Self {
             track,
@@ -433,7 +440,7 @@ impl Chain {
             midi_scratch: Vec::new(),
             deadline: None,
             context: ProcessContext::default(),
-            // It runs no devices; the live fader is smoothed at this rate.
+            // No devices read it; the live volume's smoothing does.
             sample_rate: f64::from(sample_rate),
             done: 0,
             stage: 0,
@@ -543,6 +550,11 @@ impl Chain {
             slot.params.plan(time, frames);
         }
         self.device_lanes.plan(time, frames);
+        for slot in &mut self.slots {
+            if let Slot::Group(group) = slot {
+                group.plan(time, frames);
+            }
+        }
     }
 
     /// Fills the track's mixer gains for a block of `frames` frames whose first frame is at
@@ -1587,29 +1599,38 @@ mod live_volume_tests {
         out.get(255 * 2).copied().unwrap_or_default()
     }
 
+    /// The left output of a passthrough chain at `sample_rate`, fed ones, 2 ms after a fader
+    /// move from 1 to 0: the first frame of the block after a 2 ms one.
+    fn after_2_ms(sample_rate: u32) -> f32 {
+        let mut chain = Chain::passthrough(TrackId(1), 0, sample_rate);
+        chain.built_volume = Some(1.0);
+        chain.set_live_volume(0.0);
+        let frames = sample_rate as usize / 500;
+        let mut out = vec![0.0; frames * 2];
+        for _ in 0..2 {
+            chain.buffer.fill(1.0);
+            chain.complete(frames, &ProcessContext::default());
+            out.fill(0.0);
+            chain.mix(&mut out, &mut [], frames);
+        }
+        out[0]
+    }
+
+    /// A fader move fades in the same time whatever the device's rate.
+    #[test]
+    fn a_passthrough_fader_fades_in_the_same_time_at_any_rate() {
+        let at_48k = after_2_ms(48_000);
+        assert!(at_48k > 0.1 && at_48k < 0.9, "{at_48k}");
+        for rate in [44_100, 96_000] {
+            let other = after_2_ms(rate);
+            assert!((other - at_48k).abs() < 1e-3, "{rate} Hz: {other} against {at_48k}");
+        }
+    }
+
     #[test]
     fn a_fader_move_is_heard_with_and_without_a_pan_lane() {
         assert!((settled(0.5, false) - 0.5).abs() < 1e-3);
         assert!((settled(0.5, true) - 0.5).abs() < 1e-3, "{}", settled(0.5, true));
-    }
-
-    /// The fader glides over the same time at any sample rate: a passthrough chain smooths it
-    /// at the renderer's rate, not a fixed one.
-    #[test]
-    fn a_fader_glide_takes_the_same_time_at_any_sample_rate() {
-        let after_one_block = |rate: u32| {
-            let mut chain = Chain::passthrough(TrackId(1), 0, rate);
-            chain.built_volume = Some(1.0);
-            chain.set_live_volume(0.0);
-            chain.buffer.fill(1.0);
-            chain.complete(256, &ProcessContext::default());
-            let mut out = vec![0.0; 256 * 2];
-            chain.mix(&mut out, &mut [], 256);
-            out.get(255 * 2).copied().unwrap_or_default()
-        };
-        // Twice the rate covers half the time in the same frames: less of the way is gone.
-        let (slow, fast) = (after_one_block(96_000), after_one_block(48_000));
-        assert!(slow > fast + 0.01, "{slow} {fast}");
     }
 }
 

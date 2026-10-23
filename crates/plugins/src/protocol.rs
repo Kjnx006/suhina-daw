@@ -303,6 +303,7 @@ impl AraDocument {
                 .filter(|l| l.len() <= MAX_ARA_OBJECTS)?
                 .iter()
                 .map(|e| {
+                    // A project's numerators are 1 to 99 (`TimeSignature` in the model).
                     let n = u32::try_from(e.get(0)?.as_u64()?).ok().filter(|n| (1..=99).contains(n))?;
                     let d = u32::try_from(e.get(1)?.as_u64()?).ok().filter(|d| (1..=64).contains(d))?;
                     Some((n, d, number(e.get(2)?)?))
@@ -896,23 +897,15 @@ mod tests {
         let mut long = good.clone();
         long["name"] = json!("x".repeat(MAX_ARA_TEXT + 1));
         assert!(load(long).is_none());
+        let mut longest_bar = good.clone();
+        longest_bar["bars"][1][0] = json!(99);
+        assert!(load(longest_bar).is_some(), "a 99/4 bar, which a project can hold");
+        let mut too_long = good.clone();
+        too_long["bars"][1][0] = json!(100);
+        assert!(load(too_long).is_none());
         let mut many = good;
         many["sources"] = json!(vec![json!({ "id": "a", "name": "a", "address": "a" }); MAX_ARA_OBJECTS + 1]);
         assert!(load(many).is_none());
-    }
-
-    /// A project keeps bars of 1 to 99 beats (`timeSignature.add`); the plug-in is told all of them.
-    #[test]
-    fn an_ara_document_carries_every_numerator_a_project_allows() {
-        let mut document = ara_document();
-        document.bars = vec![(99, 8, 0.0), (65, 8, 8.0)];
-        let line = json!({ "op": "load", "instance": 1, "plugin": "vst3:/T.vst3", "link": "/dev/shm/x",
-            "sample_rate": 48000.0, "ara": document.to_json() })
-        .to_string();
-        let Some(Message::Load { ara: Some(read), .. }) = Message::decode(&line) else { panic!("refused") };
-        assert_eq!(read.bars, document.bars);
-        document.bars = vec![(100, 8, 0.0)];
-        assert!(AraDocument::from_json(&document.to_json()).is_none(), "100 beats in a bar is not a signature");
     }
 
     fn gain() -> ParamInfo {

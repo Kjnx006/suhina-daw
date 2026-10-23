@@ -66,6 +66,7 @@ pub use rack::{
     is_instrument, plugin_group, start_offline,
 };
 pub use recording::{COUNT_IN_BARS, RECORDED_FOLDER};
+pub use relink::COLLECTED;
 pub use relink::{MAX_RELINK, search as find_candidates};
 pub use soundmap::{scope_files, sound_map_commands};
 pub use suhina_plugins::Placement;

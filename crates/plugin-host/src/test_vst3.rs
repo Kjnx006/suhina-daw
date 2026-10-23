@@ -17,6 +17,9 @@
 //! accepts a native window and, when it opens, moves the gain to [`EDITOR_GAIN`] through the
 //! host's component handler, as a user turning a knob would. Modelled on the `vst3` crate's gain
 //! example (MIT/Apache-2.0).
+//!
+//! `test:vst3-mix` is the same plug-in, except that its first output channel is the mean of the
+//! first two, so it shows whether its second input was filled.
 
 use std::ffi::{c_char, c_void};
 use std::sync::Arc;
@@ -62,6 +65,8 @@ static PROCESSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool:
 struct Processor {
     gain: Arc<AtomicU32>,
     latency: AtomicU32,
+    /// Whether the first output channel is the mean of the first two (`test:vst3-mix`).
+    mix: bool,
 }
 
 impl Class for Processor {
@@ -248,10 +253,24 @@ impl IAudioProcessorTrait for Processor {
             for (o, i) in target.iter_mut().zip(source) {
                 *o = i * gain;
             }
-            if channel == 0 {
-                self.add_notes(data, target);
+        }
+        if output.numChannels < 1 {
+            return kResultOk;
+        }
+        // SAFETY: the bus has at least one channel pointer.
+        let first = unsafe { *targets };
+        // SAFETY: each channel pointer has `numSamples` samples.
+        let first = unsafe { std::slice::from_raw_parts_mut(first, frames) };
+        if self.mix && output.numChannels >= 2 {
+            // SAFETY: the bus has a second channel pointer.
+            let second = unsafe { *targets.wrapping_add(1) };
+            // SAFETY: as above, a channel that does not overlap the first.
+            let second = unsafe { std::slice::from_raw_parts(second, frames) };
+            for (a, b) in first.iter_mut().zip(second) {
+                *a = (*a + *b) / 2.0;
             }
         }
+        self.add_notes(data, first);
         kResultOk
     }
 
@@ -559,7 +578,10 @@ impl IPlugViewTrait for View {
     }
 }
 
-struct Factory;
+struct Factory {
+    /// Whether it makes `test:vst3-mix`'s processor.
+    mix: bool,
+}
 
 impl Class for Factory {
     type Interfaces = (IPluginFactory, IPluginFactory2);
@@ -600,6 +622,7 @@ impl IPluginFactoryTrait for Factory {
             PROCESSOR_CID => ComWrapper::new(Processor {
                 gain: Arc::new(AtomicU32::new(0.5f32.to_bits())),
                 latency: AtomicU32::new(LATENCY),
+                mix: self.mix,
             })
             .to_com_ptr::<FUnknown>(),
             CONTROLLER_CID => ComWrapper::new(Controller::default()).to_com_ptr::<FUnknown>(),
@@ -634,7 +657,7 @@ impl IPluginFactory2Trait for Factory {
     }
 }
 
-/// The factory, as a module's `GetPluginFactory` would give it.
-pub(crate) fn factory() -> Option<ComPtr<IPluginFactory>> {
-    ComWrapper::new(Factory).to_com_ptr::<IPluginFactory>()
+/// The factory, as a module's `GetPluginFactory` would give it; with `mix`, `test:vst3-mix`'s.
+pub(crate) fn factory(mix: bool) -> Option<ComPtr<IPluginFactory>> {
+    ComWrapper::new(Factory { mix }).to_com_ptr::<IPluginFactory>()
 }

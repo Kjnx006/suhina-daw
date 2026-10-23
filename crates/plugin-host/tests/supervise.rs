@@ -245,6 +245,22 @@ fn a_clap_plugin_gets_every_audio_port_it_declares() {
 }
 
 #[test]
+fn a_mono_link_plays_through_a_stereo_plugin_in_both_formats() {
+    // The link's one channel reaches both of a stereo plug-in's inputs in CLAP and in VST3
+    // alike (#767), and the plug-in's first output channel comes back on it. The `-mix` gains'
+    // first output is the mean of their two, so it is 0.25, not 0.5, when the second input is
+    // left silent. The rule itself, for every layout, is tested in `audio.rs`.
+    for (plugin, expected) in [("test:clap-mix", 0.5), ("test:vst3-mix", 0.5), ("test:clap-ports", 1.0)] {
+        let (_plugin, mut audio) =
+            Plugin::start(Launch { channels: 1, ..launch(plugin) }).unwrap_or_else(|e| panic!("{plugin}: {e}"));
+        let mut output = [9.0f32; FRAMES];
+        let outcome = audio.process(&[1.0; FRAMES], &mut output, PATIENT);
+        assert_eq!(outcome, Outcome::Done, "{plugin}");
+        assert!(output.iter().all(|s| *s == expected), "{plugin}: {output:?}");
+    }
+}
+
+#[test]
 fn a_vst3_plugin_processes_reports_latency_and_keeps_state() {
     let (mut plugin, mut audio) = start("test:vst3");
     assert_eq!(plugin.latency(), 32);

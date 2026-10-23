@@ -2781,24 +2781,22 @@ mod tests {
         assert_eq!(monitor.start_beat(), 2.0);
     }
 
-    /// A ruler click while playing is a jump like a start: the note it lands inside sounds.
+    /// A jump into a note while playing plays it, whether the marker moves with it
+    /// (`SetPosition`, a click on the ruler) or not (`Locate`).
     #[test]
-    fn a_jump_while_playing_chases_the_note_it_lands_inside() {
+    fn a_jump_into_a_sounding_note_plays_it_either_way() {
         let beat = SR as usize / 2;
-        let project = project_with(untargeted(vec![note(0.0, 4.0, 60)]), vec![clip(0.0, 4.0)], 1);
-        let mut started = Renderer::stopped(&project, &AudioPool::new(), SR).unwrap();
-        started.handle(LaunchCommand::SetPosition { beat: 2.0 });
-        started.handle(LaunchCommand::Play);
-        let from_start = frames(&mut started, beat);
-        let mut jumped = Renderer::new(&project, SR).unwrap();
-        frames(&mut jumped, beat / 2);
-        jumped.handle(LaunchCommand::SetPosition { beat: 2.0 });
-        let after_jump = frames(&mut jumped, beat);
-        assert!(from_start.iter().any(|s| s.abs() > 0.1));
-        // The cut note's release has faded after a moment; from there on both are the same.
-        let release = ((RELEASE_SECONDS * f64::from(SR)) as usize + 1) * 2;
-        assert!(after_jump[release..].iter().any(|s| s.abs() > 0.1), "silent after the jump");
-        assert!(max_diff(&after_jump[release..], &from_start[release..]) < 1e-6);
+        let project = notes_around_beat_two();
+        let jumped = |command: LaunchCommand| {
+            let mut renderer = Renderer::new(&project, SR).unwrap();
+            frames(&mut renderer, beat / 2);
+            renderer.handle(command);
+            // A quarter of a beat: the note from beat 2 to 2.5, nothing else.
+            frames(&mut renderer, beat / 4)
+        };
+        let set = jumped(LaunchCommand::SetPosition { beat: 2.25 });
+        assert!(set.iter().any(|s| s.abs() > 0.1), "the note from beat 2 sounds");
+        assert_eq!(max_diff(&set, &jumped(LaunchCommand::Locate { beat: 2.25 })), 0.0);
     }
 
     #[test]
