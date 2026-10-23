@@ -153,7 +153,7 @@ crates/ui/src/
   interaction/   what views share: drop (dragging between views), pick, menus, nesting, grid
                  (the tracks and slots as the views see them), colour_picker, empty_space, status,
                  timeline_grid (the lines and snapping of the arrangement, piano roll and automation)
-  kit/           what every view draws with: theme, widgets, meter, motion, logo, waveform
+  kit/           what every view draws with: theme, widgets, meter, motion, logo, waveform, scroll
   demo.rs        the demo project the app opens with `--demo` and the tests draw
 ```
 
