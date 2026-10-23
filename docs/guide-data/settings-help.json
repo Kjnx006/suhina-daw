@@ -474,6 +474,27 @@
       "docs/decisions/0017-inputs-and-latency.md"
     ]
   },
+  "Midi/Arming/auto_arm": {
+    "sourceFingerprint": "c59724f5fd002f8b3d8096048538fd84cb585e719b7ab572cbc4ef7540c3f76d",
+    "summary": "Arm the track you select, so a MIDI controller or the audio input plays into it.",
+    "description": "When this is on, selecting a track (clicking its header, or a clip slot in its column) arms it for recording, and the track armed this way before is disarmed again. On a MIDI track, a MIDI keyboard or controller then plays the track's instrument; on an audio track, the track hears its audio input, and a track with no input chosen gets the device's first input, as its arm button gives it. Return tracks, the main track and groups are left as they are, and the arm does not move while a take is recording. A track you armed yourself stays armed when you select another one. Arming is not an edit: it is not undone and not saved with the project. The setting is off unless you turn it on.",
+    "options": [
+      {
+        "name": "On",
+        "description": "Selecting a MIDI or audio track arms it, and the track armed by the previous selection is disarmed."
+      },
+      {
+        "name": "Off",
+        "description": "Selecting a track does not change which tracks are armed; arm tracks with their own buttons."
+      }
+    ],
+    "whenToChange": "Turn it on when you play a MIDI keyboard or record an input into one track after another and want the arm to follow the track you select. Leave it off when you record several tracks at once or keep particular tracks armed.",
+    "references": [
+      "crates/ui/src/app.rs",
+      "crates/ui/src/settings/settings_rows.rs",
+      "crates/ui/tests/auto_arm.rs"
+    ]
+  },
   "Plugins/Editors/plugin_editors": {
     "sourceFingerprint": "c3d5773dd17888b214cfd419312d38f01b3dfd5a390e03755a466cd14306941e",
     "summary": "Choose where a plug-in’s own editing interface opens.",

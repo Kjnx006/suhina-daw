@@ -271,6 +271,17 @@ struct NamCache {
 }
 
 /// The window's state.
+/// What auto-arm (Settings › MIDI, #834) last acted on.
+#[derive(Default)]
+struct AutoArm {
+    /// The project and its selected track when auto-arm last looked; `None` while it is off, so
+    /// turning it on arms the track selected then.
+    seen: Option<(ProjectId, Option<TrackId>)>,
+    /// The track auto-arm armed in each project, disarmed when another is selected there. A
+    /// track armed by hand is never one of them.
+    armed: std::collections::BTreeMap<ProjectId, TrackId>,
+}
+
 pub struct App {
     /// When the level meters last showed something new (`ui.input` time).
     meters_moved_at: f64,
@@ -361,6 +372,8 @@ pub struct App {
     detail_cap: Option<f32>,
     /// Where each frame's time goes, written to the trace log when tracing is on.
     frame_trace: crate::kit::frame_trace::FrameTrace,
+    /// What auto-arm (Settings › MIDI) last saw and armed.
+    auto_arm: AutoArm,
     /// The embedded plug-in editors the detail area has grown to fit, once each as they open:
     /// after that its height is the user's, and the editor is fitted to it (#689).
     fitted_editors: std::collections::HashSet<(TrackId, Vec<usize>)>,
@@ -553,6 +566,7 @@ impl App {
             detail_height: DETAIL_HEIGHT,
             detail_cap: None,
             frame_trace: crate::kit::frame_trace::FrameTrace::default(),
+            auto_arm: AutoArm::default(),
             fitted_editors: std::collections::HashSet::new(),
             editor_in_chain: false,
             rename: None,
@@ -3118,6 +3132,8 @@ impl App {
                 ui.ctx().copy_text(format!("Suhina: {what} copied"));
             }
         }
+        // A selection this frame's commands or clicks made arms its track.
+        self.follow_selection_with_arm();
         self.frame_trace.mark("commands");
         self.frame_trace.note(|| format!("{ran} commands"));
         self.guard_quit(ui.ctx());
@@ -5517,6 +5533,69 @@ impl App {
                 role != Some(suhina_engine::model::ChannelRole::Effect)
             })
             .map(|t| t.id)
+    }
+
+    /// Auto-arm (Settings › MIDI, #834): when the selected track changes, arms it and disarms
+    /// the track auto-arm armed before, so a MIDI controller or the audio input plays into what
+    /// the user looks at. A track armed by hand is never disarmed here, and one already armed is
+    /// left as it is. A track that plays neither notes nor audio, a return, the main track or a
+    /// group leaves the arm where it is, and so does any change while a take is recording.
+    /// Through `track.setArm`, as the arm button, so an audio track with no input gets the
+    /// device's first one as the button gives it.
+    fn follow_selection_with_arm(&mut self) {
+        let project = self.projects.active();
+        // A track it armed that is no longer armed (disarmed by hand, or deleted) is not its own
+        // any more: armed by hand later, it stays. Looked at with the setting off too, so a
+        // track disarmed and armed again by hand meanwhile is the user's when it comes back on.
+        if let Some(project) = project
+            && let Some(&track) = self.auto_arm.armed.get(&project)
+            && !self.session().is_some_and(|s| s.is_armed(track))
+        {
+            self.auto_arm.armed.remove(&project);
+        }
+        if !self.settings.auto_arm {
+            // Turned on again, it arms the track selected then.
+            self.auto_arm.seen = None;
+            return;
+        }
+        let selected = self.selected_track();
+        let seen = project.map(|p| (p, selected));
+        if self.auto_arm.seen == seen {
+            return;
+        }
+        let Some((project, Some(track))) = seen else {
+            self.auto_arm.seen = seen;
+            return;
+        };
+        let Some(session) = self.session() else { return };
+        if session.is_recording() {
+            // Not seen yet: once the take ends, the track selected then is armed.
+            return;
+        }
+        let p = session.project();
+        let takes_input = p.tracks.iter().find(|t| t.id == track).is_some_and(|t| {
+            let role = p.channels.iter().find(|c| Some(c.id) == t.channel).map(|c| c.role);
+            (t.content.notes || t.content.audio)
+                && matches!(role, None | Some(suhina_engine::model::ChannelRole::Regular))
+        });
+        let already = session.is_armed(track);
+        self.auto_arm.seen = seen;
+        if !takes_input {
+            return;
+        }
+        let before = self.auto_arm.armed.get(&project).copied();
+        if let Some(before) = before.filter(|b| *b != track) {
+            self.auto_arm.armed.remove(&project);
+            if self.session().is_some_and(|s| s.is_armed(before)) {
+                self.run(&Action::new("track.setArm", json!({ "track": before.0, "armed": false })));
+            }
+        }
+        if !already {
+            self.run(&Action::new("track.setArm", json!({ "track": track.0, "armed": true })));
+            if self.session().is_some_and(|s| s.is_armed(track)) {
+                self.auto_arm.armed.insert(project, track);
+            }
+        }
     }
 
     fn selected_track(&self) -> Option<TrackId> {

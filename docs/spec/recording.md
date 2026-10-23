@@ -27,8 +27,12 @@ names no other program's behaviour.
 
 ## What is recorded
 
-- **Armed tracks only.** Arming (`track.setArm`) is what says a track listens to its inputs; a
-  take is made on every armed track that heard something it can keep:
+- **Armed tracks only.** Arming (`track.setArm`) is what says a track listens to its inputs (with
+  Settings › MIDI › Auto-arm on, selecting a track arms it, but not while a take records, so a
+  take is never cut off by a click elsewhere, #834 — a take asked to end counts until it is a
+  clip, so a slot's take records on to its launch boundary); a take is made on every armed
+  track that heard something it can keep, and every armed MIDI track makes one, an empty clip
+  when it heard no notes:
   - a track that plays notes records the notes of the MIDI inputs it hears
     (`track.setMidiInput`), as a MIDI clip;
   - a track with an audio input (`track.setAudioInput`) records the input's channel or pair,

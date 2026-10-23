@@ -87,6 +87,16 @@ engine code.
    (`exclusive: true`, what a plain click in the window does; Ctrl adds a track), like solo.
    Disarming a track lets go of the keys it holds. A track armed while a key is down hears the
    next key, not that one.
+   *Auto-arm (#834):* with Settings › MIDI › Auto-arm the selected track on (off by default, a
+   setting of the app, not the project), selecting a track (the one the detail area shows, in
+   either view; a clip slot, empty or not, selects its track) arms it through `track.setArm`, and disarms the track auto-arm armed before. A
+   track armed by hand is never disarmed by it, and selecting one already armed leaves it as it
+   is. Only a track that plays notes or audio through a regular channel is armed: a return,
+   the main track or a group leaves the arm where it is. An audio track is armed as its arm
+   button arms it: one with no audio input gets the device's first input (#682). While a take records, the selection
+   does not move the arm (a take asked to end still records until it is a clip: a slot's, to its
+   launch boundary); once the take ends, the track selected then is armed. Turning the
+   setting off leaves the arm as it is. The window remembers which track it armed, per project.
 4. **Every port is on until turned off.** `midi.inputs` lists the ports, `midi.setInput` turns
    one on or off; the window keeps the ports turned off in its settings. The ports are looked at
    again every two seconds (every thirty when they cannot be listed at all), so a controller

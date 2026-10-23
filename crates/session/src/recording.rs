@@ -139,6 +139,14 @@ impl Session {
         self.recording.count_in_bars
     }
 
+    /// Whether a take is being recorded now, into the arrangement or a slot: what auto-arm
+    /// (#834) leaves the arm alone for, so a take is not cut off. A take asked to end counts
+    /// until it is a clip: a slot's records on to its launch boundary, and either waits a
+    /// moment after for the notes on their way.
+    pub fn is_recording(&self) -> bool {
+        !self.recording.takes.is_empty()
+    }
+
     /// Whether the arrangement records (`transport.record`).
     pub fn records_arrangement(&self) -> bool {
         self.recording.arrangement

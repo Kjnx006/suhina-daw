@@ -11,6 +11,7 @@
 
 mod agents;
 mod arrangement_editing;
+mod auto_arm;
 mod automation_lanes;
 mod browser;
 mod browser_preview;
