@@ -355,8 +355,33 @@ fn notes_and_controllers_reach_clap_and_vst3_plugins() {
         let volume = [Event { frame: 0, note: -1, kind: EventKind::Controller { channel: 0, number: 7, value: 1.0 } }];
         assert_eq!(audio.process_with_events(&[1.0; FRAMES * 2], &volume, &mut output, PATIENT), Outcome::Done);
         assert_eq!(output[0], 1.0, "{spec}");
+        // Channel pressure (aftertouch, #812) at none sets the gain to 0.
+        let pressure = [Event { frame: 0, note: -1, kind: EventKind::Pressure { channel: 0, value: 0.0 } }];
+        assert_eq!(audio.process_with_events(&[1.0; FRAMES * 2], &pressure, &mut output, PATIENT), Outcome::Done);
+        assert_eq!(output[0], 0.0, "{spec}");
         // Blocks without events play as before.
-        assert_eq!(block(&mut audio, PATIENT), (Outcome::Done, 1.0), "{spec}");
+        assert_eq!(block(&mut audio, PATIENT), (Outcome::Done, 0.0), "{spec}");
+    }
+}
+
+/// A controller that moves a VST3 plug-in's parameter through its MIDI mapping moves it on the
+/// edit controller too, which its editor draws (#812): the on-screen wheel follows the
+/// hardware's. The test plug-in's controller keeps its own gain, apart from the processor's.
+#[test]
+fn a_mapped_controller_reaches_a_vst3_plugins_edit_controller() {
+    use suhina_plugins::{Event, EventKind};
+    let (mut plugin, mut audio) = start("test:vst3");
+    let gain = |plugin: &mut Plugin| plugin.params().unwrap()[0].value;
+    assert_eq!(gain(&mut plugin), 0.5);
+    let mut output = [9.0f32; FRAMES * 2];
+    let volume = [Event { frame: 0, note: -1, kind: EventKind::Controller { channel: 0, number: 7, value: 0.25 } }];
+    assert_eq!(audio.process_with_events(&[1.0; FRAMES * 2], &volume, &mut output, PATIENT), Outcome::Done);
+    assert_eq!(output[0], 0.25);
+    // The host's main thread hands it over between messages.
+    let deadline = Instant::now() + PATIENT;
+    while gain(&mut plugin) != 0.25 {
+        assert!(Instant::now() < deadline, "the controller still shows {}", gain(&mut plugin));
+        std::thread::sleep(Duration::from_millis(10));
     }
 }
 

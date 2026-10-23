@@ -160,11 +160,13 @@ CHAPTERS = [
      "launch modes (trigger, gate, toggle, repeat) with press and release, legato, per-clip launch "
      "quantisation, slots and scenes launched from computer keys. Missing velocity amount, clip "
      "offset/nudge, launching from live MIDI notes, follow-action multiplier and scene follow actions."),
-    (17, "Routing and I/O", 22, 0.35, "partial",
+    (17, "Routing and I/O", 22, 0.38, "partial",
      "Track output to main or a group (track.setOutput); MIDI controllers play the armed tracks, "
-     "each track choosing its MIDI port and channel (track.setMidiInput); an audio input device "
-     "with a channel or pair per track and monitoring Auto / In / Off (track.setAudioInput). No "
-     "MIDI out, external instrument, resampling, sidechain, multi-timbral."),
+     "each track choosing its MIDI port and channel (track.setMidiInput), with the mod wheel, "
+     "pitch bend and aftertouch reaching the instrument alongside notes (#812); an audio input "
+     "device with a channel or pair per track and monitoring Auto / In / Off "
+     "(track.setAudioInput). No MIDI out, external instrument, resampling, sidechain, "
+     "multi-timbral."),
     (18, "Mixing", 18, 0.59, "partial",
      "Faders (vertical in the Session view's channel strips), pan, mute, solo (exclusive/Ctrl), groups as buses nested up to 16 deep (solo and mute "
      "through the levels), master, latency compensation, "

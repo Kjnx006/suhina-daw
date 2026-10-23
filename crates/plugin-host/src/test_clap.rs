@@ -178,6 +178,13 @@ impl<'a> PluginAudioProcessor<'a, GainShared, GainMainThread<'a>> for GainProces
                     {
                         self.shared.gain.store((f32::from(value) / 127.0).to_bits(), Ordering::Relaxed);
                     }
+                    // Channel pressure (aftertouch, #812) sets the gain too: a two-byte message
+                    // in the MIDI event's three-byte data, the third byte unused.
+                    if let [status, value, _] = midi.data()
+                        && status & 0xF0 == 0xD0
+                    {
+                        self.shared.gain.store((f32::from(value) / 127.0).to_bits(), Ordering::Relaxed);
+                    }
                 }
                 Some(CoreEventSpace::ParamValue(param)) => {
                     if param.param_id() == Some(GAIN_PARAM) && param.value().is_finite() {

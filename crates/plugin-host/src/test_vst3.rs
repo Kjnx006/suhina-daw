@@ -489,7 +489,8 @@ impl IMidiMappingTrait for Controller {
         number: CtrlNumber,
         id: *mut ParamID,
     ) -> tresult {
-        if bus != 0 || channel != 0 || number != 7 || id.is_null() {
+        // Controller 7 (volume) and 128 (channel aftertouch, #812) both map to the gain.
+        if bus != 0 || channel != 0 || (number != 7 && number != 128) || id.is_null() {
             return kResultFalse;
         }
         // SAFETY: the host passes an id to fill.

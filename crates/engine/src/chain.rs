@@ -799,6 +799,13 @@ impl Chain {
         self.next_off = next;
     }
 
+    /// Sends a performance control that is not a note — a MIDI controller, the pitch bend wheel
+    /// or channel pressure — to the chain's devices at `frame` of the block, the way a note is
+    /// sent (#812).
+    pub(crate) fn live_control(&mut self, frame: usize, event: NoteEvent) {
+        self.push(frame, event);
+    }
+
     /// Holds `key`, started by [`Chain::note_on`] or about to start, until it is released by
     /// hand: the piano roll's key column (`preview.noteOn`). `end` is the frame the note would
     /// otherwise end at; `u64::MAX` holds it for good.

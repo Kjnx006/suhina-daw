@@ -1028,6 +1028,11 @@ fn push_event(buffer: &mut EventBuffer, event: &Event) {
             let (low, high) = ((bend & 0x7F) as u8, (bend >> 7) as u8);
             buffer.push(&MidiEvent::new(event.frame, 0, [0xE0 | (channel & 0x0F), low, high]));
         }
+        // Channel pressure (aftertouch, #812): a two-byte MIDI message, the third byte unused.
+        EventKind::Pressure { channel, value } => {
+            let value = (value * 127.0).round().clamp(0.0, 127.0) as u8;
+            buffer.push(&MidiEvent::new(event.frame, 0, [0xD0 | (channel & 0x0F), value, 0]));
+        }
         // The song's place goes to the plug-in as the block's transport ([`follow_song`]).
         EventKind::Transport { .. }
         | EventKind::Tempo { .. }

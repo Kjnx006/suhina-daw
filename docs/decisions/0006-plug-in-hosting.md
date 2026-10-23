@@ -128,19 +128,22 @@ workspace forbids.
      a sequence number), the audio buffers sized for the largest block, and lock-free rings of
      note and parameter events with sample offsets, so automation stays sample-accurate.
      *Built:* each block carries up to 1024 events (note on and off, MIDI controller, pitch
-     bend, parameter value) as fixed 16-byte records with their frame (`crates/ipc/src/events.rs`, region
-     version 2; version 3 adds the block's followers, decision 2); the host reads them into a
-     list made beforehand, so neither side allocates. Two more kinds carry the song: `Transport`
-     (playing, position in samples) and `Tempo`, sent with every block to a plug-in that follows
-     the song (one loaded with an ARA document, [ADR 0028](0028-ara-hosting.md)), which a VST3
-     host puts in the block's process context.
-     A VST3 host hands notes to `process` as an `IEventList` on event bus 0, and controllers
-     and pitch bend as parameter changes at their frame through the plug-in's `IMidiMapping`
-     (asked for the first MIDI channel only: some plug-ins crash when asked about the second); a
-     CLAP host sends note events to note port 0 and controllers and bend as MIDI messages, and
-     gives a plug-in without audio inputs (an instrument) no input port. A parameter event
-     (automation) reaches a VST3 processor as a parameter change at its frame and a CLAP plug-in
-     as a parameter event at its frame.
+     bend, channel pressure, parameter value) as fixed 16-byte records with their frame
+     (`crates/ipc/src/events.rs`, region version 2; version 3 adds the block's followers,
+     decision 2); the host reads them into a list made beforehand, so neither side allocates.
+     Two more kinds carry the song: `Transport` (playing, position in samples) and `Tempo`, sent
+     with every block to a plug-in that follows the song (one loaded with an ARA document,
+     [ADR 0028](0028-ara-hosting.md)), which a VST3 host puts in the block's process context.
+     A VST3 host hands notes to `process` as an `IEventList` on event bus 0, and controllers,
+     pitch bend and channel pressure (aftertouch, #812) as parameter changes at their frame
+     through the plug-in's `IMidiMapping` (asked for the first MIDI channel only: some plug-ins
+     crash when asked about the second), and gives the latest value of each to the edit
+     controller as well (`setParamNormalized`, on the main thread between messages), so the
+     plug-in's editor shows a wheel moved on the hardware; a CLAP host sends note events to note port 0 and
+     controllers, bend and channel pressure as MIDI messages, and gives a plug-in without audio
+     inputs (an instrument) no input port. A parameter event (automation) reaches a VST3
+     processor as a parameter change at its frame and a CLAP plug-in as a parameter event at its
+     frame.
      *Built (#109):* the engine sends them. A plug-in slot plans each block's parameter events
      before any of the block runs (`crates/engine/src/plugin_params.rs`): the values the project
      sets on the device (`Device::params`, by parameter id, in the plug-in's own range) at the
