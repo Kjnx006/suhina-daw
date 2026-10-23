@@ -384,6 +384,7 @@ Change this code, and check these documents.
 | `crates/ui/src/kit/logo.rs` | [Components](design/components.md) |
 | `crates/ui/src/kit/meter.rs` | [Components](design/components.md), [Level meters](spec/level-meters.md) |
 | `crates/ui/src/kit/motion.rs` | [Components](design/components.md) |
+| `crates/ui/src/kit/scroll.rs` | [Components](design/components.md) |
 | `crates/ui/src/kit/theme.rs` | [0009: egui for the UI; familiar workflow, Suhina's own look](decisions/0009-ui-toolkit-and-look.md), [Design brief](design/brief.md), [Components](design/components.md) |
 | `crates/ui/src/kit/waveform.rs` | [Components](design/components.md), [Waveforms](spec/waveforms.md) |
 | `crates/ui/src/kit/waveform/tests.rs` | [Waveforms](spec/waveforms.md) |
