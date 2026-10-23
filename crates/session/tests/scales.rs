@@ -7,9 +7,11 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)] // test helpers outside #[test] functions
 
-use serde_json::{Value, json};
+use serde_json::json;
 use suhina_model::*;
 use suhina_session::Session;
+
+use crate::support::run;
 
 fn note(time: f64, key: u8) -> Note {
     Note { time, duration: 1.0, key, velocity: 100.0 / 127.0, release_velocity: 0.5, channel: 0, muted: false }
@@ -38,10 +40,7 @@ fn clip(content: u32) -> Clip {
 /// Track 1 "Keys": arrangement clips 0 and 1 both play content 1 (a duplicate), clip 2 is audio;
 /// scene 1's slot plays content 1 too, scene 2's slot is empty.
 fn project() -> Project {
-    // Ids on its lanes, clips and scenes, as a session gives them.
-    let mut project = project_built();
-    assert_eq!(project.assign_ids(), Ok(()));
-    project
+    suhina_test_support::with_ids(project_built())
 }
 
 fn project_built() -> Project {
@@ -101,10 +100,6 @@ fn project_built() -> Project {
         },
         ..Project::default()
     }
-}
-
-fn run(session: &mut Session, id: &str, params: Value) -> Result<Value, String> {
-    session.execute(id, &params).map_err(|e| e.0)
 }
 
 /// The scale of the content arrangement clip `index` plays.

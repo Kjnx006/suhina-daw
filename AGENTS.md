@@ -119,6 +119,7 @@ crates/
   ipc      L0 audio blocks to a plug-in host process: shared memory, block sync with a deadline (ADR 0006; may use unsafe)
   realtime L0 real-time priority for audio threads: MMCSS Pro Audio on Windows, SCHED_FIFO or rtkit on Linux
   plugins  L1 the engine's side of plug-in hosting: start a host process, control protocol, health, state, restart; scanning; offline runs
+  test-support  dev-dependency only: ProjectBuilder, write_wav, test signals, golden files (SUHINA_BLESS)
   plugin-host  the suhina-plugin-host executable plug-ins run in (ADR 0006; may use unsafe): CLAP, VST3, test plug-ins
 devices/
   sampler  single-source sample and granular instrument; SDK runtime and theme-aware panel

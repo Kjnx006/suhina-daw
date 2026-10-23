@@ -121,17 +121,7 @@ pub(crate) fn assert_golden(name: &str, render: &[f32]) {
 /// [`assert_golden`] with a tolerance of `tolerance`, for renders whose DSP is not bit-exact across
 /// platforms (the time-stretcher's floating-point maths).
 pub(crate) fn assert_golden_within(name: &str, render: &[f32], tolerance: f32) {
-    let path = golden_dir().join(format!("{name}.f32"));
-    if std::env::var_os("SUHINA_BLESS").is_some() {
-        let bytes: Vec<u8> = render.iter().flat_map(|s| s.to_le_bytes()).collect();
-        std::fs::write(&path, bytes).unwrap();
-        return;
-    }
-    let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}; run with SUHINA_BLESS=1", path.display()));
-    let golden: Vec<f32> = bytes.as_chunks::<4>().0.iter().map(|b| f32::from_le_bytes(*b)).collect();
-    assert_eq!(golden.len(), render.len(), "{name}: length differs from the golden file");
-    let worst = max_diff(&golden, render);
-    assert!(worst < tolerance, "{name}: differs from the golden file by {worst}");
+    suhina_test_support::assert_golden_f32(&golden_dir().join(format!("{name}.f32")), render, tolerance);
 }
 
 /// A 2-beat clip (1 s) with `fade_in` and `fade_out` beats, rendered offline: the left channel.

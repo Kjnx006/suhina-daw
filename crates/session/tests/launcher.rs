@@ -10,14 +10,13 @@ use suhina_engine::{AudioPool, Quantization, Renderer};
 use suhina_model::*;
 use suhina_session::{CommandKind, Player, Session, commands, parse_quantization};
 
+use crate::support::run;
+
 const SR: u32 = 48_000;
 const BEAT: usize = SR as usize / 2;
 
 fn project() -> Project {
-    // Ids on its lanes, clips and scenes, as a session gives them.
-    let mut project = project_built();
-    assert_eq!(project.assign_ids(), Ok(()));
-    project
+    suhina_test_support::with_ids(project_built())
 }
 
 fn project_built() -> Project {
@@ -106,10 +105,6 @@ fn project_built() -> Project {
         },
         ..Project::default()
     }
-}
-
-fn run(session: &mut Session, id: &str, params: Value) -> Result<Value, String> {
-    session.execute(id, &params).map_err(|e| e.0)
 }
 
 /// A session with an offline renderer attached as its player.

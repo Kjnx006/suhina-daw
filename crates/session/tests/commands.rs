@@ -5,47 +5,21 @@ use serde_json::{Value, json};
 use suhina_model::*;
 use suhina_session::{CommandKind, Session, commands};
 
+use crate::support::run;
+use suhina_test_support::ProjectBuilder;
+
 fn project() -> Project {
-    // Ids on its lanes, clips and scenes, as a session gives them.
-    let mut project = project_built();
-    assert_eq!(project.assign_ids(), Ok(()));
-    project
+    suhina_test_support::with_ids(project_built())
 }
 
 fn project_built() -> Project {
-    let track = |id: u32, name: &str| Track {
-        content: ContentKinds { notes: true, audio: false },
-        channel: Some(ChannelId(id)),
-        ..Track::new(TrackId(id), name)
-    };
-    let channel = |id: u32| Channel::new(ChannelId(id), format!("C{id}"));
-    let clip = |start: f64| Clip::new(ContentId(1), start, 4.0);
-    Project {
-        tracks: vec![track(1, "Bass"), track(2, "Lead")],
-        channels: vec![channel(1), channel(2)],
-        contents: vec![ClipContent {
-            id: ContentId(1),
-            name: "Riff".into(),
-            length: 4.0,
-            lanes: vec![ContentLane { target: None, data: LaneData::Notes(vec![Note::new(0.0, 1.0, 36, 1.0)]) }],
-            extensions: Extensions::default(),
-            scale: None,
-        }],
-        arrangement: Arrangement {
-            lanes: vec![ArrangementLane {
-                id: Default::default(),
-                name: "Bass".into(),
-                track: Some(TrackId(1)),
-                clips: vec![clip(0.0), clip(8.0)],
-            }],
-            markers: Vec::new(),
-        },
-        ..Project::default()
-    }
-}
-
-fn run(session: &mut Session, id: &str, params: Value) -> Result<Value, String> {
-    session.execute(id, &params).map_err(|e| e.0)
+    ProjectBuilder::new()
+        .midi_track(1, "Bass")
+        .midi_track(2, "Lead")
+        .notes(1, "Riff", 4.0, vec![Note::new(0.0, 1.0, 36, 1.0)])
+        .clip(1, Clip::new(ContentId(1), 0.0, 4.0))
+        .clip(1, Clip::new(ContentId(1), 8.0, 4.0))
+        .build_without_ids()
 }
 
 #[test]

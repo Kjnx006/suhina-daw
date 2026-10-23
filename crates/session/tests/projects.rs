@@ -5,17 +5,15 @@
 //! keeps its player.
 #![allow(clippy::unwrap_used)] // test helpers outside #[test] functions
 
-use serde_json::{Value, json};
+use serde_json::json;
 use suhina_engine::{AudioPool, Renderer};
 use suhina_model::Project;
 use suhina_session::{CommandKind, MAX_OPEN_PROJECTS, Player, ProjectId, Projects, Session, commands};
 
+use crate::support::run;
+
 fn untitled(projects: &mut Projects) -> ProjectId {
     projects.add(Session::new(Project::default()), None).unwrap()
-}
-
-fn run(projects: &mut Projects, id: &str, params: Value) -> Result<Value, String> {
-    projects.execute(id, &params).map_err(|e| e.0)
 }
 
 fn tempo(projects: &mut Projects, project: ProjectId) -> f64 {

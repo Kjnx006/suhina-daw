@@ -5,20 +5,19 @@
 //! playback through an offline renderer (`docs/spec/clip-launching.md` › Follow actions).
 #![allow(clippy::unwrap_used)] // test helpers outside #[test] functions
 
-use serde_json::{Value, json};
+use serde_json::json;
 use suhina_engine::{AudioPool, Renderer};
 use suhina_model::*;
 use suhina_session::{Player, Session};
+
+use crate::support::run;
 
 const SR: u32 = 48_000;
 const BEAT: usize = SR as usize / 2;
 
 /// One track, "Drums", with a one-beat looping clip in scenes 1 and 2 and an empty scene 3.
 fn project() -> Project {
-    // Ids on its lanes, clips and scenes, as a session gives them.
-    let mut project = project_built();
-    assert_eq!(project.assign_ids(), Ok(()));
-    project
+    suhina_test_support::with_ids(project_built())
 }
 
 fn project_built() -> Project {
@@ -56,10 +55,6 @@ fn project_built() -> Project {
         },
         ..Project::default()
     }
-}
-
-fn run(session: &mut Session, id: &str, params: Value) -> Result<Value, String> {
-    session.execute(id, &params).map_err(|e| e.0)
 }
 
 fn follow_of(session: &Session, scene: usize) -> FollowAction {

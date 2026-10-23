@@ -14,11 +14,10 @@ use suhina_engine::{AudioPool, Renderer};
 use suhina_model::*;
 use suhina_session::{Player, Session, blank_project};
 
-const SR: u32 = 48_000;
+use crate::support::run;
+use suhina_test_support::{WavFormat, write_wav};
 
-fn run(session: &mut Session, id: &str, params: Value) -> Result<Value, String> {
-    session.execute(id, &params).map_err(|e| e.0)
-}
+const SR: u32 = 48_000;
 
 fn temp_dir(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("suhina-files-{name}-{}", std::process::id()));
@@ -30,13 +29,7 @@ fn temp_dir(name: &str) -> PathBuf {
 /// A mono WAV file of `seconds` at a steady `level`.
 fn wav(dir: &Path, name: &str, seconds: f64, level: f32) -> PathBuf {
     let path = dir.join(name);
-    let spec =
-        hound::WavSpec { channels: 1, sample_rate: SR, bits_per_sample: 32, sample_format: hound::SampleFormat::Float };
-    let mut writer = hound::WavWriter::create(&path, spec).unwrap();
-    for _ in 0..(seconds * f64::from(SR)) as usize {
-        writer.write_sample(level).unwrap();
-    }
-    writer.finalize().unwrap();
+    write_wav(&path, SR, 1, WavFormat::Float32, &vec![level; (seconds * f64::from(SR)) as usize]);
     path
 }
 

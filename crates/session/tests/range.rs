@@ -6,13 +6,11 @@
 //! moving several clips at once.
 #![allow(clippy::unwrap_used, clippy::panic)] // test helpers outside #[test] functions
 
-use serde_json::{Value, json};
+use serde_json::json;
 use suhina_model::*;
 use suhina_session::{Session, blank_project};
 
-fn run(session: &mut Session, id: &str, params: Value) -> Result<Value, String> {
-    session.execute(id, &params).map_err(|e| e.0)
-}
+use crate::support::run;
 
 /// The blank project with a 4-beat notes clip at beat 0 on tracks 1 and 2.
 fn project() -> Project {

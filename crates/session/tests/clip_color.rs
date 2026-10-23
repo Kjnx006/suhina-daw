@@ -4,13 +4,11 @@
 //! Clips' colours and names as their track's (`docs/spec/arrangement-editing.md` › Clip colours).
 #![allow(clippy::unwrap_used, clippy::panic)] // test helpers outside #[test] functions
 
-use serde_json::{Value, json};
+use serde_json::json;
 use suhina_model::*;
 use suhina_session::{Session, blank_project};
 
-fn run(session: &mut Session, id: &str, params: Value) -> Result<Value, String> {
-    session.execute(id, &params).map_err(|e| e.0)
-}
+use crate::support::run;
 
 /// The blank project with two notes clips on track 1 and none on track 2.
 fn project() -> Project {

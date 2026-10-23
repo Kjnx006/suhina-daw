@@ -13,13 +13,12 @@ use suhina_engine::render_offline_with_audio;
 use suhina_model::*;
 use suhina_session::{Session, blank_project};
 
+use crate::support::run;
+use suhina_test_support::{WavFormat, write_wav};
+
 const SR: u32 = 48_000;
 /// Frames in one beat at 120 BPM.
 const BEAT: usize = SR as usize / 2;
-
-fn run(session: &mut Session, id: &str, params: Value) -> Result<Value, String> {
-    session.execute(id, &params).map_err(|e| e.0)
-}
 
 fn render(session: &Session) -> Vec<f32> {
     render_offline_with_audio(session.project(), session.audio(), SR, 512).unwrap()
@@ -80,14 +79,8 @@ fn temp_dir(name: &str) -> PathBuf {
 /// A mono WAV file of `seconds` of a sine at `hz`.
 fn sine(dir: &Path, name: &str, seconds: f64, hz: f64) -> PathBuf {
     let path = dir.join(name);
-    let spec =
-        hound::WavSpec { channels: 1, sample_rate: SR, bits_per_sample: 32, sample_format: hound::SampleFormat::Float };
-    let mut writer = hound::WavWriter::create(&path, spec).unwrap();
-    for i in 0..(seconds * f64::from(SR)) as usize {
-        let t = i as f64 / f64::from(SR);
-        writer.write_sample((0.5 * (t * hz * std::f64::consts::TAU).sin()) as f32).unwrap();
-    }
-    writer.finalize().unwrap();
+    let frames = (seconds * f64::from(SR)) as usize;
+    write_wav(&path, SR, 1, WavFormat::Float32, &suhina_test_support::sine(hz, f64::from(SR), frames, 0.5));
     path
 }
 

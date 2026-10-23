@@ -53,10 +53,7 @@ fn channel(id: u32) -> Channel {
 
 /// Keys (plays notes) and Mic (hears input channel 1), with two empty scenes.
 fn project() -> Project {
-    // Ids on its lanes, clips and scenes, as a session gives them.
-    let mut project = project_built();
-    assert_eq!(project.assign_ids(), Ok(()));
-    project
+    suhina_test_support::with_ids(project_built())
 }
 
 fn project_built() -> Project {

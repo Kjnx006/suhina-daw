@@ -16,6 +16,9 @@ use suhina_session::{
     AudioSystem, CommandKind, LiveOutput, OutputChoice, OutputInfo, Player, Projects, Session, audio_commands,
 };
 
+use crate::support::run;
+use suhina_test_support::{WavFormat, write_wav};
+
 const SR: u32 = 48_000;
 
 /// Opens players on renderers it keeps, so a test can run them, and records each choice.
@@ -114,18 +117,11 @@ impl Stand {
 }
 
 fn project() -> Project {
-    // Ids on its lanes, clips and scenes, as a session gives them.
-    let mut project = project_built();
-    assert_eq!(project.assign_ids(), Ok(()));
-    project
+    suhina_test_support::with_ids(project_built())
 }
 
 fn project_built() -> Project {
     suhina_session::blank_project()
-}
-
-fn run(projects: &mut Projects, id: &str, params: Value) -> Result<Value, String> {
-    projects.execute(id, &params).map_err(|e| e.0)
 }
 
 fn with_stand(missing: Option<&str>) -> (Projects, Arc<Stand>) {
@@ -424,13 +420,7 @@ fn temp_dir(name: &str) -> std::path::PathBuf {
 /// A mono WAV file of a second at a steady level of 0.5.
 fn wav(dir: &std::path::Path) -> String {
     let path = dir.join("listen.wav");
-    let spec =
-        hound::WavSpec { channels: 1, sample_rate: SR, bits_per_sample: 32, sample_format: hound::SampleFormat::Float };
-    let mut writer = hound::WavWriter::create(&path, spec).unwrap();
-    for _ in 0..SR {
-        writer.write_sample(0.5f32).unwrap();
-    }
-    writer.finalize().unwrap();
+    write_wav(&path, SR, 1, WavFormat::Float32, &[0.5; SR as usize]);
     path.display().to_string()
 }
 

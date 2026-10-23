@@ -13,6 +13,8 @@ use suhina_model::Project;
 use suhina_plugins::library::Library;
 use suhina_session::{CommandKind, ProjectId, Projects, Session, plugin_commands};
 
+use crate::support::run;
+
 /// Projects whose plug-in library lives in a fresh folder of its own.
 fn projects(name: &str) -> (Projects, PathBuf) {
     let dir = std::env::temp_dir().join(format!("suhina-plugin-commands-{name}-{}", std::process::id()));
@@ -20,10 +22,6 @@ fn projects(name: &str) -> (Projects, PathBuf) {
     std::fs::create_dir_all(dir.join("plugins")).unwrap();
     let library = Library::new(Some(dir.join("settings")), dir.join("no-such-host"));
     (Projects::with_library(library), dir)
-}
-
-fn run(projects: &mut Projects, id: &str, params: Value) -> Result<Value, String> {
-    projects.execute(id, &params).map_err(|e| e.0)
 }
 
 #[test]

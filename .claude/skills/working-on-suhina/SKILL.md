@@ -68,7 +68,7 @@ it no longer does.
   `click_secondary()`, click the field, select its text with Ctrl+A
   (`key_press_modifiers(Modifiers::COMMAND, Key::A)`), then `type_text(...)` and
   `key_press(Key::Enter)`. See `a_slots_context_menu_renames_its_clip` and
-  `an_empty_rename_field_clears_the_clips_name` (`crates/ui/tests/window.rs`, #563).
+  `an_empty_rename_field_clears_the_clips_name` (`crates/ui/tests/window/session.rs` and `arrangement.rs`, #563).
 - `drop_at` carries no modifiers. To hold one over a drop, send
   `harness.event(egui::Event::ModifiersChanged(mods))` before the drag and
   `ModifiersChanged(Modifiers::NONE)` after it, as `crates/ui/tests/browser.rs` and
@@ -90,8 +90,9 @@ it no longer does.
   binary's `every_test_file_is_a_module` test fails until it does. Run one file's tests with
   `cargo test -p suhina-ui --test main window::`; the filter is a substring match, so that also
   runs `settings_window::` tests. Add `-- --skip settings_window::` to run `window.rs` alone.
-- `crates/ui/tests/window.rs`: the whole window. `demo_app()` (the demo project),
-  `window(app)`, `window_with_step(app, step)`.
+- `crates/ui/tests/window.rs`: the whole window, one module per part of it in `window/`
+  (`arrangement`, `session`, `mixer`, `detail`, `settings` ...). `window.rs` holds the shared
+  `demo_app()` (the demo project), `window(app)`, `window_with_step(app, step)`.
 - `crates/ui/tests/browser.rs`: `pack(&folder)` builds a library (drums, a loop, a MIDI file, a
   project), `wav()`, `midi()`, `row(name)` for a row's label.
 - `crates/session/tests/launcher.rs`: commands against an offline renderer. `project()` has clips

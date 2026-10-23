@@ -21,10 +21,7 @@ fn clip(content: u32) -> Clip {
 /// Track 1 has, on the arrangement, a MIDI clip with `notes` (index 0) and an empty MIDI clip
 /// (index 1), and in scene 1 a slot with the same notes.
 fn project(notes: Vec<Note>) -> Project {
-    // Ids on its lanes, clips and scenes, as a session gives them.
-    let mut project = project_built(notes);
-    assert_eq!(project.assign_ids(), Ok(()));
-    project
+    suhina_test_support::with_ids(project_built(notes))
 }
 
 fn project_built(notes: Vec<Note>) -> Project {
