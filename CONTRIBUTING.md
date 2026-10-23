@@ -8,7 +8,8 @@
   non-commercial licences are not. CI checks every dependency's licence with `cargo-deny`
   (see [Dependencies](#dependencies)).
 - **Never crash:** non-test code must not panic and must not use `unsafe` (the only exceptions
-  are the plug-in hosting crates `ipc` and `plugin-host`, ADR 0006). Errors go through `Result`
+  are the plug-in hosting crates `ipc` and `plugin-host`, ADR 0006, and the MP3 encoder crate
+  `mp3`, ADR 0029). Errors go through `Result`
   and `?`; input-derived indices and sizes are checked. See `AGENTS.md`.
 - **Real-time safety:** code that runs on the audio thread never allocates, locks, blocks or does
   I/O. Communicate with it through lock-free queues.

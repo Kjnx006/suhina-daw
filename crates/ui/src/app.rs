@@ -7390,6 +7390,7 @@ mod tests {
             bit_depth: None,
             normalize: false,
             dither: None,
+            mp3_rate: None,
             overwrite: false,
         };
 
@@ -7447,6 +7448,7 @@ mod tests {
             bit_depth: None,
             normalize: false,
             dither: None,
+            mp3_rate: None,
             overwrite: false,
         };
 

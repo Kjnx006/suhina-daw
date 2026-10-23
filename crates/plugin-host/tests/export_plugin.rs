@@ -123,6 +123,7 @@ fn export_ratio(mut project: Project, plugins: Option<Arc<PluginEnv>>) -> (f32, 
         plugins,
         folder: None,
         trusted: Trusted::default(),
+        title: String::new(),
     };
     let path = std::env::temp_dir().join(format!("suhina-export-plugin-{}.wav", std::process::id()));
     let params = json!({ "path": path.display().to_string() });

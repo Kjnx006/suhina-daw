@@ -5041,6 +5041,46 @@ fn the_export_dialog_writes_the_wav_the_demo_names() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+#[test]
+fn a_file_named_mp3_shows_the_mp3_rate_and_exports_an_mp3() {
+    let mut harness = window(demo_app());
+    let dir = std::env::temp_dir().join(format!("suhina-export-mp3-dialog-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join("Demo mix.mp3");
+
+    harness.get_by_label("File").click();
+    harness.run();
+    harness.get_by_label("Export…").click();
+    harness.run();
+    // A wav name shows no mp3 rate.
+    assert!(harness.query_by_label_contains("MP3 rate").is_none());
+
+    // From the file name: an .mp3 name is an mp3, its rate row shows, and 48 000 stays.
+    harness.get_by_label("File to export to").click();
+    harness.key_press_modifiers(Modifiers::COMMAND, Key::A);
+    harness.get_by_label("File to export to").type_text(path.display().to_string().as_str());
+    harness.run();
+    assert!(harness.query_by_label("Sample rate 48000 Hz").is_some(), "48 000 is kept for mp3");
+    harness.get_by_label("MP3 rate 320 kbps").click();
+    harness.run();
+    harness.get_by_label("VBR V2").click();
+    harness.run();
+    assert!(harness.query_by_label("MP3 rate VBR V2").is_some(), "the rate row took the choice");
+
+    harness.get_by_label("Export the mix to the file").click();
+    waits_for_export(&mut harness);
+    assert!(
+        matches!(harness.state().status(), Status::Done(text) if text.contains("Exported")),
+        "{:?}",
+        harness.state().status()
+    );
+    // An mp3: the demo was never saved, so no ID3 header; the stream starts at a frame's sync.
+    let bytes = std::fs::read(&path).unwrap();
+    assert_eq!(bytes[0], 0xFF);
+    assert_eq!(bytes[1] & 0xE0, 0xE0);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Runs frames until the export's result is in the status (the export renders on a real
 /// worker thread); the deadline only guards against a hang, not how long a busy runner takes.
 fn waits_for_export(harness: &mut Harness<'static, App>) {

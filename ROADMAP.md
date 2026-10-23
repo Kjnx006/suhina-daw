@@ -497,7 +497,8 @@ From Live Sets we authored ourselves in Live 12.4 ([format spec](docs/spec/als-f
   themselves permission. Attached exports prepare across frames and render off the window
   thread, including exports in batches.
 - **Export:** File › Export… renders the mix to an audio file the user chose — wav (32-bit
-  float, 24 or 16 with dither), flac or ogg, at a chosen sample rate, with normalise to
+  float, 24 or 16 with dither), flac, ogg or mp3 (through the vendored LAME 3.100 encoder,
+  at 128/192/256/320 kbps or VBR V0/V2), at a chosen sample rate, with normalise to
   −0.3 dBFS and an overwrite question ([spec](docs/spec/export.md)). The same `project.export`
   command serves the MCP server and scripts, and adds a range and tail, and a source (one node
   of the track tree), which the command line reaches with `suhina-cli render --source` too. One
