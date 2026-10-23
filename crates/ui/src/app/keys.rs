@@ -114,6 +114,9 @@ impl App {
     }
 }
 
+/// Keys are the shortcuts' (Tab switches the view, the arrows move the selection): egui's own
+/// keyboard focus, which Tab and the arrows move from widget to widget, is kept to text fields.
+/// A button that held it would also make every shortcut wait, as if the user were typing.
 pub(super) fn keys_for_shortcuts(ctx: &egui::Context) {
     let focused = ctx.memory(|m| m.focused());
     let typing = focused.is_some_and(|id| egui::text_edit::TextEditState::load(ctx, id).is_some());

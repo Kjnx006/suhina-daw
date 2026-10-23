@@ -494,7 +494,7 @@ pub trait Device: Send {
     fn process(&mut self, context: &ProcessContext, buffer: &mut [f32]);
 
     /// Takes a note or a performance control, at the frame where the next [`Device::process`]
-    /// (Self::process) call starts: the host splits a block where an event falls, as it does
+    /// call starts: the host splits a block where an event falls, as it does
     /// for automation. Effects ignore events; [`reset`](Self::reset) silences every note.
     fn event(&mut self, event: NoteEvent) {
         let _ = event;

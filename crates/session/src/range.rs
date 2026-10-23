@@ -316,10 +316,10 @@ pub(crate) fn paste_to_sources(session: &mut Session, start: f64, stack: bool) -
 /// track, its content and its audio (the pool key); `None` for a clip no plug-in edits.
 type Edited = Option<(u64, usize, suhina_model::ContentId, String)>;
 
-/// `clip.moveMany {clips, beats, to_track?, tracks_by?, to_new_track?, stack?}`: moves several
+/// `clip.moveMany {clips, beats, toTrack?, tracksBy?, toNewTrack?, stack?}`: moves several
 /// arrangement clips by the same number of beats at once, so none replaces another on the way;
-/// `to_track` takes them to another track when they are all on one, `tracks_by` takes each that
-/// many tracks down (up when negative) from its own, and `to_new_track` to a new track after the
+/// `toTrack` takes them to another track when they are all on one, `tracksBy` takes each that
+/// many tracks down (up when negative) from its own, and `toNewTrack` to a new track after the
 /// last, of the clips' kind, made in the same step.
 pub(crate) fn move_clips(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let chosen = clip_list(&session.project, params)?;
@@ -328,7 +328,7 @@ pub(crate) fn move_clips(session: &mut Session, params: &Value) -> Result<Value,
     let copy = params.get("copy").and_then(Value::as_bool).unwrap_or(false);
     let by = match params.get("tracksBy") {
         None | Some(Value::Null) => None,
-        Some(v) => Some(v.as_i64().ok_or("tracks_by must be a whole number of tracks")?),
+        Some(v) => Some(v.as_i64().ok_or("tracksBy must be a whole number of tracks")?),
     };
     let new_track = params.get("toNewTrack").and_then(Value::as_bool).unwrap_or(false);
     // A clip a plug-in edits (ADR 0028), going to another track: its edits go along, the
@@ -338,7 +338,7 @@ pub(crate) fn move_clips(session: &mut Session, params: &Value) -> Result<Value,
         Some(v) => match v.as_str() {
             Some("keep") => true,
             Some("new") => false,
-            _ => return Err("ara_edits must be keep or new".into()),
+            _ => return Err("araEdits must be keep or new".into()),
         },
     };
     // Each chosen clip's plug-in that edits it (its key and device), content and audio (the
@@ -363,7 +363,7 @@ pub(crate) fn move_clips(session: &mut Session, params: &Value) -> Result<Value,
         .collect();
     if [params.get("toTrack").is_some_and(|v| !v.is_null()), by.is_some(), new_track].iter().filter(|b| **b).count() > 1
     {
-        return Err("give one of to_track, tracks_by and to_new_track".into());
+        return Err("give one of toTrack, tracksBy and toNewTrack".into());
     }
     // Each clip's track after the move, by its own: the tracks that hold clips, in the order the
     // tracks are shown (a track added after another has its lane at the end of the lanes).
@@ -409,7 +409,7 @@ pub(crate) fn move_clips(session: &mut Session, params: &Value) -> Result<Value,
         Some(_) => crate::clip_color::parse_color(params, "color")?,
     };
     if to.is_some() && !new_track && chosen.iter().any(|(track, _)| *track != chosen[0].0) {
-        return Err("to_track moves clips of one track; these are on several".into());
+        return Err("toTrack moves clips of one track; these are on several".into());
     }
     let p = &mut session.project;
     // Taken out first, the highest index of each lane first so the others keep theirs.

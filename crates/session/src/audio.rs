@@ -180,7 +180,7 @@ impl OutputChoice {
         if let Some(frames) = number("bufferFrames", MAX_BUFFER_FRAMES)? {
             if frames.is_some_and(|f| f < MIN_BUFFER_FRAMES) {
                 return Err(
-                    format!("buffer_frames must be from {MIN_BUFFER_FRAMES} to {MAX_BUFFER_FRAMES}, or 0").into()
+                    format!("bufferFrames must be from {MIN_BUFFER_FRAMES} to {MAX_BUFFER_FRAMES}, or 0").into()
                 );
             }
             next.buffer_frames = frames;

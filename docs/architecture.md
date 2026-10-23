@@ -290,7 +290,7 @@ automation layer applies its existing canonical-path validation to every allowed
 Every user-visible action is a command in `session` with an id, typed parameters and a kind
 ([ADR 0002](decisions/0002-commands.md)). The CLI, the MCP server and the UI all call
 `Session::execute(id, params)`, or `Projects::execute` when several projects are open (it runs
-`project.*` (on the open projects), `plugin.*`, `library.*`, `soundmap.*`, `audio.*` and `midi.*` itself, on what belongs to
+the `project.*` ones that list, switch and close projects, `plugin.*`, `library.*`, `soundmap.*`, `audio.*` and `midi.*` itself, on what belongs to
 Suhina rather than one project, and passes everything else to the active project); none of them changes a
 project directly.
 

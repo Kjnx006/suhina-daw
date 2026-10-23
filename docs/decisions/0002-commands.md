@@ -70,7 +70,8 @@ an engine; an engine attached later is sent the session's value
 ## Amendment: project commands (2026-10-11)
 
 With several projects open ([ADR 0007](0007-several-open-projects.md)), a fifth kind,
-**projects**, lists, switches and closes the open projects (`project.*` (on the open projects)). These run on
+**projects**, lists, switches and closes the open projects (`project.list`, `project.switch`, `project.next`,
+`project.previous`, `project.close`). These run on
 `Projects`, not on one session, never change a project and record no undo step. `CommandSpec`
 is generic over what a command runs on, so both kinds share one shape, one parameter schema and
 one `command.list`.

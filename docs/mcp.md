@@ -84,7 +84,7 @@ suhina-cli mcp --read-root ./projects --write-root ./renders [--audio]
   so transport commands aimed at another project fail.
 - **Plug-ins between commands.** The server takes in the plug-ins that started every 50 ms, as
   the window does every frame, so a project plays with them while the agent sends nothing or only
-  `project.*` (on the open projects) commands.
+  `project.*` commands that list, switch and close projects.
 - **Choosing the output.** `audio.devices` lists the audio hosts (WASAPI, and ASIO in a build
   with the `asio` feature; ALSA, JACK or CoreAudio elsewhere) and each one's output devices with
   `sample_rates`, `buffer_sizes` (what the driver allows), `buffer_range` and whether WASAPI

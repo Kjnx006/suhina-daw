@@ -76,6 +76,7 @@ impl ParamType {
             Self::Bool => "bool",
             Self::Track => "track",
             Self::Decibels => "decibels",
+            Self::AutomationValue => "automation value",
             Self::Text => "text",
             Self::Tracks => "tracks",
             Self::Texts => "texts",
@@ -107,6 +108,7 @@ impl ParamType {
             Self::Bool => "true or false",
             Self::Track => "a track id or name",
             Self::Decibels => "a number of decibels or \"-inf\"",
+            Self::AutomationValue => "a number, \"-inf\", or true or false",
             Self::Text => "a text",
             Self::Tracks => "a list of track ids or names",
             Self::Texts | Self::Path(PathKind::Files) => "a list of texts",
@@ -133,6 +135,7 @@ impl ParamType {
             Self::Track | Self::Clip | Self::DevicePath => id_or_name(value),
             Self::NameOrNumber => value.is_number() || value.is_string(),
             Self::Decibels => value.is_number() || value.is_string(),
+            Self::AutomationValue => value.is_number() || value.is_string() || value.is_boolean(),
             Self::Text
             | Self::Path(PathKind::File | PathKind::Folder | PathKind::WriteFile)
             | Self::Path(PathKind::WriteFolder | PathKind::LibraryItem | PathKind::Place) => value.is_string(),
@@ -171,6 +174,8 @@ pub enum ParamType {
     Track,
     /// A number, or the string "-inf".
     Decibels,
+    /// A number, the string "-inf", or a bool: the value of an automation point.
+    AutomationValue,
     Text,
     /// A list of tracks, each an id or a name.
     Tracks,
@@ -449,6 +454,7 @@ impl<T> CommandSpec<T> {
                 ParamType::Number => json!("number"),
                 ParamType::Integer => json!("integer"),
                 ParamType::Bool => json!("boolean"),
+                ParamType::AutomationValue => json!(["number", "string", "boolean"]),
                 ParamType::Track | ParamType::Clip | ParamType::DevicePath => json!(["integer", "string"]),
                 ParamType::Decibels | ParamType::NameOrNumber => json!(["number", "string"]),
                 ParamType::Range => json!("object"),

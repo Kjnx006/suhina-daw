@@ -251,7 +251,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
     },
     CommandSpec {
         id: "clip.moveMany",
-        label: "Move several arrangement clips by the same number of beats at once, so none replaces another on the way; to_track takes clips of one track to another, tracks_by moves each by as many tracks, to_new_track makes a track for them",
+        label: "Move several arrangement clips by the same number of beats at once, so none replaces another on the way; toTrack takes clips of one track to another, tracksBy moves each by as many tracks, toNewTrack makes a track for them",
         params: &[
             param("clips", ParamType::Clips, "the clips to move, each {track, index} from project.clips"),
             param("beats", ParamType::Number, "how far to move them, in beats; negative is earlier"),
@@ -259,12 +259,12 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
             optional(
                 "tracksBy",
                 ParamType::Integer,
-                "instead of to_track: move each that many tracks down (negative: up) from its own, among the tracks that hold clips",
+                "instead of toTrack: move each that many tracks down (negative: up) from its own, among the tracks that hold clips",
             ),
             optional(
                 "toNewTrack",
                 ParamType::Bool,
-                "instead of to_track: true makes a track of the clips' kind after the last and moves them there, in the same undo step",
+                "instead of toTrack: true makes a track of the clips' kind after the last and moves them there, in the same undo step",
             ),
             optional(
                 "araEdits",
@@ -1222,7 +1222,7 @@ fn move_slot(session: &mut Session, params: &Value) -> Result<Value, CommandErro
             v.as_u64()
                 .and_then(|n| usize::try_from(n).ok())
                 .and_then(|n| n.checked_sub(1))
-                .ok_or("to_scene must be a whole number from 1")?,
+                .ok_or("toScene must be a whole number from 1")?,
         ),
     };
 

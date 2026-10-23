@@ -47,7 +47,7 @@ there were more. ARA's first version refuses such overlaps for the clips it edit
 
 ## Moving a clip
 
-`clip.move {track, index, start, to_track?, stack?}` moves one arrangement clip to `start` (beats,
+`clip.move {track, index, start, toTrack?, stack?}` moves one arrangement clip to `start` (beats,
 at least 0), on its own track or on `toTrack`, which must take the clip's kind: a MIDI clip goes
 to a track that plays notes, an audio clip to an audio track. A clip that moves to another track
 plays through that track's instrument and effects. The move is one undo step.
@@ -101,8 +101,8 @@ as the view draws them, by the time from the earlier start to the later end, eve
 touches it (#694). Ctrl+A selects every clip
 in the arrangement. Pressing a clip that is part of the selection keeps the selection, so a drag can
 start there; pressing one that is not selects that clip alone. Dragging a clip of the selection
-moves all of it by the same beats, at once (`clip.moveMany {clips, beats, to_track?, tracks_by?,
-to_new_track?, stack?}`, one undo step, so no moved clip replaces another on the way). Dragged up
+moves all of it by the same beats, at once (`clip.moveMany {clips, beats, toTrack?, tracksBy?,
+toNewTrack?, stack?}`, one undo step, so no moved clip replaces another on the way). Dragged up
 or down, a selection on one track goes to the track under the pointer, and a selection on several
 tracks moves each clip by as many tracks from its own (`tracksBy`), refused where a clip would
 land on a track that cannot hold it. A clip an ARA plug-in (Melodyne) edits, going to another

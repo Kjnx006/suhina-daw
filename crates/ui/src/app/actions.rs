@@ -707,7 +707,6 @@ impl App {
         }
     }
 
-    /// The track selected in the view shown.
     /// Ctrl+L over a span: loops it, or, when the loop is on over that very span already, turns
     /// looping off, so the same key takes the loop away again.
     pub(super) fn loop_or_unloop(&self, start: f64, end: f64) -> Action {
@@ -806,6 +805,7 @@ impl App {
         }
     }
 
+    /// The track selected in the view shown.
     pub(super) fn selected_track(&self) -> Option<TrackId> {
         match self.shown {
             View::Session => self.view.selected,
@@ -823,6 +823,7 @@ pub(super) fn mapping_target(p: &serde_json::Value) -> String {
     }
 }
 
+/// What the status bar says after a command ran, or nothing for silent ones.
 pub(super) fn describe(action: &Action) -> Option<String> {
     let p = &action.params;
     Some(match action.id {

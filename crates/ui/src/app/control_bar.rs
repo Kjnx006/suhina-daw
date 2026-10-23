@@ -371,7 +371,6 @@ impl App {
     }
 }
 
-/// What the status bar says after a command ran, or nothing for silent ones.
 /// The control bar's value box, as screen readers and tests name it.
 pub(super) const QUANTIZATION_LABEL: &str = "Grid and launch quantisation";
 

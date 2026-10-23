@@ -253,11 +253,11 @@ fn an_mp3_export_refuses_what_does_not_apply() {
     assert!(error.contains("96000 is not one the encoder writes"), "{error}");
     // A depth mp3 does not take.
     let error = run(&mut session, json!({ "path": path.display().to_string(), "bitDepth": "16" })).unwrap_err();
-    assert_eq!(error, "bit_depth does not apply to mp3");
+    assert_eq!(error, "bitDepth does not apply to mp3");
     // The mp3 rate goes with mp3 only.
     let wav = temp_file("mp3-no", "wav");
     let error = run(&mut session, json!({ "path": wav.display().to_string(), "mp3Rate": "320" })).unwrap_err();
-    assert_eq!(error, "mp3_rate goes with mp3");
+    assert_eq!(error, "mp3Rate goes with mp3");
     // An unknown rate name.
     let error = run(&mut session, json!({ "path": path.display().to_string(), "mp3Rate": "v9" })).unwrap_err();
     assert_eq!(error, "v9 is not an mp3 rate; 128, 192, 256, 320, v0 or v2");

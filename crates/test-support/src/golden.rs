@@ -34,7 +34,10 @@ pub fn assert_golden_f32(path: &Path, render: &[f32], tolerance: f32) {
     let (at, worst) = render
         .iter()
         .zip(&golden)
-        .map(|(a, b)| (a - b).abs())
+        .map(|(a, b)| {
+            let d = (a - b).abs();
+            if d.is_nan() { f32::INFINITY } else { d }
+        })
         .enumerate()
         .fold((0, 0.0f32), |m, d| if d.1 > m.1 { d } else { m });
     assert!(worst < tolerance, "{name}: differs from the golden file by {worst} at sample {at}");

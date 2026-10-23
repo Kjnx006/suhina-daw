@@ -50,7 +50,7 @@ controls here are Suhina's own.
 One command carries the whole feature, per ADR 0002, so the app, `suhina-cli` and the MCP server
 all export the same way:
 
-> `project.export {path|output, format?, sample_rate?, bit_depth?, mp3_rate?, overwrite?, range?, tail?, normalize?, dither?}`
+> `project.export {path|output, format?, sampleRate?, bitDepth?, mp3Rate?, overwrite?, range?, tail?, normalize?, dither?}`
 
 It renders the active project's arrangement with the same offline render the playback engine and
 `suhina-cli render` use (AGENTS.md rule 4), with the project's plug-ins started as

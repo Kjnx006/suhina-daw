@@ -32,7 +32,7 @@ Suhina (October 2026) the extension followed: files are `.suhina` from 2026-10-1
 
 ## Decision
 
-1. **The file is JSON**, extension `.suhina`: `{ "format": "suhina", "version": 1, "project": … }`.
+1. **The file is JSON**, extension `.suhina`: `{ "format": "suhina", "version": 3, "project": … }`.
    JSON over XML or a binary format because people and agents can read and diff it, the
    workspace already uses `serde_json` (keymap, themes, MCP), and the model is plain data.
    The layout is in [the spec](../spec/suhina-format.md).

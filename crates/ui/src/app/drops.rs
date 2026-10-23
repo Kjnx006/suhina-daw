@@ -677,6 +677,8 @@ impl App {
     }
 }
 
+/// Darkens the view while a project file is dragged over the window, so it is clear the window
+/// takes the drop.
 pub(super) fn drop_overlay(ui: &Ui, area: Rect) {
     let is = |f: &egui::HoveredFile, ext: &str| {
         f.path.as_ref().is_none_or(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case(ext)))

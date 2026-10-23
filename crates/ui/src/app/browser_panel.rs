@@ -316,11 +316,6 @@ impl App {
     }
 }
 
-/// Darkens the view while a project file is dragged over the window, so it is clear the window
-/// takes the drop.
-/// Keys are the shortcuts' (Tab switches the view, the arrows move the selection): egui's own
-/// keyboard focus, which Tab and the arrows move from widget to widget, is kept to text fields.
-/// A button that held it would also make every shortcut wait, as if the user were typing.
 /// The sample map's own window when nothing says where it was, in points.
 pub(super) const MAP_WINDOW_SIZE: [f32; 2] = [900.0, 640.0];
 

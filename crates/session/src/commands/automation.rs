@@ -16,7 +16,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
             param("beat", ParamType::Number, "arrangement beat, from 0; a second point at one beat makes a jump"),
             param(
                 "value",
-                ParamType::Number,
+                ParamType::AutomationValue,
                 "value in the unit the parameter's set command takes: volume in dB (at most +6; below -150 is silence), pan -1 to 1, mute 0 or 1, a device's as device.setParam",
             ),
             CURVE,
@@ -34,7 +34,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
             AUTOMATED,
             POINT,
             optional("beat", ParamType::Number, "new arrangement beat"),
-            optional("value", ParamType::Number, "new value, as for automation.addPoint"),
+            optional("value", ParamType::AutomationValue, "new value, as for automation.addPoint"),
             CURVE,
         ],
         kind: CommandKind::Edit,
