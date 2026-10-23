@@ -814,6 +814,12 @@ impl Session {
         self.plugins.sync(&self.project, &self.audio, self.player.as_mut())
     }
 
+    /// How often the state of each running plug-in is read for backups and the unsaved-changes
+    /// check (every 30 seconds unless set). For tests, which need not wait that long.
+    pub fn set_plugin_read_interval(&mut self, every: std::time::Duration) {
+        self.plugins.set_save_every(every);
+    }
+
     /// The plug-ins (by spec) found to edit clips over ARA since the last call although the
     /// catalog did not say so ([`Rack::take_ara_learned`](crate::rack::Rack::take_ara_learned)).
     pub fn take_ara_learned(&mut self) -> Vec<String> {

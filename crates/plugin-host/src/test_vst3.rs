@@ -59,9 +59,6 @@ fn copy_text(text: &str, field: &mut [c_char]) {
     }
 }
 
-/// Whether the processor has been asked for audio, for the state-read responder.
-static PROCESSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
 struct Processor {
     gain: Arc<AtomicU32>,
     latency: AtomicU32,
@@ -143,17 +140,17 @@ impl IComponentTrait for Processor {
     }
 
     unsafe fn getState(&self, state: *mut IBStream) -> tresult {
-        // A test's controlled state-read responder: a host asked to delay its state reply does
-        // so once per process, so a test can hold a reply out over a switch or a cancel
-        // deterministically, without short sleeps of its own. The delay waits for the first read
-        // after audio has played: the read every start makes, before any audio, would take it.
-        static ONCE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-        let delay = std::env::var("SUHINA_TEST_PLUGIN_SAVE_DELAY_MS").ok().and_then(|v| v.parse::<u64>().ok());
-        if let Some(ms) = delay
-            && PROCESSED.load(Ordering::Acquire)
-            && ONCE.compare_exchange(0, 1, Ordering::Relaxed, Ordering::Relaxed).is_ok()
-        {
-            std::thread::sleep(std::time::Duration::from_millis(ms));
+        // A test's controlled state-read responder: while the file the host's
+        // `SUHINA_TEST_PLUGIN_STATE_GATE` names exists, a state read holds its reply, so a test
+        // can keep a read out over a deadline or a cancel for exactly as long as it needs,
+        // whatever the machine's load, and let it go by removing the file. A forgotten gate
+        // holds a read ten seconds at most.
+        if let Some(gate) = std::env::var_os("SUHINA_TEST_PLUGIN_STATE_GATE") {
+            let gate = std::path::Path::new(&gate);
+            let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while gate.exists() && std::time::Instant::now() < until {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
         }
         // SAFETY: as in `setState`.
         let Some(stream) = (unsafe { ComRef::from_raw(state) }) else { return kInvalidArgument };
@@ -204,7 +201,6 @@ impl IAudioProcessorTrait for Processor {
     }
 
     unsafe fn process(&self, data: *mut ProcessData) -> tresult {
-        PROCESSED.store(true, Ordering::Release);
         // SAFETY: the host passes its process data for the call.
         let Some(data) = (unsafe { data.as_ref() }) else { return kInvalidArgument };
         if data.numInputs < 1 || data.numOutputs < 1 {

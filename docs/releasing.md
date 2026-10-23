@@ -3,7 +3,7 @@ description: How versions are numbered, how release builds, the nightly and test
 read_when: release, version, release candidate, tag, binaries, release workflow, nightly, past nightlies, development build, download, test build, pull request build, try a pull request, merge queue, merge group, ready to merge label, auto-merge, update branch, merging many pull requests, batch build, Discord announcement, Discord bot, testing forum, merged thread, release notes, changelog
 type: howto
 status: current
-last_verified: 2026-10-22
+last_verified: 2026-10-23
 covers:
   - .github/workflows/ci.yml
   - .github/workflows/release.yml
@@ -212,6 +212,11 @@ any `.md`, `LICENSE`, `NOTICE`), a script under `scripts/` or a file under `.git
 build or test reads them. A change to `ci.yml` itself still runs every job. The `docs` job runs on
 every change, so the script tests and the tests of the claim bot and the Depends on check still run; in the Actions tab the
 skipped jobs show as skipped and `ci` passes.
+
+**The build cache.** Only `main` saves `ci.yml`'s Rust cache; pull requests and the merge queue
+restore `main`'s. The repository's caches share GitHub's 10 GB, and when every pull request push
+saved its own (about 0.8 GB per system), `main`'s were evicted and about half the runs compiled
+every dependency again: 11 to 12 minutes of compiling on Linux instead of 3½ to 4½.
 
 The queue is a setting, not code: Settings › Rules (or Branches) › the rule for `main` › **Require
 merge queue**, with the merge method used today, a group size of about 5 and *Only merge
