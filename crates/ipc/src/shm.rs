@@ -8,7 +8,9 @@
 //!   namespace. The address is its name; the host opens it by name. Nothing is written to a
 //!   folder.
 //! - Linux: a `memfd` (memory with no name in any folder). The address is
-//!   `/proc/<engine pid>/fd/<n>`, which the host opens as a path while the engine holds it.
+//!   `/proc/<engine pid>/fd/<n>#<token>`: the host opens the path while the engine holds it,
+//!   and the token, which is in the memfd's name, tells that memfd from another that gets the
+//!   same descriptor number later.
 //! - macOS and other Unix systems: a file in the temporary folder, named after its process and
 //!   that process's start time. The engine removes its name when the host has opened it
 //!   ([`Shared::unlink`]) or when it lets go of it; a file that a crash left before then is
@@ -274,7 +276,11 @@ mod linux {
     use crate::IpcError;
 
     pub(super) fn create(kind: &str, len: usize) -> Result<Shared, IpcError> {
-        let label = std::ffi::CString::new(format!("suhina-{kind}"))
+        // The token makes this memfd tell itself from any other that later gets the same
+        // descriptor number: the address carries it and `open` checks it on the file.
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.subsec_nanos());
+        let token = format!("{:x}x{nanos:x}", next());
+        let label = std::ffi::CString::new(format!("suhina-{kind}-{token}"))
             .map_err(|_| IpcError::BadLink("not a shared memory kind"))?;
         // SAFETY: a NUL-terminated name that outlives the call. The descriptor is closed on
         // exec, so the host process does not inherit it: it opens it by its `/proc` path.
@@ -287,24 +293,36 @@ mod linux {
         file.set_len(len as u64)?;
         let map = memmap2::MmapOptions::new().map_raw(&file)?;
         let (pid, n) = (std::process::id(), file.as_raw_fd());
-        let address = format!("/proc/{pid}/fd/{n}");
-        let name = format!("suhina-{kind}-{pid}-{n}-{}", next());
+        let address = format!("/proc/{pid}/fd/{n}#{token}");
+        let name = format!("suhina-{kind}-{pid}-{n}-{token}");
         Ok(Shared { map, address, name, _file: Some(file) })
     }
 
     pub(super) fn open(kind: &str, address: &str, access: Access) -> Result<Shared, IpcError> {
-        let numbers = address.strip_prefix("/proc/").and_then(|rest| rest.split_once("/fd/"));
+        let parts = address
+            .strip_prefix("/proc/")
+            .and_then(|rest| rest.split_once("/fd/"))
+            .and_then(|(pid, rest)| rest.split_once('#').map(|(n, token)| (pid, n, token)));
         let digits = |s: &str| !s.is_empty() && s.len() <= 10 && s.bytes().all(|b| b.is_ascii_digit());
-        let Some((pid, n)) = numbers.filter(|(pid, n)| digits(pid) && digits(n)) else {
+        let token_ok =
+            |s: &str| !s.is_empty() && s.len() <= 32 && s.bytes().all(|b| b.is_ascii_hexdigit() || b == b'x');
+        let Some((pid, n, token)) = parts.filter(|(pid, n, token)| digits(pid) && digits(n) && token_ok(token)) else {
             return Err(IpcError::BadLink("not a Suhina shared memory address"));
         };
-        // What the descriptor is: a memfd made for this kind reads `/memfd:suhina-<kind> (deleted)`.
-        let target = std::fs::read_link(address)?;
-        let expected = format!("/memfd:suhina-{kind} ");
-        if !target.to_str().is_some_and(|t| t.starts_with(&expected)) {
-            return Err(IpcError::BadLink("not a Suhina shared memory"));
+        let path = format!("/proc/{pid}/fd/{n}");
+        // What the descriptor is: the memfd made for this kind and this token reads
+        // `/memfd:suhina-<kind>-<token> (deleted)`. A descriptor number that was closed and
+        // reused by another region fails here instead of mapping that region.
+        let target = std::fs::read_link(&path)?;
+        let expected = format!("/memfd:suhina-{kind}-{token} (deleted)");
+        if target.to_str() != Some(expected.as_str()) {
+            return Err(IpcError::BadLink("not that Suhina shared memory"));
         }
-        let file = OpenOptions::new().read(true).write(access == Access::ReadWrite).open(address)?;
+        let file = OpenOptions::new().read(true).write(access == Access::ReadWrite).open(&path)?;
+        // The descriptor could have been replaced between the check and the open.
+        if std::fs::read_link(&path)?.to_str() != Some(expected.as_str()) {
+            return Err(IpcError::BadLink("not that Suhina shared memory"));
+        }
         if file.metadata()?.len() == 0 {
             return Err(IpcError::BadLink("empty shared memory"));
         }
@@ -312,7 +330,7 @@ mod linux {
             Access::ReadWrite => memmap2::MmapOptions::new().map_raw(&file)?,
             Access::Read => memmap2::MmapOptions::new().map_raw_read_only(&file)?,
         };
-        let name = format!("suhina-{kind}-{pid}-{n}");
+        let name = format!("suhina-{kind}-{pid}-{n}-{token}");
         Ok(Shared { map, address: address.to_string(), name, _file: None })
     }
 }

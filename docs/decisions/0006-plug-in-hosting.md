@@ -163,9 +163,10 @@ workspace forbids.
        (`suhina-ara-…` for a source) in the session's namespace, like the doorbells. The address
        is the name; the host opens it with `OpenFileMappingW`. Nothing is written to `%TEMP%`.
      - *Linux:* a `memfd` (`memfd_create`, closed on exec). The address is
-       `/proc/<engine pid>/fd/<n>`, which the host opens as a path while the engine holds it; the
-       host checks that the path is a memfd of the right kind (`/memfd:suhina-ipc`). Nothing is
-       written to `/dev/shm`.
+       `/proc/<engine pid>/fd/<n>#<token>`, which the host opens as a path while the engine holds
+       it; the token is part of the memfd's name, and the host checks that the path is exactly
+       the memfd `/memfd:suhina-<kind>-<token>`, so a descriptor number the engine closed and
+       reused for another region never opens as the old one. Nothing is written to `/dev/shm`.
      - *macOS (and other Unix systems):* a file in the temporary folder,
        `suhina-ipc-<pid>@<start>-<n>`, where `<start>` is the process's start time. A link's file
        loses its name as soon as the host has answered the load that named it (the host never

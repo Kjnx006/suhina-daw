@@ -154,6 +154,8 @@ fn opening_something_else_fails_cleanly() {
         "Local\\suhina-ipc-1-2-3".to_string(),
         format!("/proc/{own}/fd/0"),
         format!("/proc/{own}/fd/99999"),
+        format!("/proc/{own}/fd/0#0"),
+        format!("/proc/{own}/fd/0#"),
         "/proc/self/fd/0".to_string(),
         String::new(),
     ] {
@@ -169,7 +171,8 @@ fn the_region_goes_with_the_link() {
     // On Linux the address is the engine's descriptor under /proc, which exists while it holds
     // it: no file in /dev/shm. On Windows it is a mapping's name, no file at all.
     if cfg!(target_os = "linux") {
-        assert!(address.starts_with("/proc/") && std::path::Path::new(&address).exists(), "{address}");
+        let path = address.split('#').next().unwrap_or_default();
+        assert!(address.starts_with("/proc/") && std::path::Path::new(path).exists(), "{address}");
     } else {
         assert_eq!(std::path::Path::new(&address).exists(), file, "{address}");
     }
@@ -180,6 +183,31 @@ fn the_region_goes_with_the_link() {
     }
     if file {
         assert!(!std::path::Path::new(&address).exists());
+    }
+}
+
+/// A descriptor number that is closed and taken by another region must not open as the old one
+/// (a host that opens late, after the engine gave up on its load).
+#[test]
+#[cfg(target_os = "linux")]
+fn a_reused_descriptor_number_does_not_open_the_old_address() {
+    let first = Link::create(2, 64).unwrap_or_else(|e| panic!("{e}"));
+    let old = first.address();
+    let number = old.split("/fd/").nth(1).and_then(|r| r.split('#').next()).map(str::to_string);
+    drop(first);
+    // Make links until one has the number the first had (usually the very next).
+    let mut keep = Vec::new();
+    for _ in 0..64 {
+        let link = Link::create(2, 64).unwrap_or_else(|e| panic!("{e}"));
+        let same = link.address().split("/fd/").nth(1).and_then(|r| r.split('#').next()).map(str::to_string) == number;
+        keep.push(link);
+        if same {
+            break;
+        }
+    }
+    assert!(matches!(Served::open(&old), Err(IpcError::BadLink(_))), "{old}");
+    for link in &keep {
+        assert!(Served::open(&link.address()).is_ok());
     }
 }
 
