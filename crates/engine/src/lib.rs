@@ -204,7 +204,7 @@ pub enum RenderError {
     TooLong {
         seconds: f64,
     },
-    /// The source of a node render ([`Renderer::with_node_source`]) is not a track of the
+    /// The source of a node render ([`RenderOptions::source`]) is not a track of the
     /// project with a channel.
     UnknownSource(TrackId),
 }
@@ -314,7 +314,7 @@ struct ArrangedAudio {
 /// A source render's capture: the chain whose output the render reads, which chains are inside
 /// the source node's subtree (the returns it sends to are not), and the block buffer the
 /// source chain's output is mixed into. The offline render copies `buffer` over each block it
-/// renders ([`Renderer::with_node_source`]).
+/// renders ([`RenderOptions::source`]).
 struct GraphCapture {
     chain: usize,
     keep: Vec<bool>,
@@ -345,7 +345,7 @@ pub(crate) struct Graph {
     loop_beats: Option<(f64, f64)>,
     /// Device chains of the tracks that have devices (ADR 0004).
     chains: Vec<Chain>,
-    /// The source render's capture, when the graph was built for one ([`Renderer::with_node_source`]).
+    /// The source render's capture, when the graph was built for one ([`RenderOptions::source`]).
     capture: Option<GraphCapture>,
     /// Every track's bus and the gains its sources are mixed at (muted tracks at zero), so
     /// sounding voices follow an edit to their track's mix.
@@ -426,79 +426,75 @@ pub struct Renderer {
     follow_loop: bool,
 }
 
+/// What a render plays besides the project (#764 › 3): the decoded audio its clips name, the
+/// parsed models and IRs its file-backed devices run ([docs/spec/nam-amp-and-cab.md]), and its
+/// running plug-ins (ADR 0006). Empty by default: notes and built-in devices only.
+#[derive(Default)]
+pub struct RenderInputs {
+    pub audio: AudioPool,
+    pub assets: DeviceAssets,
+    pub plugins: Plugins,
+}
+
+impl RenderInputs {
+    /// Inputs that play the audio clips whose files are in `audio`.
+    pub fn from_audio(audio: &AudioPool) -> Self {
+        Self { audio: audio.clone(), ..Self::default() }
+    }
+
+    /// These inputs, with the file-backed devices running what `assets` holds.
+    pub fn with_assets(self, assets: &DeviceAssets) -> Self {
+        Self { assets: assets.clone(), ..self }
+    }
+
+    /// These inputs, with plug-in devices running in `plugins`.
+    pub fn with_plugins(self, plugins: Plugins) -> Self {
+        Self { plugins, ..self }
+    }
+}
+
+/// How a [`Renderer`] starts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RenderOptions {
+    /// The transport is stopped: silent until it receives [`LaunchCommand::Play`] or a launch.
+    pub stopped: bool,
+    /// One node of the track tree to render instead of the whole mix: a track or a group track,
+    /// whose output is the sum at that node, everything that plays into it and its own devices,
+    /// and nothing after it (its own volume, pan and mute are in; its groups' and the master's
+    /// faders are not). The graph is the one playback builds, with the node a bus for its subtree
+    /// and a chain of its own even without devices, so latency compensation is unchanged: a node
+    /// render lines up with the whole mix and with the other nodes' renders.
+    pub source: Option<TrackId>,
+}
+
+impl RenderOptions {
+    /// Playing from the start, the whole mix.
+    pub const PLAYING: Self = Self { stopped: false, source: None };
+    /// With the transport stopped, the whole mix.
+    pub const STOPPED: Self = Self { stopped: true, source: None };
+}
+
 impl Renderer {
-    /// A renderer for the project's notes; audio clips stay silent. See [`Renderer::with_audio`].
+    /// A renderer for the project's notes; audio clips stay silent. See [`Renderer::build`].
     pub fn new(project: &Project, sample_rate: u32) -> Result<Self, RenderError> {
-        Self::with_audio(project, &AudioPool::new(), sample_rate)
+        Self::build(project, RenderInputs::default(), sample_rate, RenderOptions::PLAYING)
     }
 
-    /// A renderer that also plays audio clips whose files are in `audio`.
-    pub fn with_audio(project: &Project, audio: &AudioPool, sample_rate: u32) -> Result<Self, RenderError> {
-        Self::with_assets(project, audio, &DeviceAssets::new(), sample_rate)
+    /// A renderer whose transport is stopped, playing the audio clips whose files are in `audio`.
+    pub fn stopped(project: &Project, audio: &AudioPool, sample_rate: u32) -> Result<Self, RenderError> {
+        Self::build(project, RenderInputs::from_audio(audio), sample_rate, RenderOptions::STOPPED)
     }
 
-    /// A renderer whose file-backed devices run the parsed models and decoded IRs `assets`
-    /// holds, by each device's stored path ([docs/spec/nam-amp-and-cab.md]).
-    pub fn with_assets(
+    /// A renderer for `project` that plays what `inputs` holds, started as `options` say.
+    pub fn build(
         project: &Project,
-        audio: &AudioPool,
-        assets: &DeviceAssets,
+        inputs: RenderInputs,
         sample_rate: u32,
+        options: RenderOptions,
     ) -> Result<Self, RenderError> {
-        Self::with_assets_plugins(project, audio, assets, sample_rate, Plugins::new())
-    }
-
-    /// A renderer whose plug-in devices run in the processors `plugins` holds (ADR 0006).
-    pub fn with_plugins(
-        project: &Project,
-        audio: &AudioPool,
-        sample_rate: u32,
-        plugins: Plugins,
-    ) -> Result<Self, RenderError> {
-        Self::with_assets_plugins(project, audio, &DeviceAssets::new(), sample_rate, plugins)
-    }
-
-    /// A renderer whose plug-in devices run in the processors `plugins` holds, and whose
-    /// file-backed devices run the parsed models and decoded IRs `assets` holds, by each
-    /// device's stored path ([docs/spec/nam-amp-and-cab.md]).
-    pub fn with_assets_plugins(
-        project: &Project,
-        audio: &AudioPool,
-        assets: &DeviceAssets,
-        sample_rate: u32,
-        plugins: Plugins,
-    ) -> Result<Self, RenderError> {
-        Self::build_with_source(project, audio, assets, sample_rate, plugins, None)
-    }
-
-    /// [`Renderer::with_assets_plugins`] rendering one node of the track tree instead of the
-    /// whole mix: the source is a track or a group track, and `process` fills its output with
-    /// the sum at that node — everything that plays into it and the node's own devices, and
-    /// nothing after it (the node's own volume, pan and mute are in; its groups' and the
-    /// master's faders are not). The graph is the one playback builds, with the node a bus for
-    /// its subtree and a chain of its own even without devices, so latency compensation is
-    /// unchanged: a node render lines up with the whole mix and with the other nodes' renders.
-    pub fn with_node_source(
-        project: &Project,
-        audio: &AudioPool,
-        assets: &DeviceAssets,
-        sample_rate: u32,
-        plugins: Plugins,
-        source: TrackId,
-    ) -> Result<Self, RenderError> {
-        Self::build_with_source(project, audio, assets, sample_rate, plugins, Some(source))
-    }
-
-    fn build_with_source(
-        project: &Project,
-        audio: &AudioPool,
-        assets: &DeviceAssets,
-        sample_rate: u32,
-        mut plugins: Plugins,
-        source: Option<TrackId>,
-    ) -> Result<Self, RenderError> {
-        let graph = Graph::build(project, audio, assets, sample_rate, &mut plugins, source)?;
-        graph.launcher.monitor.running.store(true, std::sync::atomic::Ordering::Relaxed);
+        let RenderInputs { audio, assets, mut plugins } = inputs;
+        let graph = Graph::build(project, &audio, &assets, sample_rate, &mut plugins, options.source)?;
+        graph.launcher.monitor.running.store(!options.stopped, std::sync::atomic::Ordering::Relaxed);
         let mut meters = meters::MeterWriter::new(sample_rate);
         meters.assign(graph.levels.tracks());
         graph
@@ -522,9 +518,9 @@ impl Renderer {
             origin: 0,
             time_at_origin: 0,
             start_beat: 0.0,
-            running: true,
-            audio: Arc::new(audio.clone()),
-            assets: Arc::new(assets.clone()),
+            running: !options.stopped,
+            audio: Arc::new(audio),
+            assets: Arc::new(assets),
             swap: swap::SwapState::default(),
             underruns_before: 0,
             metronome: metronome::Metronome::new(sample_rate),
@@ -542,39 +538,6 @@ impl Renderer {
             meters,
             follow_loop: true,
         })
-    }
-
-    /// A renderer whose transport is stopped: silent until it receives [`LaunchCommand::Play`]
-    /// or a launch.
-    pub fn stopped(project: &Project, audio: &AudioPool, sample_rate: u32) -> Result<Self, RenderError> {
-        Self::stopped_with_plugins(project, audio, sample_rate, Plugins::new())
-    }
-
-    /// [`Renderer::stopped`] with plug-in devices running in `plugins`.
-    pub fn stopped_with_plugins(
-        project: &Project,
-        audio: &AudioPool,
-        sample_rate: u32,
-        plugins: Plugins,
-    ) -> Result<Self, RenderError> {
-        let mut renderer = Self::with_plugins(project, audio, sample_rate, plugins)?;
-        renderer.running = false;
-        renderer.graph.launcher.monitor.running.store(false, std::sync::atomic::Ordering::Relaxed);
-        Ok(renderer)
-    }
-
-    /// [`Renderer::with_assets`], with the transport stopped.
-    pub fn stopped_with_assets(
-        project: &Project,
-        audio: &AudioPool,
-        assets: &DeviceAssets,
-        sample_rate: u32,
-        plugins: Plugins,
-    ) -> Result<Self, RenderError> {
-        let mut renderer = Self::with_assets_plugins(project, audio, assets, sample_rate, plugins)?;
-        renderer.running = false;
-        renderer.graph.launcher.monitor.running.store(false, std::sync::atomic::Ordering::Relaxed);
-        Ok(renderer)
     }
 
     pub fn sample_rate(&self) -> u32 {
@@ -595,7 +558,7 @@ impl Renderer {
 
     /// Ends the renderer and gives back its plug-in devices' processors, with what is known
     /// about each, so another renderer (a new audio output at the same sample rate) can be built
-    /// with them ([`Renderer::stopped_with_plugins`]) and the plug-ins keep running. Call it
+    /// with them ([`Renderer::build`] with [`RenderOptions::STOPPED`]) and the plug-ins keep running. Call it
     /// once the renderer no longer runs on the audio thread: it frees what the graph holds.
     pub fn into_plugins(mut self) -> Plugins {
         let mut taken = swap::Taken::default();
@@ -1250,7 +1213,7 @@ impl Graph {
     /// Builds the graph for `project`: validates it and prepares every event and voice. Allocates;
     /// call it off the audio thread. The file-backed devices' files come from `assets`. With
     /// `source`, the graph is built for a source render: the node has a chain even without
-    /// devices ([`Renderer::with_node_source`]).
+    /// devices ([`RenderOptions::source`]).
     pub(crate) fn build(
         project: &Project,
         audio: &AudioPool,
@@ -1535,81 +1498,58 @@ fn split_cue(cue: Option<&mut [f32]>, at: usize) -> (Option<&mut [f32]>, Option<
 }
 
 /// Renders the whole arrangement offline into interleaved stereo, `block_frames` at a time.
-/// Audio clips stay silent; see [`render_offline_with_audio`].
+/// Audio clips stay silent; see [`render_offline_from`].
 pub fn render_offline(project: &Project, sample_rate: u32, block_frames: usize) -> Result<Vec<f32>, RenderError> {
-    render_offline_with_audio(project, &AudioPool::new(), sample_rate, block_frames)
+    render_offline_from(project, RenderInputs::default(), sample_rate, block_frames, None)
 }
 
-/// Like [`render_offline`], playing audio clips whose files are in `audio`.
-pub fn render_offline_with_audio(
+/// Renders the whole arrangement offline into interleaved stereo, `block_frames` at a time,
+/// playing what `inputs` holds: the same `process` as playback, waiting for each plug-in instead
+/// of a real-time deadline. With `source`, the mix at that node of the track tree
+/// ([`RenderOptions::source`]); the same length as the whole mix's render, so renders line up.
+pub fn render_offline_from(
     project: &Project,
-    audio: &AudioPool,
+    inputs: RenderInputs,
     sample_rate: u32,
     block_frames: usize,
+    source: Option<TrackId>,
 ) -> Result<Vec<f32>, RenderError> {
-    render_offline_with_plugins(project, audio, sample_rate, block_frames, Plugins::new())
-}
-
-/// Like [`render_offline_with_audio`], with plug-in devices running in `plugins`.
-pub fn render_offline_with_plugins(
-    project: &Project,
-    audio: &AudioPool,
-    sample_rate: u32,
-    block_frames: usize,
-    plugins: Plugins,
-) -> Result<Vec<f32>, RenderError> {
-    render_offline_with_assets(project, audio, &DeviceAssets::new(), sample_rate, block_frames, plugins)
-}
-
-/// A renderer whose file-backed devices run the parsed models and decoded IRs `assets` holds,
-/// and whose plug-in devices run in the processors `plugins`. The same `process` as playback,
-/// waiting for each plug-in instead of a real-time deadline.
-pub fn render_offline_with_assets(
-    project: &Project,
-    audio: &AudioPool,
-    assets: &DeviceAssets,
-    sample_rate: u32,
-    block_frames: usize,
-    plugins: Plugins,
-) -> Result<Vec<f32>, RenderError> {
-    let mut renderer = Renderer::with_assets_plugins(project, audio, assets, sample_rate, plugins)?;
+    let mut renderer =
+        Renderer::build(project, inputs, sample_rate, RenderOptions { source, ..RenderOptions::PLAYING })?;
     renderer.set_offline(true);
     // The whole arrangement, once: a render does not repeat the loop region.
     renderer.set_follow_loop(false);
-    let total = usize::try_from(renderer.length())
-        .ok()
-        .and_then(|frames| frames.checked_mul(2))
-        .ok_or(RenderError::TooLong { seconds: renderer.length() as f64 / f64::from(sample_rate) })?;
-    let mut out = vec![0.0f32; total];
+    let mut out = vec![0.0f32; offline_length(&renderer)?];
     for block in out.chunks_mut(block_frames.max(1).saturating_mul(2)) {
         renderer.process(block);
     }
     Ok(out)
 }
 
-/// Renders the whole arrangement offline like [`render_offline_with_plugins`], and the cue bus
-/// beside it: the main mix and the cue, both interleaved stereo of the same length. `cue_gain`
-/// is the cue volume (linear) and `separate` whether the cue has outputs of its own (then the
-/// preview is heard only on the cue, as on the device). The file-backed devices run what
-/// `assets` holds ([docs/spec/nam-amp-and-cab.md]).
-#[allow(clippy::too_many_arguments)]
+/// Samples (interleaved stereo) of a render of the whole arrangement.
+fn offline_length(renderer: &Renderer) -> Result<usize, RenderError> {
+    usize::try_from(renderer.length())
+        .ok()
+        .and_then(|frames| frames.checked_mul(2))
+        .ok_or(RenderError::TooLong { seconds: renderer.length() as f64 / f64::from(renderer.sample_rate()) })
+}
+
+/// Renders the whole arrangement offline like [`render_offline_from`], and the cue bus beside
+/// it: the main mix and the cue, both interleaved stereo of the same length. `cue_gain` is the
+/// cue volume (linear) and `separate` whether the cue has outputs of its own (then the preview is
+/// heard only on the cue, as on the device).
 pub fn render_offline_with_cue(
     project: &Project,
-    audio: &AudioPool,
-    assets: &DeviceAssets,
+    inputs: RenderInputs,
     sample_rate: u32,
     block_frames: usize,
-    plugins: Plugins,
     cue_gain: f32,
     separate: bool,
 ) -> Result<(Vec<f32>, Vec<f32>), RenderError> {
-    let mut renderer = Renderer::with_assets_plugins(project, audio, assets, sample_rate, plugins)?;
+    let mut renderer = Renderer::build(project, inputs, sample_rate, RenderOptions::PLAYING)?;
     renderer.set_offline(true);
     renderer.handle(LaunchCommand::SetCue { gain: Some(cue_gain), separate: Some(separate) });
-    let total = usize::try_from(renderer.length())
-        .ok()
-        .and_then(|frames| frames.checked_mul(2))
-        .ok_or(RenderError::TooLong { seconds: renderer.length() as f64 / f64::from(sample_rate) })?;
+    let total = offline_length(&renderer)?;
     let mut out = vec![0.0f32; total];
     let mut cue = vec![0.0f32; total];
     let block = block_frames.max(1).saturating_mul(2);
@@ -1619,40 +1559,9 @@ pub fn render_offline_with_cue(
     Ok((out, cue))
 }
 
-/// Renders the mix of one node of the track tree — `source`, a track or a group track — with
-/// the same offline render the whole mix uses ([`render_offline_with_assets`]): the graph is
-/// the one playback builds, with the node a bus for its subtree and a chain of its own even
-/// without devices, and the output is the sum at the node, nothing after it (the node's own
-/// volume, pan and mute are in; its groups' and the master's faders are not). The same length
-/// as the whole mix's render, so node renders line up with it and with each other.
-#[allow(clippy::too_many_arguments)]
-pub fn render_offline_node(
-    project: &Project,
-    audio: &AudioPool,
-    assets: &DeviceAssets,
-    sample_rate: u32,
-    block_frames: usize,
-    plugins: Plugins,
-    source: TrackId,
-) -> Result<Vec<f32>, RenderError> {
-    let mut renderer = Renderer::with_node_source(project, audio, assets, sample_rate, plugins, source)?;
-    renderer.set_offline(true);
-    // The whole arrangement, once: a render does not repeat the loop region.
-    renderer.set_follow_loop(false);
-    let total = usize::try_from(renderer.length())
-        .ok()
-        .and_then(|frames| frames.checked_mul(2))
-        .ok_or(RenderError::TooLong { seconds: renderer.length() as f64 / f64::from(sample_rate) })?;
-    let mut out = vec![0.0f32; total];
-    for block in out.chunks_mut(block_frames.max(1).saturating_mul(2)) {
-        renderer.process(block);
-    }
-    Ok(out)
-}
-
 /// Renders `seconds` of the project offline, starting with the transport stopped and applying
-/// each launch command at its time in seconds (in order). This is the same path a live
-/// [`Controller`] drives, so launcher behaviour renders offline exactly as it plays.
+/// each launch command at its time in seconds (in order). Audio clips play from `audio`; see
+/// [`render_launches_from`] for plug-ins.
 pub fn render_launches(
     project: &Project,
     audio: &AudioPool,
@@ -1660,22 +1569,22 @@ pub fn render_launches(
     commands: &[(f64, LaunchCommand)],
     seconds: f64,
 ) -> Result<Vec<f32>, RenderError> {
-    render_launches_with_plugins(project, audio, sample_rate, commands, seconds, Plugins::new())
+    render_launches_from(project, RenderInputs::from_audio(audio), sample_rate, commands, seconds)
 }
 
-/// Like [`render_launches`], with plug-in devices running in `plugins`.
-pub fn render_launches_with_plugins(
+/// [`render_launches`] playing what `inputs` holds. This is the same path a live
+/// [`Controller`] drives, so launcher behaviour renders offline exactly as it plays.
+pub fn render_launches_from(
     project: &Project,
-    audio: &AudioPool,
+    inputs: RenderInputs,
     sample_rate: u32,
     commands: &[(f64, LaunchCommand)],
     seconds: f64,
-    plugins: Plugins,
 ) -> Result<Vec<f32>, RenderError> {
     if !(seconds.is_finite() && seconds >= 0.0) || seconds > MAX_RENDER_SECONDS {
         return Err(RenderError::TooLong { seconds });
     }
-    let mut renderer = Renderer::stopped_with_plugins(project, audio, sample_rate, plugins)?;
+    let mut renderer = Renderer::build(project, inputs, sample_rate, RenderOptions::STOPPED)?;
     renderer.set_offline(true);
     let frame_of = |at: f64| (at.max(0.0) * f64::from(sample_rate)).round() as usize;
     let total = frame_of(seconds);

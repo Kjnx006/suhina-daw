@@ -1,6 +1,7 @@
 // Copyright (C) 2026 The Suhina contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+use crate::{RenderInputs, RenderOptions};
 use std::sync::Arc;
 
 use suhina_model::*;
@@ -394,7 +395,8 @@ fn a_launched_clip_takes_its_track_over_from_the_arrangement() {
         track: Some(TrackId(1)),
         clips: vec![looped],
     });
-    let mut renderer = Renderer::with_audio(&p, &AudioPool::new(), SR).unwrap();
+    let mut renderer =
+        Renderer::build(&p, RenderInputs::from_audio(&AudioPool::new()), SR, RenderOptions::PLAYING).unwrap();
     // The arrangement plays every beat of bar 1, then the off-beat clip takes over at bar 2.
     let mut out = vec![0.0f32; 2 * (BAR + 2 * BEAT)];
     let (first, rest) = out.split_at_mut(2 * (BEAT / 4));
@@ -428,7 +430,8 @@ fn back_to_arrangement_stops_the_launched_clip() {
         track: Some(TrackId(1)),
         clips: vec![looped],
     });
-    let mut renderer = Renderer::with_audio(&p, &AudioPool::new(), SR).unwrap();
+    let mut renderer =
+        Renderer::build(&p, RenderInputs::from_audio(&AudioPool::new()), SR, RenderOptions::PLAYING).unwrap();
     let mut out = vec![0.0f32; 2 * (BAR + BEAT)];
     let (first, rest) = out.split_at_mut(2 * (BEAT / 4));
     renderer.process(first);
@@ -844,7 +847,7 @@ fn stretched_arrangement_clips_rewind_with_the_transport_and_give_way_to_launche
     p.contents.push(notes(2, Vec::new()));
     p.launcher.scenes.push(Scene::default());
     p.launcher.columns[0].slots.push(with(clip(2, 1.0, true)));
-    let mut renderer = Renderer::with_audio(&p, &audio, SR).unwrap();
+    let mut renderer = Renderer::build(&p, RenderInputs::from_audio(&audio), SR, RenderOptions::PLAYING).unwrap();
     let half = SR as usize / 2;
     let mut first = vec![0.0f32; 2 * half];
     renderer.process(&mut first);

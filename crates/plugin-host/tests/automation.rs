@@ -10,9 +10,10 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use suhina_engine::{RenderInputs, render_offline_from};
 
 use serde_json::json;
-use suhina_engine::{AudioPool, Renderer, render_offline, render_offline_with_plugins};
+use suhina_engine::{AudioPool, Renderer, render_offline};
 use suhina_model::*;
 use suhina_plugins::scan::{Catalog, PluginInfo};
 use suhina_session::{Player, PluginEnv, Session};
@@ -109,7 +110,14 @@ fn an_offline_render_plays_a_plug_ins_automation() {
         let p = project(8.0, vec![gain(id, &points)]);
         let started = suhina_session::start_offline(&p, &AudioPool::new(), &env(), SR);
         assert_eq!(started.running(), 1, "{id}: {:?}", started.notices);
-        let wet = render_offline_with_plugins(&p, &AudioPool::new(), SR, 512, started.plugins).unwrap();
+        let wet = render_offline_from(
+            &p,
+            RenderInputs::from_audio(&AudioPool::new()).with_plugins(started.plugins),
+            SR,
+            512,
+            None,
+        )
+        .unwrap();
         // A tenth of a beat at a time, away from the jump: the level follows the lane.
         let window = BEAT / 10;
         for start in (0..8 * BEAT - window).step_by(window) {

@@ -39,6 +39,7 @@ mod input;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
+use suhina_engine::{RenderInputs, RenderOptions};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SizedSample};
@@ -889,9 +890,13 @@ pub fn open_chosen(
                     Some((rate, plugins)) if rate == output.sample_rate => (plugins, true),
                     _ => (Plugins::new(), false),
                 };
-                let mut renderer =
-                    Renderer::stopped_with_assets(&project, &audio, &assets, output.sample_rate, plugins)
-                        .map_err(|e| e.to_string())?;
+                let mut renderer = Renderer::build(
+                    &project,
+                    RenderInputs::from_audio(&audio).with_assets(&assets).with_plugins(plugins),
+                    output.sample_rate,
+                    RenderOptions::STOPPED,
+                )
+                .map_err(|e| e.to_string())?;
                 // The input device, when one is chosen: a failure leaves the output playing.
                 let input = match input::open(&output.host, &choice.input, output.sample_rate, Arc::clone(&progress)) {
                     Ok(Some((stream, ring))) => {

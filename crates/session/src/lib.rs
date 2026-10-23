@@ -277,7 +277,7 @@ impl Session {
     }
 
     /// What the session's NAM devices run, by path, for a renderer's construction (a `render`
-    /// through `render_offline_with_assets`) and the app's output open.
+    /// through `render_offline_from`) and the app's output open.
     pub fn device_assets(&self) -> &suhina_engine::DeviceAssets {
         &self.device_files.assets
     }

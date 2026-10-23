@@ -129,7 +129,7 @@ group is in, its parent premaster and the master chain are out. The node's own v
 mute are in, exactly as the mixer would play it.
 
 The engine builds the same graph as playback and the whole-mix render, and the offline render
-(`render_offline_node`) reads the source node's chain output where the master's sum would be
+(`render_offline_from` with a source) reads the source node's chain output where the master's sum would be
 (AGENTS.md rule 4); there is no second export path. The source node always has a chain in the
 graph, a passthrough when it would not have one (a track without devices, a group without
 them), and everything that plays into it targets it, so the sum at the node is whole. Latency

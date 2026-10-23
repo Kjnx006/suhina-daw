@@ -8,6 +8,7 @@
 #![allow(clippy::unwrap_used, clippy::panic)] // test helpers outside #[test] functions
 
 use std::path::{Path, PathBuf};
+use suhina_engine::{RenderInputs, RenderOptions};
 
 use serde_json::{Value, json};
 use suhina_engine::{AudioPool, Renderer};
@@ -198,9 +199,13 @@ fn samples_go_one_after_another_on_a_track_at_their_length() {
     assert!(session.audio().files.contains_key(&region.file), "decoded into the session's pool");
 
     // The offline render plays them: the oracle for what was placed.
-    let renderer = Renderer::with_audio(session.project(), session.audio(), SR).unwrap();
+    let renderer =
+        Renderer::build(session.project(), RenderInputs::from_audio(session.audio()), SR, RenderOptions::PLAYING)
+            .unwrap();
     drop(renderer);
-    let out = suhina_engine::render_offline_with_audio(session.project(), session.audio(), SR, 512).unwrap();
+    let out =
+        suhina_engine::render_offline_from(session.project(), RenderInputs::from_audio(session.audio()), SR, 512, None)
+            .unwrap();
     let at = |beat: f64| out[((beat * 0.5 + 0.05) * f64::from(SR)) as usize * 2].abs();
     assert!(at(4.0) > 0.1 && at(5.0) > 0.05, "{} {}", at(4.0), at(5.0));
     assert!(at(2.0) < 1e-6, "nothing before the clips");

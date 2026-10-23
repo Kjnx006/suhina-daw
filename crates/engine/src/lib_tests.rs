@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use super::*;
+use crate::{RenderInputs, RenderOptions, render_offline_from};
 use suhina_model::*;
 
 const SR: u32 = 48_000;
@@ -347,14 +348,14 @@ fn frequency(out: &[f32]) -> f64 {
 fn warped_audio_is_stretched_in_time_not_pitch() {
     // 4 s of audio on 8 beats at 100 bpm lasts 4.8 s: 0.83× speed, pitch must stay 440 Hz.
     let (project, pool) = stretched_project(440.0, 4.0, 8.0, 100.0, StretchMode::Smooth);
-    let out = render_offline_with_audio(&project, &pool, SR, 512).unwrap();
+    let out = render_offline_from(&project, RenderInputs::from_audio(&pool), SR, 512, None).unwrap();
     assert!((out.len() as f64 / 2.0 / f64::from(SR) - 4.8).abs() < 0.01);
     let hz = frequency(&out);
     assert!((hz - 440.0).abs() < 440.0 * 0.01, "{hz} Hz");
 
     // Re-pitch for comparison: the same clip plays 0.83× lower.
     let (project, pool) = stretched_project(440.0, 4.0, 8.0, 100.0, StretchMode::Repitch);
-    let hz = frequency(&render_offline_with_audio(&project, &pool, SR, 512).unwrap());
+    let hz = frequency(&render_offline_from(&project, RenderInputs::from_audio(&pool), SR, 512, None).unwrap());
     assert!((hz - 440.0 * 100.0 / 120.0).abs() < 440.0 * 0.01, "{hz} Hz");
 }
 
@@ -362,16 +363,16 @@ fn warped_audio_is_stretched_in_time_not_pitch() {
 fn rhythmic_mode_keeps_pitch_within_its_range() {
     // 2 s on 4 beats at 126 bpm: 1.05× speed.
     let (project, pool) = stretched_project(330.0, 2.0, 4.0, 126.0, StretchMode::Rhythmic);
-    let hz = frequency(&render_offline_with_audio(&project, &pool, SR, 512).unwrap());
+    let hz = frequency(&render_offline_from(&project, RenderInputs::from_audio(&pool), SR, 512, None).unwrap());
     assert!((hz - 330.0).abs() < 330.0 * 0.02, "{hz} Hz");
 }
 
 #[test]
 fn stretched_audio_does_not_depend_on_the_block_size() {
     let (project, pool) = stretched_project(440.0, 2.0, 4.0, 110.0, StretchMode::Smooth);
-    let reference = render_offline_with_audio(&project, &pool, SR, 1024).unwrap();
+    let reference = render_offline_from(&project, RenderInputs::from_audio(&pool), SR, 1024, None).unwrap();
     for block in [64, 333, 4096] {
-        let out = render_offline_with_audio(&project, &pool, SR, block).unwrap();
+        let out = render_offline_from(&project, RenderInputs::from_audio(&pool), SR, block, None).unwrap();
         assert_eq!(out.len(), reference.len());
         let worst = out.iter().zip(&reference).map(|(a, b)| (a - b).abs()).fold(0.0f32, f32::max);
         assert!(worst < 1e-4, "block {block}: differs by {worst}");
@@ -428,9 +429,9 @@ fn max_diff(a: &[f32], b: &[f32]) -> f32 {
 #[test]
 fn a_stretch_worker_renders_the_same_audio_as_offline() {
     let (project, pool) = stretched_project(440.0, 2.0, 4.0, 110.0, StretchMode::Smooth);
-    let mut offline = Renderer::with_audio(&project, &pool, SR).unwrap();
+    let mut offline = Renderer::build(&project, RenderInputs::from_audio(&pool), SR, RenderOptions::PLAYING).unwrap();
     let reference = blocks(&mut offline, 200, 441, |_| {});
-    let mut renderer = Renderer::with_audio(&project, &pool, SR).unwrap();
+    let mut renderer = Renderer::build(&project, RenderInputs::from_audio(&pool), SR, RenderOptions::PLAYING).unwrap();
     let mut worker = renderer.take_stretch_worker().unwrap();
     assert!(renderer.take_stretch_worker().is_none());
     let out = blocks(&mut renderer, 200, 441, |_| worker.fill());
@@ -442,9 +443,9 @@ fn a_stretch_worker_renders_the_same_audio_as_offline() {
 #[test]
 fn a_late_stretch_worker_costs_silence_but_not_timing() {
     let (project, pool) = stretched_project(440.0, 2.0, 4.0, 110.0, StretchMode::Smooth);
-    let mut offline = Renderer::with_audio(&project, &pool, SR).unwrap();
+    let mut offline = Renderer::build(&project, RenderInputs::from_audio(&pool), SR, RenderOptions::PLAYING).unwrap();
     let reference = blocks(&mut offline, 200, 441, |_| {});
-    let mut renderer = Renderer::with_audio(&project, &pool, SR).unwrap();
+    let mut renderer = Renderer::build(&project, RenderInputs::from_audio(&pool), SR, RenderOptions::PLAYING).unwrap();
     let mut worker = renderer.take_stretch_worker().unwrap();
     // The worker stalls for 1 s (blocks 0-99), longer than it renders ahead.
     let out = blocks(&mut renderer, 200, 441, |i| {
@@ -470,7 +471,7 @@ fn a_late_stretch_worker_costs_silence_but_not_timing() {
 #[test]
 fn a_stretch_worker_rewinds_with_the_transport() {
     let (project, pool) = stretched_project(440.0, 2.0, 4.0, 110.0, StretchMode::Smooth);
-    let mut renderer = Renderer::with_audio(&project, &pool, SR).unwrap();
+    let mut renderer = Renderer::build(&project, RenderInputs::from_audio(&pool), SR, RenderOptions::PLAYING).unwrap();
     let mut worker = renderer.take_stretch_worker().unwrap();
     let first = blocks(&mut renderer, 50, 441, |_| worker.fill());
     renderer.handle(LaunchCommand::Stop);
@@ -490,7 +491,8 @@ fn a_stretch_worker_rewinds_with_the_transport() {
 fn a_transport_jump_is_not_counted_as_underruns() {
     let (project, pool) = stretched_project(440.0, 2.0, 4.0, 110.0, StretchMode::Smooth);
     for frames in [128, 441] {
-        let mut renderer = Renderer::with_audio(&project, &pool, SR).unwrap();
+        let mut renderer =
+            Renderer::build(&project, RenderInputs::from_audio(&pool), SR, RenderOptions::PLAYING).unwrap();
         let mut worker = renderer.take_stretch_worker().unwrap();
         blocks(&mut renderer, 20, frames, |_| worker.fill());
         renderer.handle(LaunchCommand::SetPosition { beat: 1.0 });
@@ -503,9 +505,9 @@ fn a_transport_jump_is_not_counted_as_underruns() {
 #[test]
 fn a_stretch_worker_thread_keeps_up() {
     let (project, pool) = stretched_project(440.0, 2.0, 4.0, 110.0, StretchMode::Smooth);
-    let mut offline = Renderer::with_audio(&project, &pool, SR).unwrap();
+    let mut offline = Renderer::build(&project, RenderInputs::from_audio(&pool), SR, RenderOptions::PLAYING).unwrap();
     let reference = blocks(&mut offline, 100, 441, |_| {});
-    let mut renderer = Renderer::with_audio(&project, &pool, SR).unwrap();
+    let mut renderer = Renderer::build(&project, RenderInputs::from_audio(&pool), SR, RenderOptions::PLAYING).unwrap();
     let mut controller = renderer.controller();
     controller.run_stretch_worker(&mut renderer).unwrap();
     // Paced like a device: one 10 ms block every 10 ms.
@@ -533,7 +535,8 @@ fn an_edit_is_heard_from_the_frame_it_takes_over() {
         let (project, pool) = stretched_project(440.0, 4.0, 8.0, 110.0, mode);
         let mut edited = project.clone();
         edited.channels[0].volume = 0.5;
-        let mut renderer = Renderer::with_audio(&project, &pool, SR).unwrap();
+        let mut renderer =
+            Renderer::build(&project, RenderInputs::from_audio(&pool), SR, RenderOptions::PLAYING).unwrap();
         let mut controller = renderer.controller();
         let mut out = blocks(&mut renderer, 50, 480, |_| {});
         controller.update(&edited).unwrap();
@@ -542,12 +545,14 @@ fn an_edit_is_heard_from_the_frame_it_takes_over() {
         let at = if mode == StretchMode::Repitch { 50 * 480 } else { swap_frame(50) };
         let ratio = rms(&out, at, at + 9_600) / rms(&out, at - 9_600, at);
         assert!((ratio - 0.5).abs() < 0.01, "{mode:?}: level changed by {ratio}");
-        let mut original = Renderer::with_audio(&project, &pool, SR).unwrap();
+        let mut original =
+            Renderer::build(&project, RenderInputs::from_audio(&pool), SR, RenderOptions::PLAYING).unwrap();
         let original = blocks(&mut original, 150, 480, |_| {});
         assert_eq!(max_diff(&out[..at * 2], &original[..at * 2]), 0.0, "{mode:?}: before the swap");
         if mode == StretchMode::Repitch {
             // Read directly, the edited project's own render is the oracle, sample for sample.
-            let mut reference = Renderer::with_audio(&edited, &pool, SR).unwrap();
+            let mut reference =
+                Renderer::build(&edited, RenderInputs::from_audio(&pool), SR, RenderOptions::PLAYING).unwrap();
             let reference = blocks(&mut reference, 150, 480, |_| {});
             assert_eq!(max_diff(&out[at * 2..], &reference[at * 2..]), 0.0);
         }
@@ -561,7 +566,8 @@ fn the_playhead_keeps_its_beat_when_the_tempo_changes() {
     let project = project_with(untargeted(notes), vec![clip(0.0, 8.0)], 1);
     let mut slower = project.clone();
     slower.transport.tempo_bpm = 60.0;
-    let mut renderer = Renderer::with_audio(&project, &AudioPool::new(), SR).unwrap();
+    let mut renderer =
+        Renderer::build(&project, RenderInputs::from_audio(&AudioPool::new()), SR, RenderOptions::PLAYING).unwrap();
     let mut controller = renderer.controller();
     let mut out = blocks(&mut renderer, 90, 480, |_| {});
     controller.update(&slower).unwrap();
@@ -616,7 +622,7 @@ fn an_edit_while_stopped_is_heard_from_the_next_start() {
     blocks(&mut renderer, 2, 480, |_| {});
     renderer.handle(LaunchCommand::Play);
     let out = blocks(&mut renderer, 50, 480, |_| {});
-    let mut reference = Renderer::with_audio(&edited, &pool, SR).unwrap();
+    let mut reference = Renderer::build(&edited, RenderInputs::from_audio(&pool), SR, RenderOptions::PLAYING).unwrap();
     let reference = blocks(&mut reference, 50, 480, |_| {});
     assert_eq!(max_diff(&out, &reference), 0.0);
 }
@@ -626,7 +632,7 @@ fn stretched_clips_carry_on_through_a_tempo_edit() {
     let (project, pool) = stretched_project(440.0, 4.0, 8.0, 110.0, StretchMode::Smooth);
     let mut slower = project.clone();
     slower.transport.tempo_bpm = 95.0;
-    let mut renderer = Renderer::with_audio(&project, &pool, SR).unwrap();
+    let mut renderer = Renderer::build(&project, RenderInputs::from_audio(&pool), SR, RenderOptions::PLAYING).unwrap();
     let mut controller = renderer.controller();
     controller.run_stretch_worker(&mut renderer).unwrap();
     // Paced like a device, with the worker on its own thread.
@@ -645,9 +651,9 @@ fn a_stretched_clip_keeps_its_voice_through_an_edit_that_leaves_it_alone() {
     // An edit elsewhere (a solo, a fader) sends a new graph: the clip's voice carries over to
     // it, stretcher and ring, so what plays is the same to the sample (#743).
     let (project, pool) = stretched_project(440.0, 4.0, 8.0, 110.0, StretchMode::Smooth);
-    let mut offline = Renderer::with_audio(&project, &pool, SR).unwrap();
+    let mut offline = Renderer::build(&project, RenderInputs::from_audio(&pool), SR, RenderOptions::PLAYING).unwrap();
     let reference = blocks(&mut offline, 150, 480, |_| {});
-    let mut renderer = Renderer::with_audio(&project, &pool, SR).unwrap();
+    let mut renderer = Renderer::build(&project, RenderInputs::from_audio(&pool), SR, RenderOptions::PLAYING).unwrap();
     let mut controller = renderer.controller();
     controller.run_stretch_worker(&mut renderer).unwrap();
     let pace = |_| std::thread::sleep(std::time::Duration::from_millis(10));
@@ -664,9 +670,9 @@ fn an_edit_refused_by_a_full_queue_leaves_the_playing_voices_alone() {
     // Edits faster than the audio thread takes them (a fader drag) fill the swap queue; the
     // one refused must not hand the playing clip's voice to a graph that is then dropped.
     let (project, pool) = stretched_project(440.0, 4.0, 8.0, 110.0, StretchMode::Smooth);
-    let mut offline = Renderer::with_audio(&project, &pool, SR).unwrap();
+    let mut offline = Renderer::build(&project, RenderInputs::from_audio(&pool), SR, RenderOptions::PLAYING).unwrap();
     let reference = blocks(&mut offline, 150, 480, |_| {});
-    let mut renderer = Renderer::with_audio(&project, &pool, SR).unwrap();
+    let mut renderer = Renderer::build(&project, RenderInputs::from_audio(&pool), SR, RenderOptions::PLAYING).unwrap();
     let mut controller = renderer.controller();
     controller.run_stretch_worker(&mut renderer).unwrap();
     let pace = |_| std::thread::sleep(std::time::Duration::from_millis(10));
@@ -701,9 +707,9 @@ fn an_unwarped_clip_carries_on_through_a_tempo_edit() {
     }
     let mut slower = project.clone();
     slower.transport.tempo_bpm = 90.0;
-    let mut original = Renderer::with_audio(&project, &pool, SR).unwrap();
+    let mut original = Renderer::build(&project, RenderInputs::from_audio(&pool), SR, RenderOptions::PLAYING).unwrap();
     let original = blocks(&mut original, 150, 480, |_| {});
-    let mut renderer = Renderer::with_audio(&project, &pool, SR).unwrap();
+    let mut renderer = Renderer::build(&project, RenderInputs::from_audio(&pool), SR, RenderOptions::PLAYING).unwrap();
     let mut controller = renderer.controller();
     let mut out = blocks(&mut renderer, 50, 480, |_| {});
     controller.update(&slower).unwrap();
@@ -780,7 +786,7 @@ fn edits_sent_together_all_take_the_next_block() {
     half.channels[0].volume = 0.5;
     let mut quarter = project.clone();
     quarter.channels[0].volume = 0.25;
-    let mut renderer = Renderer::with_audio(&project, &pool, SR).unwrap();
+    let mut renderer = Renderer::build(&project, RenderInputs::from_audio(&pool), SR, RenderOptions::PLAYING).unwrap();
     let mut controller = renderer.controller();
     let first = blocks(&mut renderer, 20, 480, |_| {});
     controller.update(&half).unwrap();
@@ -796,7 +802,7 @@ fn a_device_parameter_is_heard_from_the_next_block_and_outlives_an_older_graph()
     // Stretched audio, so a new graph waits 0.15 s before it takes over.
     let (mut project, pool) = stretched_project(440.0, 4.0, 8.0, 110.0, StretchMode::Smooth);
     with_utility(&mut project);
-    let mut renderer = Renderer::with_audio(&project, &pool, SR).unwrap();
+    let mut renderer = Renderer::build(&project, RenderInputs::from_audio(&pool), SR, RenderOptions::PLAYING).unwrap();
     let mut controller = renderer.controller();
     let mut out = blocks(&mut renderer, 50, 480, |_| {});
     // A graph built from the project before the change (here with no other edit), then the
@@ -804,7 +810,7 @@ fn a_device_parameter_is_heard_from_the_next_block_and_outlives_an_older_graph()
     controller.update(&project).unwrap();
     controller.set_device_param(TrackId(1), 0, 0, -6.0206).unwrap();
     out.extend(blocks(&mut renderer, 100, 480, |_| {}));
-    let mut untouched = Renderer::with_audio(&project, &pool, SR).unwrap();
+    let mut untouched = Renderer::build(&project, RenderInputs::from_audio(&pool), SR, RenderOptions::PLAYING).unwrap();
     let reference = blocks(&mut untouched, 150, 480, |_| {});
     let now = 50 * 480;
     // Heard from the next block, after the utility's 20 ms ramp...
@@ -826,7 +832,8 @@ fn a_mix_edit_reaches_a_sounding_note_at_the_next_block() {
     ] {
         let mut edited = project.clone();
         (edited.channels[0].volume, edited.channels[0].pan, edited.channels[0].mute) = edit;
-        let mut renderer = Renderer::with_audio(&project, &AudioPool::new(), SR).unwrap();
+        let mut renderer =
+            Renderer::build(&project, RenderInputs::from_audio(&AudioPool::new()), SR, RenderOptions::PLAYING).unwrap();
         let mut controller = renderer.controller();
         let before = blocks(&mut renderer, 20, 480, |_| {});
         controller.update(&edited).unwrap();
@@ -903,7 +910,7 @@ fn audio_clips_play_from_their_middle_when_the_transport_starts_inside_them() {
     for mode in [StretchMode::Repitch, StretchMode::Smooth] {
         // 4 s on 8 beats at 120 bpm: the clip runs from beat 0 to 8.
         let (project, pool) = stretched_project(440.0, 4.0, 8.0, 120.0, mode);
-        let whole = render_offline_with_audio(&project, &pool, SR, 333).unwrap();
+        let whole = render_offline_from(&project, RenderInputs::from_audio(&pool), SR, 333, None).unwrap();
         let mut renderer = Renderer::stopped(&project, &pool, SR).unwrap();
         renderer.handle(LaunchCommand::SetPosition { beat: 3.0 });
         renderer.handle(LaunchCommand::Play);

@@ -9,6 +9,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use suhina_engine::{RenderInputs, RenderOptions};
 
 use serde_json::{Value, json};
 use suhina_engine::Renderer;
@@ -196,12 +197,12 @@ pub fn export_from(data: &ExportData, params: &Value) -> Result<Value, CommandEr
         None => crate::rack::OfflinePlugins::none(),
     };
     let notices = started.notices.clone();
-    let mut renderer = match source {
-        Some(source) => {
-            Renderer::with_node_source(&data.project, &data.audio, &data.assets, sample_rate, started.plugins, source)
-        }
-        None => Renderer::with_assets_plugins(&data.project, &data.audio, &data.assets, sample_rate, started.plugins),
-    }
+    let mut renderer = Renderer::build(
+        &data.project,
+        RenderInputs::from_audio(&data.audio).with_assets(&data.assets).with_plugins(started.plugins),
+        sample_rate,
+        RenderOptions { source, ..RenderOptions::PLAYING },
+    )
     .map_err(|e| e.to_string())?;
     renderer.set_offline(true);
     // The whole arrangement, once: a render does not repeat the loop region.

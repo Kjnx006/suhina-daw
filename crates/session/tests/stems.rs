@@ -6,6 +6,7 @@
 #![allow(clippy::unwrap_used, clippy::panic)] // test helpers outside #[test] functions
 
 use std::path::{Path, PathBuf};
+use suhina_engine::RenderInputs;
 
 use serde_json::json;
 use suhina_model::*;
@@ -35,7 +36,8 @@ fn channel<'a>(p: &'a Project, t: &Track) -> &'a Channel {
 }
 
 fn render(session: &Session) -> Vec<f32> {
-    suhina_engine::render_offline_with_audio(session.project(), session.audio(), SR, 512).unwrap()
+    suhina_engine::render_offline_from(session.project(), RenderInputs::from_audio(session.audio()), SR, 512, None)
+        .unwrap()
 }
 
 use suhina_test_support::peak;

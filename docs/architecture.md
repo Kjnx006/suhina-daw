@@ -186,7 +186,7 @@ gesture id grouping both XY axes into one undo step. See [ADR 0021](decisions/00
 ```text
 .als ──als::read_file──> Project ──media::load_project_audio──> AudioPool
                             │                                       │
-                            └──────────> Renderer::with_audio <─────┘
+                            └──────────> Renderer::build      <─────┘
                                               │ (all allocation happens here)
                                               ▼
                       render thread: Renderer::process(block), forever, ahead of the device
@@ -198,7 +198,7 @@ gesture id grouping both XY axes into one undo step. See [ADR 0021](decisions/00
    `AudioPool`, holds the samples in memory, so playback never reads the disk. The session
    keeps it; a file added later (`clip.addFiles`) is decoded off the audio thread, joins the
    pool and reaches the engine with the next graph (`Controller::set_audio`, ADR 0011).
-3. **Build the renderer.** `Renderer::with_audio` turns the project into flat, sorted lists the
+3. **Build the renderer.** `Renderer::build` (the project and its `RenderInputs`) turns the project into flat, sorted lists the
    audio thread can walk without searching: note events, audio events, one stretch voice per
    warped clip placement (two stretchers each, so a fresh one takes over before every strong
    onset and transients stay on the grid; ADR 0003), the prepared launcher clips, the

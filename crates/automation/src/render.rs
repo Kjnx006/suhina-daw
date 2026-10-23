@@ -4,10 +4,11 @@
 //! Offline rendering to WAV files, shared by the CLI and the MCP server.
 
 use std::path::Path;
+use suhina_engine::{RenderInputs, RenderOptions, render_offline_from};
 
 use serde_json::{Value, json};
 use suhina_engine::model::{Arrangement, ArrangementLane, Clip, ClipId, Project};
-use suhina_engine::{AudioPool, Plugins, Renderer, render_offline_with_assets, render_offline_with_cue};
+use suhina_engine::{AudioPool, Plugins, Renderer, render_offline_with_cue};
 use suhina_session::{CommandKind, OfflinePlugins, Player, PluginEnv, Session, commands, start_offline};
 
 use crate::workspace::Workspace;
@@ -78,12 +79,24 @@ pub fn render_wavs(
     let mut started = offline_plugins(project, audio, plugins, sample_rate);
     let running = std::mem::take(&mut started.plugins);
     let samples = match cue {
-        None => {
-            render_offline_with_assets(project, audio, assets, sample_rate, 512, running).map_err(|e| e.to_string())?
-        }
+        None => render_offline_from(
+            project,
+            RenderInputs::from_audio(audio).with_assets(assets).with_plugins(running),
+            sample_rate,
+            512,
+            None,
+        )
+        .map_err(|e| e.to_string())?,
         Some(cue_path) => {
-            let (main, cued) = render_offline_with_cue(project, audio, assets, sample_rate, 512, running, 1.0, true)
-                .map_err(|e| e.to_string())?;
+            let (main, cued) = render_offline_with_cue(
+                project,
+                RenderInputs::from_audio(audio).with_assets(assets).with_plugins(running),
+                sample_rate,
+                512,
+                1.0,
+                true,
+            )
+            .map_err(|e| e.to_string())?;
             write_wav(cue_path, &cued, sample_rate)?;
             main
         }
@@ -177,8 +190,13 @@ pub fn render_launch_script(
 
     let mut started = offline_plugins(project, audio, plugins, sample_rate);
     let running: Plugins = std::mem::take(&mut started.plugins);
-    let mut renderer =
-        Renderer::stopped_with_plugins(project, audio, sample_rate, running).map_err(|e| e.to_string())?;
+    let mut renderer = Renderer::build(
+        project,
+        RenderInputs::from_audio(audio).with_plugins(running),
+        sample_rate,
+        RenderOptions::STOPPED,
+    )
+    .map_err(|e| e.to_string())?;
     renderer.set_offline(true);
     let mut session = Session::new(project.clone());
     session.attach_player(Player::new(renderer.controller(), None));
