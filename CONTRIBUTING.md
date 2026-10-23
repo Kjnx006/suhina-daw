@@ -10,8 +10,9 @@
 - **Never crash:** non-test code must not panic and must not use `unsafe` (the only exceptions
   are the plug-in hosting crates `ipc` and `plugin-host`, ADR 0006). Errors go through `Result`
   and `?`; input-derived indices and sizes are checked. See `AGENTS.md`.
-- **Real-time safety:** code that runs on the audio thread never allocates, locks, blocks or does
-  I/O. Communicate with it through lock-free queues.
+- **Real-time safety:** code that runs on the audio thread never allocates, locks or does I/O. It
+  blocks only to wait for a plug-in host's answer within the block's deadline (ADR 0006 › 4).
+  Communicate with it through lock-free queues.
 - **Tests:** required for every change. Format code needs round-trip and malformed-input tests;
   DSP and engine code is tested by rendering offline and comparing against golden files.
 - **Documentation:** a change that alters how something works updates the documents that
@@ -19,6 +20,8 @@
   *Before you finish a task* lists which document covers what. Leave out what `main` writes after
   the merge: `docs/INDEX.md`, `docs/commands.md`, the parity report's marked parts and figures, and
   the `last_verified` line of a document you change (it is stamped with the day of the merge).
+  [`docs/README.md`](docs/README.md) says what an ADR, a spec and a system document each hold and
+  how an ADR is amended; `python scripts/docs.py check` checks it.
 - **Parity measurement:** a pull request that adds, changes or removes something a user can do
   updates its coverage in `scripts/parity/score.py` (and `scripts/parity/devices.json` for a
   built-in effect or instrument) in the same pull request, and leaves the numbers in

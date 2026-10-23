@@ -24,8 +24,9 @@ that describe them (*Code and its documents*). Read only the documents that matc
    there every `unsafe` block is small, tested and explained in a `// SAFETY:` comment, and the
    crate offers a safe API.
 3. **Real-time safety.** Code reachable from the audio callback never allocates, frees, locks,
-   blocks, logs or does I/O. Hand data to it through lock-free queues (`rtrb`) and swap whole
-   graphs atomically.
+   logs or does I/O. It blocks only to wait for a plug-in host's answer within the block's
+   deadline ([ADR 0006](docs/decisions/0006-plug-in-hosting.md) › 4). Hand data to it through
+   lock-free queues (`rtrb`) and swap whole graphs atomically.
 4. **One render path.** Offline rendering and real-time playback run the same engine code, so
    offline renders are the test oracle for the engine.
 5. **Plug-ins run sandboxed, out of process.** Third-party plug-ins (CLAP, VST3, later bridged
@@ -382,7 +383,9 @@ refactor"). When a pull request changes `crates/`, `devices/` or `apps/` and doe
 
 **Documentation is part of the change.** A pull request that changes how something works updates,
 in the same pull request, every document that describes it, so the docs never describe code
-that no longer exists:
+that no longer exists. [`docs/README.md`](docs/README.md) says what each kind of document holds
+(an ADR, a spec, a system document), how an ADR is amended and what the status fields mean;
+`python scripts/docs.py check` enforces it.
 
 | If you change | Update |
 |---|---|
