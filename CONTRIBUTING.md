@@ -8,17 +8,23 @@
   non-commercial licences are not. CI checks every dependency's licence with `cargo-deny`
   (see [Dependencies](#dependencies)).
 - **Never crash:** non-test code must not panic and must not use `unsafe` (the only exceptions
-  are the plug-in hosting crates `ipc` and `plugin-host`, ADR 0006). Errors go through `Result`
+  are the plug-in hosting crates `ipc` and `plugin-host`, ADR 0006, and the MP3 encoder crate
+  `mp3`, ADR 0029). Errors go through `Result`
   and `?`; input-derived indices and sizes are checked. See `AGENTS.md`.
-- **Real-time safety:** code that runs on the audio thread never allocates, locks, blocks or does
-  I/O. Communicate with it through lock-free queues.
+- **Real-time safety:** code that runs on the audio thread never allocates, locks or does I/O. It
+  blocks only to wait for a plug-in host's answer within the block's deadline (ADR 0006 › 4).
+  Communicate with it through lock-free queues.
 - **Tests:** required for every change. Format code needs round-trip and malformed-input tests;
   DSP and engine code is tested by rendering offline and comparing against golden files.
+  A test module over 150 lines lives in a `<file>_tests.rs` beside its source, not inline;
+  `python scripts/inline_tests.py move <file>` moves one, and CI checks it (`--check`).
 - **Documentation:** a change that alters how something works updates the documents that
   describe it in the same pull request (architecture, ADRs, specs, ROADMAP); `AGENTS.md` ›
   *Before you finish a task* lists which document covers what. Leave out what `main` writes after
   the merge: `docs/INDEX.md`, `docs/commands.md`, the parity report's marked parts and figures, and
   the `last_verified` line of a document you change (it is stamped with the day of the merge).
+  [`docs/README.md`](docs/README.md) says what an ADR, a spec and a system document each hold and
+  how an ADR is amended; `python scripts/docs.py check` checks it.
 - **Parity measurement:** a pull request that adds, changes or removes something a user can do
   updates its coverage in `scripts/parity/score.py` (and `scripts/parity/devices.json` for a
   built-in effect or instrument) in the same pull request, and leaves the numbers in
@@ -42,10 +48,10 @@
   (`engine`, `ui`, `formats`, `browser`, `audio-io`, `plug-ins`, `devices`, `presets`, `tests`),
   plus `windows`, `macos` or `linux` when it concerns one platform. The forms set the type, and
   `.github/workflows/issue-labels.yml` adds area and platform labels from the form's answers.
-- **Pull request labels:** `.github/workflows/pr-labels.yml` adds them as `.github/labeler.yml` maps
+- **Pull request labels:** `.github/workflows/pr-labels.yml` keeps them as `.github/labeler.yml` maps
   them: the kind from the branch name (`feature/` `enhancement`, `fix/` `bug`, `docs/`
   `documentation`, `chore/` `chore`; also `documentation` when every file changed is a document)
-  and the areas from the paths changed. It only adds labels; add a platform label by hand.
+  and the areas from the paths changed. At every push it also takes off the ones that no longer match, so a rebased pull request loses the areas it no longer touches; labels it does not map (a platform, `test-build`, `ready to merge`) are left alone, and a platform label is added by hand.
 - **CodeRabbit:** reviews every pull request that is not a draft against AGENTS.md
   (`.coderabbit.yaml`) and shows a **CodeRabbit** check beside CI. Its comments are suggestions, not requirements: answer or resolve
   them, and leave DSP and real-time behaviour to the tests and renders. The check is never red and
@@ -189,14 +195,35 @@ is the bot's comment and not that person's; it is a comment, not a GitHub review
 blocks nothing (`AGENTS.md` › Tasks has the commands). The rules in
 [AI-assisted contributions](#ai-assisted-contributions) apply to what the agent wrote.
 
+**No elevated access just to post.** These bot workflows require existing repository write
+access, not admin access. Without it, an agent uses the user's authenticated account to post
+ordinary issues and PR comments, within the user's authorization, and identifies agent-written
+feedback as AI-assisted. Trusted contributors may use the comment commands below. Agents must
+not request admin/write access, broader token scopes or App secrets to follow the bot posting
+convention. Connector restrictions still apply: if no authorized posting route is available,
+explain the limit and give the user the prepared text.
+
+**Trusted bot actions.** Contributors listed in `TRUSTED_CONTRIBUTORS` may ask `suhina-bot`
+to create issues with `/open-issue`, close/reopen issues with `/close` and `/reopen`, and request
+a PR test build with `/test-build`. Each action records **On behalf of @login**, taken from
+the authenticated commenter. See [Trusted bot requests](docs/claim-bot.md#trusted-bot-requests)
+for the issue JSON and limits. The list grants neither repository write access nor merge approval.
+
+The repository variable `MAINTAINERS` controls the maintainer role across all bot workflows,
+including merge authorization. Both lists use comma/whitespace-separated GitHub logins, ignore
+case and accept an optional `@`. There is no hardcoded maintainer fallback when the variable
+is empty. Maintain the lists in Settings → Secrets and variables → Actions → Variables.
+For fork PR test builds, maintainers also use `/test-build`: fork runs may lack repository
+variables and therefore cannot identify a maintainer from a direct label alone.
+
 ## Trying a pull request
 
 A pull request can be tried without building it: GitHub Actions builds packages of it for
 Windows, macOS and Linux ([`docs/releasing.md` › Test builds](docs/releasing.md#test-builds)) and
 links the downloads from the pull request in a comment, updated with every new build. A maintainer's own pull requests are
 built on every push. A contributor's pull request is built once a maintainer has read the diff and
-added the `test-build` label; a later push takes the label off, and the new commits are built when
-the label is added again.
+added the `test-build` label, or a trusted contributor requests it with `/test-build`; a later
+push takes the label off, and the new commits need a new request.
 
 ## Merging many pull requests
 

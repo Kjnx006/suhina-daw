@@ -37,12 +37,14 @@ changed. The full list with copyright lines is in [`NOTICE`](NOTICE).
 
 ## Vendored code
 
-Third-party source kept unchanged in `third_party/`, built into Suhina only with a Cargo
-feature.
+Third-party source kept in `third_party/`. The ASIO SDK's host part is unchanged and built only
+with the `asio` feature. LAME's encoder sources are unchanged and always built (for MP3 export),
+with Suhina's own `fft.c` in place of upstream's, which is not redistributed.
 
 | Path | Title | Author | Source | License |
 |---|---|---|---|---|
 | `third_party/asiosdk` | Steinberg ASIO SDK 2.3.4, host part (`asio` feature) | Steinberg Media Technologies GmbH | https://www.steinberg.net/asiosdk | GPL-3.0 (`third_party/asiosdk/LICENSE.txt`; see `VENDORED.md`) |
+| `third_party/lame` | LAME 3.100, the MP3 encoder's sources | The LAME Project (Mike Cheng, Mark Taylor and the authors named in its README) | https://downloads.sourceforge.net/project/lame/lame/3.100/lame-3.100.tar.gz | LGPL-2.0-or-later, used as LGPL-2.1-or-later (`third_party/lame/COPYING`; see `VENDORED.md`) |
 
 ## Test data in the repository
 

@@ -149,3 +149,28 @@ fn picking_the_colour_the_track_has_changes_nothing() {
     harness.run();
     assert!(!harness.state().session().unwrap().can_undo(), "no command for the same colour");
 }
+
+#[test]
+fn midi_monitor_is_separate_from_arm_and_offers_contextual_choices() {
+    let mut h = arrangement();
+    let header = h.get_by_label("Track Drums").rect();
+    let monitor = h.get_by_label("MIDI monitoring of Drums: Auto").rect();
+    let arm = h.get_by_label("Arm Drums for recording").rect();
+    assert!(header.contains_rect(monitor));
+    assert!(monitor.left() >= arm.right());
+    h.get_by_label("MIDI monitoring of Drums: Auto").click();
+    h.run();
+    assert!(h.query_by_label("Hear your MIDI keyboard").is_some());
+    assert!(h.query_by_label("Hear MIDI when this track is ready to record.").is_some());
+    let off = h.get_by_label("Off").rect().center();
+    h.hover_at(off);
+    h.run();
+    assert!(h.query_by_label("Live MIDI is silent. You can still record it.").is_some());
+    h.get_by_label("Always on").click();
+    h.run();
+    assert!(h.query_by_label("MIDI monitoring of Drums: On").is_some());
+    assert!(!h.state().session().unwrap().is_armed(suhina_engine::model::TrackId(1)));
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run();
+    assert!(h.query_by_label("MIDI monitoring of Drums: Auto").is_some());
+}

@@ -459,7 +459,7 @@ impl Detail {
             .iter()
             .find(|t| t.id == chain.track)
             .and_then(|t| t.channel)
-            .and_then(|c| project.channels.iter().find(|ch| ch.id == c))
+            .and_then(|c| project.channel(c))
         else {
             return;
         };
@@ -471,8 +471,28 @@ impl Detail {
                     }
                 }
                 let Some(device) = suhina_engine::model::device_at(devices, &device_box.at.0) else { continue };
+                // A built-in parameter's description, for its kind and range.
+                let info = match &device.kind {
+                    DeviceKind::Builtin(id) => suhina_device_registry::info(id),
+                    _ => None,
+                };
                 for lane in device.automation.iter().filter(|l| l.enabled && !l.points.is_empty()) {
-                    let Some(value) = lane.value_at(beat, false) else { continue };
+                    let spec = info.and_then(|info| info.params.iter().find(|p| p.id == lane.param));
+                    // On/off and choice parameters hold each point's value until the next, as the
+                    // engine plays them and the lane draws them.
+                    let stepped = match spec {
+                        Some(spec) => matches!(
+                            spec.kind,
+                            suhina_device_api::ParamKind::Toggle | suhina_device_api::ParamKind::Choice(_)
+                        ),
+                        None => device_box
+                            .graph
+                            .as_ref()
+                            .and_then(|g| g.parameters.iter().find(|p| p.id == lane.param))
+                            .is_some_and(|p| p.control.is_stepped()),
+                    };
+                    let Some(value) = lane.value_at(beat, stepped) else { continue };
+                    let value = spec.map_or(value, |spec| spec.clamp(value));
                     for (id, v) in &mut device_box.values {
                         if *id == lane.param {
                             *v = value;
@@ -514,8 +534,7 @@ pub fn build_with(
     nam: crate::detail::nam_panel::Lists,
 ) -> Detail {
     let bar = bar_beats(project);
-    let track_name =
-        |id: TrackId| project.tracks.iter().find(|t| t.id == id).map(|t| t.name.clone()).unwrap_or_default();
+    let track_name = |id: TrackId| project.track(id).map(|t| t.name.clone()).unwrap_or_default();
     let found = clip.and_then(|clip| match clip {
         ClipRef::Arrangement(id, clip) => project
             .arrangement
@@ -586,13 +605,8 @@ fn chain(
     plugins: &mut dyn FnMut(TrackId, &[usize]) -> Option<PluginReport>,
     nam: crate::detail::nam_panel::Lists,
 ) -> Chain {
-    let track_name = project.tracks.iter().find(|t| t.id == id).map(|t| t.name.clone()).unwrap_or_default();
-    let channel = project
-        .tracks
-        .iter()
-        .find(|t| t.id == id)
-        .and_then(|t| t.channel)
-        .and_then(|c| project.channels.iter().find(|ch| ch.id == c));
+    let track_name = project.track(id).map(|t| t.name.clone()).unwrap_or_default();
+    let channel = project.tracks.iter().find(|t| t.id == id).and_then(|t| t.channel).and_then(|c| project.channel(c));
     let devices = channel
         .map(|c| c.devices.iter().enumerate().map(|(index, d)| device_box(d, &[index], id, plugins)).collect())
         .unwrap_or_default();
@@ -2838,6 +2852,31 @@ mod tests {
             on_clip(ClipRef::Slot(TrackId(2), 1), json!({ "loop": true })),
             json!({ "track": 2, "scene": 2, "loop": true })
         );
+    }
+
+    /// While the transport runs, a panel shows what its automation plays: a toggle holds each
+    /// point's value, a continuous parameter moves between them (#706).
+    #[test]
+    fn panels_follow_automation_as_the_engine_plays_it() {
+        use suhina_engine::model::{AutomationLane, AutomationPoint};
+        let mut project = demo_project();
+        let mut utility = Device::new("Utility", DeviceKind::Builtin("utility".into()));
+        for param in ["mono", "balance"] {
+            let mut lane = AutomationLane::new(param);
+            lane.points = vec![AutomationPoint::new(0.0, 1.0), AutomationPoint::new(4.0, -1.0)];
+            utility.automation.push(lane);
+        }
+        project.channels[0].devices.push(utility);
+        let mut detail = build(&project, Some(TrackId(1)), None);
+        detail.follow_automation(&project, 1.0);
+        let Detail::Devices(chain) = &detail else { panic!("expected the chain") };
+        let value = |id: &str| chain.devices.last().and_then(|d| d.values.iter().find(|(p, _)| p == id)).map(|v| v.1);
+        assert_eq!(value("mono"), Some(1.0), "a toggle holds its point's value");
+        assert_eq!(value("balance"), Some(0.5), "a continuous one is a quarter of the way down");
+        detail.follow_automation(&project, 5.0);
+        let Detail::Devices(chain) = &detail else { panic!("expected the chain") };
+        let value = |id: &str| chain.devices.last().and_then(|d| d.values.iter().find(|(p, _)| p == id)).map(|v| v.1);
+        assert_eq!((value("mono"), value("balance")), (Some(0.0), Some(-1.0)), "the last point, kept in range");
     }
 
     #[test]
