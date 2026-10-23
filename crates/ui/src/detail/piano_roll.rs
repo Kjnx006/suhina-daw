@@ -18,6 +18,7 @@ use crate::detail::piano_roll_grid::{FIXED_VALUES, GridMode, PianoGrid, Width};
 use crate::detail::piano_roll_ruler::{self as ruler_view, ClipShape, RulerState};
 use crate::detail::piano_roll_scale::{self as scale_view, Fold, KeyRows};
 use crate::interaction::grid::default_track_colour;
+use crate::interaction::timeline_grid::TimelineGrid;
 use crate::kit::theme;
 use crate::kit::widgets::{self, Action};
 use crate::settings::ToolbarSize;
@@ -750,7 +751,7 @@ impl PianoRollState {
 
     /// The note a press at `pos` would draw: its start on the grid line before the pointer
     /// (`free`: where it is), the row's key, the length and velocity last used.
-    fn new_note(&self, layout: &Layout, clip: &PianoClip, grid: NoteGrid, pos: Pos2, free: bool) -> Option<Note> {
+    fn new_note(&self, layout: &Layout, clip: &PianoClip, grid: TimelineGrid, pos: Pos2, free: bool) -> Option<Note> {
         let key = layout.key_at(pos.y)?;
         let time = grid.place(layout.beat_at(pos.x).max(0.0), free, true).max(0.0);
         let length = if self.last_length > 0.0 {
@@ -1071,9 +1072,9 @@ fn chosen_step(clip: &PianoClip, beat_width: f32) -> f64 {
 }
 
 /// The grid `clip` is edited on at `beat_width`: snapping only while the menu's Snap to grid is on.
-pub(crate) fn note_grid(clip: &PianoClip, beat_width: f32) -> NoteGrid {
-    let grid = NoteGrid::new(chosen_step(clip, beat_width), beat_width);
-    NoteGrid { snaps: grid.snaps && clip.grid_menu.snap, ..grid }
+pub(crate) fn note_grid(clip: &PianoClip, beat_width: f32) -> TimelineGrid {
+    let grid = TimelineGrid::new(chosen_step(clip, beat_width), beat_width, clip.bar_beats, MIN_LINE_SPACING);
+    TimelineGrid { snaps: grid.snaps && clip.grid_menu.snap, ..grid }
 }
 
 /// The grid a grid key (Ctrl+1 to Ctrl+4 by default) makes of `clip`'s; `None` when the grid
@@ -1090,48 +1091,15 @@ fn grid_key(action: &str, clip: &PianoClip) -> Option<PianoGrid> {
     (!clip.grid_follows || picked.control_bar_value().is_some()).then_some(picked)
 }
 
-/// The grid as drawn at this zoom: its step (the chosen one, doubled until lines are far
-/// enough apart) and whether things snap to it.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct NoteGrid {
-    pub step: f64,
-    pub snaps: bool,
-}
-
-impl NoteGrid {
-    pub fn new(chosen: f64, beat_width: f32) -> Self {
-        let snaps = chosen.is_finite() && chosen > 0.0;
-        let mut step = if snaps { chosen } else { 1.0 };
-        let points = f64::from(beat_width.max(f32::MIN_POSITIVE));
-        while step * points < f64::from(MIN_LINE_SPACING) && step < 1e6 {
-            step *= 2.0;
-        }
-        Self { step, snaps }
-    }
-
-    /// The grid line nearest to `beat`: what a slice snaps its cut to.
-    pub fn nearest_line(&self, beat: f64) -> f64 {
-        if !beat.is_finite() {
-            return 0.0;
-        }
-        let snapped = self.place(beat.max(0.0), false, false);
-        snapped.clamp(0.0, f64::from(BEAT_LIMIT))
-    }
-
-    /// `beat` on the nearest line (or the line before it with `down`), unless `free` or there is
-    /// no snapping.
-    pub(crate) fn place(&self, beat: f64, free: bool, down: bool) -> f64 {
-        if free || !self.snaps {
-            return beat;
-        }
-        let lines = beat / self.step;
-        (if down { (lines + EPSILON).floor() } else { lines.round() }) * self.step
-    }
+/// The grid line nearest to `beat`, within the piano roll's beats: what a slice snaps its cut
+/// to and a Shift+Draw stroke ends on (`beat` itself while the grid does not snap).
+fn nearest_line(grid: TimelineGrid, beat: f64) -> f64 {
+    grid.place(beat, false, false).clamp(0.0, f64::from(BEAT_LIMIT))
 }
 
 /// How far a drag of `raw` beats and `raw_keys` semitones moves the selection: by whole grid
 /// steps unless `free`, and never past the content's start or the keys 0 to 127.
-pub fn move_delta(raw: f64, raw_keys: i32, moved: &[Note], grid: NoteGrid, free: bool) -> (f64, i32) {
+pub fn move_delta(raw: f64, raw_keys: i32, moved: &[Note], grid: TimelineGrid, free: bool) -> (f64, i32) {
     let mut beats = if free || !grid.snaps { raw } else { (raw / grid.step).round() * grid.step };
     let earliest = moved.iter().map(|n| n.time).fold(f64::INFINITY, f64::min);
     if earliest.is_finite() {
@@ -1145,12 +1113,12 @@ pub fn move_delta(raw: f64, raw_keys: i32, moved: &[Note], grid: NoteGrid, free:
 
 /// How much a drag of the grabbed note's right end by `raw` beats changes the selection's
 /// lengths: the end on the grid unless `free`, and no note shorter than [`MIN_LENGTH`].
-pub fn resize_by(raw: f64, grabbed: &Note, resized: &[Note], grid: NoteGrid, free: bool) -> f64 {
+pub fn resize_by(raw: f64, grabbed: &Note, resized: &[Note], grid: TimelineGrid, free: bool) -> f64 {
     let end = grabbed.time + grabbed.duration;
     let mut new_end = grid.place(end + raw, free, false);
     if grid.snaps && !free && new_end <= grabbed.time + EPSILON {
         // Snapped onto or before its start: the end goes to the first line after the start.
-        new_end = ((grabbed.time / grid.step + EPSILON).floor() + 1.0) * grid.step;
+        new_end = grid.next_line(grabbed.time);
     }
     let shortest = resized.iter().map(|n| n.duration).fold(f64::INFINITY, f64::min);
     let by = new_end - end;
@@ -1207,7 +1175,7 @@ struct Inputs {
 struct Gestures<'a> {
     layout: &'a Layout,
     clip: &'a PianoClip,
-    grid: NoteGrid,
+    grid: TimelineGrid,
 }
 
 impl Gestures<'_> {
@@ -1236,8 +1204,11 @@ impl Gestures<'_> {
     fn draw_run(&self, state: &mut PianoRollState, now: Pos2, free: bool) {
         let Some(first) = state.stroke.first().copied() else { return };
         let length = if first.duration > 0.0 { first.duration } else { self.grid.step.max(MIN_LENGTH) };
-        let end =
-            if free { self.layout.beat_at(now.x).max(0.0) } else { self.grid.nearest_line(self.layout.beat_at(now.x)) };
+        let end = if free {
+            self.layout.beat_at(now.x).max(0.0)
+        } else {
+            nearest_line(self.grid, self.layout.beat_at(now.x))
+        };
         let mut time = first.time;
         while time + length <= end + EPSILON {
             let taken = state.stroke.iter().any(|n| (n.time - time).abs() < EPSILON)
@@ -2165,7 +2136,7 @@ fn effect(
     layout: &Layout,
     clip: &PianoClip,
     chosen: &[Note],
-    grid: NoteGrid,
+    grid: TimelineGrid,
     free: bool,
 ) -> Effect {
     match gesture {
@@ -2217,8 +2188,8 @@ fn effect(
 
 /// The beat a cut at `x` lands on, and the notes it crosses; `None` when it misses every note.
 /// The line's own x is used, so the cut is where the pointer is, not where the drag started.
-fn slice_at(clip: &PianoClip, layout: &Layout, grid: NoteGrid, x: f32, free: bool) -> Option<(f64, Vec<usize>)> {
-    let at = if free { layout.beat_at(x).max(0.0) } else { grid.nearest_line(layout.beat_at(x)) };
+fn slice_at(clip: &PianoClip, layout: &Layout, grid: TimelineGrid, x: f32, free: bool) -> Option<(f64, Vec<usize>)> {
+    let at = if free { layout.beat_at(x).max(0.0) } else { nearest_line(grid, layout.beat_at(x)) };
     if !at.is_finite() {
         return None;
     }
@@ -2238,7 +2209,7 @@ fn drawn_note(
     state: &PianoRollState,
     layout: &Layout,
     clip: &PianoClip,
-    grid: NoteGrid,
+    grid: TimelineGrid,
     from: Pos2,
     now: Pos2,
     free: bool,
@@ -2594,7 +2565,7 @@ fn draw(
     layout: &Layout,
     clip: &PianoClip,
     state: &PianoRollState,
-    grid: NoteGrid,
+    grid: TimelineGrid,
     preview: Option<Effect>,
     played: (f64, f64),
 ) {
@@ -2624,16 +2595,11 @@ fn draw(
     let bar = clip.bar_beats.max(EPSILON);
     painter.rect_filled(layout.ruler, 0.0, theme::panel_background());
     let lane_painter = painter.with_clip_rect(layout.lane);
-    let mut beat = (first_beat / grid.step).floor() * grid.step;
-    let mut drawn = 0;
-    while beat <= last_beat && drawn < MAX_LINES {
+    for (beat, on_bar) in grid.lines(first_beat, last_beat, MAX_LINES) {
         let x = layout.x_of(beat).round() + 0.5;
-        let on_bar = ((beat / bar) - (beat / bar).round()).abs() < 1e-6;
         let color = if on_bar { theme::border_strong() } else { theme::border() };
         grid_painter.vline(x, layout.grid.y_range(), theme::hairline(color));
         lane_painter.vline(x, layout.lane.y_range(), theme::hairline(color));
-        beat += grid.step;
-        drawn += 1;
     }
     let ruler_painter = painter.with_clip_rect(layout.ruler);
     let bar_points = (clip.bar_beats as f32 * layout.beat_width).max(1.0);
@@ -2930,25 +2896,90 @@ mod tests {
         assert!(is_black(61) && !is_black(60));
     }
 
+    /// A sixteenth grid in 4/4 at 40 points a beat.
+    fn sixteenths() -> TimelineGrid {
+        TimelineGrid::new(0.25, 40.0, 4.0, MIN_LINE_SPACING)
+    }
+
     #[test]
     fn the_grid_follows_the_chosen_value_and_thins_out_when_lines_crowd() {
         assert_eq!(grid_step(Quantization::Beats(0.25), 4.0), 0.25);
         assert_eq!(grid_step(Quantization::Bars(1), 3.0), 3.0);
         assert_eq!(grid_step(Quantization::None, 4.0), 0.0);
-        assert_eq!(NoteGrid::new(0.25, 40.0), NoteGrid { step: 0.25, snaps: true });
+        assert_eq!(sixteenths(), TimelineGrid { step: 0.25, bar_beats: 4.0, snaps: true });
         // A sixteenth at 10 points a beat is 2.5 points: doubled twice to 10.
-        assert_eq!(NoteGrid::new(0.25, 10.0).step, 1.0);
-        assert_eq!(NoteGrid::new(0.0, 40.0), NoteGrid { step: 1.0, snaps: false });
-        let grid = NoteGrid::new(0.25, 40.0);
+        assert_eq!(TimelineGrid::new(0.25, 10.0, 4.0, MIN_LINE_SPACING).step, 1.0);
+        assert_eq!(
+            TimelineGrid::new(0.0, 40.0, 4.0, MIN_LINE_SPACING),
+            TimelineGrid { step: 1.0, bar_beats: 4.0, snaps: false }
+        );
+        let grid = sixteenths();
         assert_eq!(grid.place(1.3, false, false), 1.25);
         assert_eq!(grid.place(1.3, false, true), 1.25);
         assert_eq!(grid.place(1.45, false, true), 1.25);
         assert_eq!(grid.place(1.3, true, false), 1.3);
     }
 
+    /// Whether, for `clip` at `beat_width`, the lines are on its first `bars` bars' bar lines
+    /// (every one while the step is shorter than a bar, else a whole number of bars apart) and
+    /// every beat there snaps (to the nearest line and to the line before it) onto a drawn line.
+    fn on_the_drawn_lines(clip: &PianoClip, beat_width: f32, bars: f64) -> bool {
+        let grid = note_grid(clip, beat_width);
+        let last = bars * clip.bar_beats;
+        let drawn: Vec<i64> =
+            grid.lines(0.0, last + grid.step, MAX_LINES).iter().map(|(b, _)| (b * 1000.0).round() as i64).collect();
+        let bar_lines = if grid.step < clip.bar_beats {
+            (0..=bars as i64).all(|n| drawn.contains(&((n as f64 * clip.bar_beats * 1000.0).round() as i64)))
+        } else {
+            let bars_apart = grid.step / clip.bar_beats;
+            (bars_apart - bars_apart.round()).abs() < 1e-9
+        };
+        let snaps = (0..(last * 50.0) as i64).map(|n| n as f64 / 50.0).all(|beat| {
+            [grid.place(beat, false, false), grid.place(beat, false, true)]
+                .iter()
+                .all(|b| drawn.contains(&((b * 1000.0).round() as i64)))
+        });
+        bar_lines && snaps
+    }
+
+    #[test]
+    fn zoomed_out_the_grid_stays_on_the_bar_lines_with_triplets_and_odd_bars() {
+        // A 1/16 triplet in 4/4: the beat and then bars, never 1/3, 2/3, 4/3 or 8/3 beats.
+        let mut piano = clip(Vec::new());
+        piano.grid = 1.0 / 6.0;
+        assert_eq!(note_grid(&piano, 20.0).step, 1.0);
+        assert_eq!(note_grid(&piano, 3.0).step, 4.0);
+        // 5/4 with a one-beat grid: the bar, then two bars, not 2, 4 or 8 beats.
+        let mut five = clip(Vec::new());
+        (five.bar_beats, five.grid) = (5.0, 1.0);
+        assert_eq!(note_grid(&five, 3.0).step, 5.0);
+        assert_eq!(note_grid(&five, 1.0).step, 10.0);
+        // 3/8 with a 1/4 triplet: on every bar line, not every fourth.
+        let mut three_eight = clip(Vec::new());
+        (three_eight.bar_beats, three_eight.grid) = (1.5, 2.0 / 3.0);
+        assert_eq!(note_grid(&three_eight, 2.0).step, 3.0);
+        for beat_width in [100.0, 40.0, 20.0, 10.0, 5.0, 3.0, 2.0, 1.0] {
+            for c in [&piano, &five, &three_eight] {
+                assert!(on_the_drawn_lines(c, beat_width, 8.0), "{} beats a bar at {beat_width}", c.bar_beats);
+            }
+        }
+        // An adaptive triplet grid too.
+        piano.grid_menu = PianoGrid { mode: GridMode::Adaptive(Width::Narrowest), triplet: true, snap: true };
+        piano.grid = 0.0;
+        for beat_width in [100.0, 20.0, 5.0, 1.0] {
+            assert!(on_the_drawn_lines(&piano, beat_width, 8.0), "adaptive at {beat_width}");
+        }
+        // A note's end dragged onto its start goes to the next drawn line: in 3/4 with a two-beat
+        // grid, from beat 2 that is the bar line at 3, not beat 4.
+        let mut three = clip(Vec::new());
+        (three.bar_beats, three.grid) = (3.0, 2.0);
+        let grabbed = note(2.0, 0.5, 60);
+        assert_eq!(resize_by(-0.5, &grabbed, &[grabbed], note_grid(&three, 40.0), false), 0.5);
+    }
+
     #[test]
     fn a_move_goes_by_grid_steps_and_stops_at_the_limits() {
-        let grid = NoteGrid::new(0.25, 40.0);
+        let grid = sixteenths();
         let notes = [note(1.1, 1.0, 60), note(2.0, 1.0, 120)];
         // By whole steps, so an off-grid note stays as far off the grid.
         assert_eq!(move_delta(0.3, 0, &notes, grid, false), (0.25, 0));
@@ -2961,7 +2992,7 @@ mod tests {
 
     #[test]
     fn a_resize_puts_the_end_on_the_grid_and_keeps_notes_long_enough() {
-        let grid = NoteGrid::new(0.25, 40.0);
+        let grid = sixteenths();
         let grabbed = note(1.0, 1.0, 60);
         let other = note(3.0, 0.5, 62);
         assert_eq!(resize_by(0.3, &grabbed, &[grabbed, other], grid, false), 0.25);
@@ -3150,7 +3181,7 @@ mod tests {
         piano.grid_menu = free;
         let grid = note_grid(&piano, 40.0);
         assert_eq!((grid.step, grid.snaps), (0.25, false), "the lines stay, nothing snaps");
-        assert_eq!(grid.nearest_line(1.1), 1.1);
+        assert_eq!(nearest_line(grid, 1.1), 1.1);
         // Following the control bar, a key whose grid it cannot hold does nothing.
         piano.grid_menu = PianoGrid::from_value("1/32");
         piano.grid_follows = true;

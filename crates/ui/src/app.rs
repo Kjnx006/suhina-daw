@@ -706,10 +706,12 @@ impl App {
     /// Opens `session` in a new tab or in place of the active project, and makes it active.
     /// Returns its id, or `None` when no more projects can be open (the status bar says why).
     pub fn open_project(&mut self, session: Session, warnings: &[String], how: OpenAs) -> Option<ProjectId> {
+        let mut replaced = None;
         if how == OpenAs::Replace
             && let Some(active) = self.projects.active()
             && self.projects.close(active).is_ok()
         {
+            replaced = Some(active);
             self.stashes.remove(&active);
             self.closed.push(active);
             if self.shown_project == Some(active) {
@@ -739,6 +741,13 @@ impl App {
                 return None;
             }
         };
+        // Opening is no command (ADR 0007), so it has a line of its own beside the `action`
+        // lines; one opened in place of another says which it closed (#821). The name is quoted
+        // and escaped: a file name may hold a line break, which would start a line of its own.
+        match replaced {
+            Some(old) => suhina_plugins::trace!("project opened {} {name:?} in place of {}", id.0, old.0),
+            None => suhina_plugins::trace!("project opened {} {name:?} in a new tab", id.0),
+        }
         self.restore(id, Stash::default());
         self.plugin_dialog_hidden = false;
         Some(id)
@@ -1216,7 +1225,7 @@ impl App {
         if let Some(session) = self.session() {
             let project = session.project();
             for track in project.tracks.iter() {
-                let channel = track.channel.and_then(|ch| project.channels.iter().find(|c| c.id == ch));
+                let channel = track.channel.and_then(|ch| project.channel(ch));
                 for device in channel.iter().flat_map(|c| c.devices.iter()) {
                     if let Some(path) = device_file_path(device) {
                         names.insert(path.clone(), session.device_asset_name(&path).unwrap_or_default());
@@ -1233,7 +1242,7 @@ impl App {
         if let Some(session) = self.session() {
             let project = session.project();
             for track in project.tracks.iter() {
-                let channel = track.channel.and_then(|ch| project.channels.iter().find(|c| c.id == ch));
+                let channel = track.channel.and_then(|ch| project.channel(ch));
                 for device in channel.iter().flat_map(|c| c.devices.iter()) {
                     if let Some(path) =
                         device_file_path(device).filter(|path| session.device_asset_note(path).is_some())
@@ -1826,7 +1835,12 @@ impl App {
                 None => self.export_dialog = Some(state),
             }
         }
-        let other_dialog = self.unsaved_prompt.is_some() || self.save_prompt.is_some() || self.project_dialog.is_some();
+        // A recovery offer, and the agent prompt after it, wait for the dialogs that ask about
+        // a project, the question about a clip's plug-in edits among them.
+        let other_dialog = self.unsaved_prompt.is_some()
+            || self.save_prompt.is_some()
+            || self.project_dialog.is_some()
+            || self.ara_prompt.is_some();
         if !other_dialog && let Some(offer) = self.recovery.first().cloned() {
             let written = suhina_session::backup::date_time(offer.written);
             let written = written.get(..16).unwrap_or(&written);
@@ -2011,8 +2025,8 @@ impl App {
                 return None;
             }
             let device = session.ara_device(track)?;
-            let channel = project.tracks.iter().find(|t| t.id == track)?.channel?;
-            let channel = project.channels.iter().find(|c| c.id == channel)?;
+            let channel = project.track(track)?.channel?;
+            let channel = project.channel(channel)?;
             channel.devices.get(device).map(|d| d.name.clone())
         })
     }
@@ -2274,7 +2288,7 @@ impl App {
                 .iter()
                 .find(|t| t.id == track)
                 .and_then(|t| t.channel)
-                .and_then(|c| session.project().channels.iter().find(|ch| ch.id == c))
+                .and_then(|c| session.project().channel(c))
                 .map_or(0, |c| c.devices.len());
             (0..chain)
                 .filter_map(|index| Some((index, session.plugin_report(track, index)?)))
@@ -2297,7 +2311,7 @@ impl App {
                 .iter()
                 .find(|t| t.id == track)
                 .and_then(|t| t.channel)
-                .and_then(|c| s.project().channels.iter().find(|ch| ch.id == c))
+                .and_then(|c| s.project().channel(c))
                 .map(|ch| ch.devices.len())
         })
     }
@@ -2314,6 +2328,8 @@ impl App {
             return;
         }
         if action.id.starts_with("projects.") {
+            // Traced like every other command, so a trace shows tabs switched and closed (#821).
+            suhina_plugins::trace!("action {} {}", action.id, action.params);
             if let Err(e) = self.projects.execute(action.id, &action.params) {
                 self.status = Status::Error(e.0);
             }
@@ -2527,8 +2543,12 @@ impl App {
         let dropped = self.dropped_files(ui);
         keys_for_shortcuts(ui.ctx());
         self.launch_keys(ui, &mut actions);
-        for id in std::mem::take(&mut self.queued) {
-            self.do_action(&id, &mut actions);
+        // A menu bar item chosen while a dialog asks something is passed over, as its key is.
+        let queued = std::mem::take(&mut self.queued);
+        if !self.dialog_holds_actions() {
+            for id in queued {
+                self.do_action(&id, &mut actions);
+            }
         }
         self.shortcuts(ui, &mut actions);
         self.apply_zoom(ui.ctx());
@@ -2825,7 +2845,7 @@ impl App {
                                 .into_iter()
                                 .filter_map(|(track, device)| {
                                     let project = s.project();
-                                    let channel = project.tracks.iter().find(|t| t.id == track)?.channel?;
+                                    let channel = project.track(track)?.channel?;
                                     let name = project
                                         .channels
                                         .iter()
@@ -3003,6 +3023,9 @@ impl App {
         suhina_plugins::trace::timed("drop poll", || self.poll_drop(ui.ctx()));
         self.frame_trace.mark("drags");
 
+        // Actions collected above wait for a dialog that asks something, as the keys and the menu
+        // bar's queue do: they are dropped while one is open, and once an action opens one.
+        let actions_held = self.dialog_holds_actions();
         self.plugin_dialog(ui, window);
         self.project_dialogs(ui, window);
         if self.settings_open {
@@ -3015,6 +3038,9 @@ impl App {
         let actions: Vec<Action> = actions.into_iter().map(|action| self.remove_every_pick(action)).collect();
         let ran = actions.len();
         for action in &actions {
+            if actions_held || self.dialog_holds_actions() {
+                break;
+            }
             // Closing a project with unsaved changes asks first (Save, Don't save, Cancel).
             let closing = (action.id == "projects.close")
                 .then(|| action.params["project"].as_u64().and_then(|n| u32::try_from(n).ok()).map(ProjectId))
@@ -3275,7 +3301,7 @@ impl App {
                 .iter()
                 .find(|t| t.id == track)
                 .and_then(|t| t.channel)
-                .and_then(|c| project.channels.iter().find(|ch| ch.id == c))
+                .and_then(|c| project.channel(c))
                 .is_some_and(|c| c.devices.iter().any(|d| d.name == name))
         });
         if on_track {
@@ -3319,7 +3345,7 @@ impl App {
                 .iter()
                 .find(|t| t.id == shown_track)
                 .and_then(|t| t.channel)
-                .and_then(|c| session.project().channels.iter().find(|ch| ch.id == c))
+                .and_then(|c| session.project().channel(c))
                 .map_or_else(Vec::new, |c| {
                     suhina_engine::model::walk_devices(&c.devices).into_iter().map(|(path, _)| path).collect()
                 });
@@ -3882,8 +3908,6 @@ impl App {
         &mut self.piano_roll
     }
 
-    /// Tells the active project where the panel shows its embedded plug-in editors this frame
-    /// (none: they are hidden).
     /// Whether something drawn over the whole window is open (Settings or a dialog): an embedded
     /// plug-in editor is a native window egui cannot draw over, so it is hidden meanwhile (#723).
     fn over_the_window(&self) -> bool {
@@ -3894,11 +3918,15 @@ impl App {
             || self.save_prompt.is_some()
             || self.export_dialog.is_some()
             || self.unsaved_prompt.is_some()
+            || self.ara_prompt.is_some()
+            || self.missing.open
             || self.recovery_open.is_some()
             || !self.recovery.is_empty()
             || !self.agent_asks.is_empty()
     }
 
+    /// Tells the active project where the panel shows its embedded plug-in editors this frame
+    /// (none: they are hidden).
     fn place_editors(&mut self, places: &[detail_view::EditorPlace]) {
         // One placement a frame: with something over the window the editors are told to hide,
         // never shown first and hidden after (which left them over Settings).
@@ -4653,6 +4681,8 @@ impl App {
             || self.save_prompt.is_some()
             || self.export_dialog.is_some()
             || self.unsaved_prompt.is_some()
+            || self.ara_prompt.is_some()
+            || self.missing.open
             || !self.agent_asks.is_empty();
         let session_view = self.shown == View::Session && !self.sample_map.view.large;
         // A clicked slot or button keeps the focus; only a text field takes the keys away.
@@ -4706,18 +4736,27 @@ impl App {
         }
     }
 
-    /// Runs the actions whose keys were pressed (the keymap), unless a text field has the
-    /// keyboard or Settings is waiting for a key to bind.
-    fn shortcuts(&mut self, ui: &Ui, actions: &mut Vec<Action>) {
-        let dialog = self.project_dialog.is_some()
+    /// Whether a dialog is open that the keymap's actions wait for: their keys, in either
+    /// window, and the menu bar's items do nothing meanwhile.
+    fn dialog_holds_actions(&self) -> bool {
+        self.project_dialog.is_some()
             || self.save_prompt.is_some()
             || self.export_dialog.is_some()
             || self.unsaved_prompt.is_some()
+            || self.ara_prompt.is_some()
+            || self.missing.open
             || self.about_open
             || !self.agent_asks.is_empty()
-            || self.updates.open;
+            || self.updates.open
+    }
+
+    /// Runs the actions whose keys were pressed (the keymap), unless a text field has the
+    /// keyboard or Settings is waiting for a key to bind.
+    fn shortcuts(&mut self, ui: &Ui, actions: &mut Vec<Action>) {
+        // A prompt waiting on a stored edit (the ARA one) included: a key that changed the
+        // project meanwhile would leave that edit naming what is gone.
         if ui.ctx().egui_wants_keyboard_input()
-            || dialog
+            || self.dialog_holds_actions()
             || (self.settings_open && self.page.capture.is_some())
             || widgets::value_active(ui.ctx())
         {
@@ -5127,7 +5166,7 @@ impl App {
                 if let Some(track) = focused_track {
                     let name = self
                         .session()
-                        .and_then(|s| s.project().tracks.iter().find(|t| t.id == track))
+                        .and_then(|s| s.project().track(track))
                         .map(|t| t.name.clone())
                         .unwrap_or_default();
                     self.rename = Some((json!({ "rename_track": track.0 }), name, false));
@@ -5210,8 +5249,8 @@ impl App {
                     && let Some((track, index)) = self.selected_device
                     && let Some(enabled) = self.session().and_then(|s| {
                         let p = s.project();
-                        let channel = p.tracks.iter().find(|t| t.id == track).and_then(|t| t.channel)?;
-                        p.channels.iter().find(|c| c.id == channel)?.devices.get(index).map(|d| d.enabled)
+                        let channel = p.track(track).and_then(|t| t.channel)?;
+                        p.channel(channel)?.devices.get(index).map(|d| d.enabled)
                     })
                 {
                     actions.push(Action::new(
@@ -5789,8 +5828,11 @@ impl App {
             self.close_map_window();
             return;
         }
-        for action in &frame.keys {
-            self.do_action(action, actions);
+        // The map window's keys wait behind the same dialogs as the main window's.
+        if !self.dialog_holds_actions() {
+            for action in &frame.keys {
+                self.do_action(action, actions);
+            }
         }
         if !self.sample_map.view.window {
             return;
@@ -5915,15 +5957,13 @@ impl App {
         };
         let session = self.session();
         let name = |track: TrackId| {
-            session
-                .and_then(|s| s.project().tracks.iter().find(|t| t.id == track))
-                .map_or_else(String::new, |t| t.name.clone())
+            session.and_then(|s| s.project().track(track)).map_or_else(String::new, |t| t.name.clone())
         };
         let device = session
             .and_then(|s| {
                 let p = s.project();
-                let channel = p.tracks.iter().find(|t| t.id == from)?.channel?;
-                p.channels.iter().find(|c| c.id == channel)?.devices.get(index).map(|d| d.name.clone())
+                let channel = p.track(from)?.channel?;
+                p.channel(channel)?.devices.get(index).map(|d| d.name.clone())
             })
             .unwrap_or_default();
         if !released {
@@ -6114,7 +6154,7 @@ impl App {
     /// `copy`: Ctrl is held — a slot-to-slot drag says Copy instead of its move or swap.
     fn carry_label(&self, carry: &Carry, target: DropTarget, copy: bool) -> Option<String> {
         let project = self.session()?.project();
-        let name = |t: TrackId| project.tracks.iter().find(|x| x.id == t).map_or_else(String::new, |x| x.name.clone());
+        let name = |t: TrackId| project.track(t).map_or_else(String::new, |x| x.name.clone());
         let clip = if carry.name.is_empty() { "clip" } else { carry.name.as_str() };
         match target {
             DropTarget::Slot { track, scene } => {
@@ -6166,7 +6206,7 @@ impl App {
     /// A track's name, or its id when the project has none by that id.
     fn track_name(&self, track: TrackId) -> String {
         self.session()
-            .and_then(|s| s.project().tracks.iter().find(|t| t.id == track).map(|t| t.name.clone()))
+            .and_then(|s| s.project().track(track).map(|t| t.name.clone()))
             .unwrap_or_else(|| track.0.to_string())
     }
 
@@ -6252,8 +6292,7 @@ impl App {
 
     fn plan_drop(&self, items: &[BrowserItem], target: DropTarget, separate: bool) -> Option<drop::DropPlan> {
         let project = self.session()?.project();
-        let name =
-            |t: TrackId| project.tracks.iter().find(|x| x.id == t).map_or_else(|| t.0.to_string(), |x| x.name.clone());
+        let name = |t: TrackId| project.track(t).map_or_else(|| t.0.to_string(), |x| x.name.clone());
         if let [sample] = items
             && sample.kind == drop::ItemKind::Sample
             && sample.path().is_some_and(|path| !suhina_media::stems::is_stems_path(&path))
@@ -6261,7 +6300,7 @@ impl App {
                 DropTarget::Track(t) | DropTarget::Lane { track: t, .. } | DropTarget::Slot { track: t, .. } => Some(t),
                 _ => None,
             }
-            && let Some(track) = project.tracks.iter().find(|t| t.id == track_id)
+            && let Some(track) = project.track(track_id)
             && track.content.notes
             && !track.content.audio
             && let Some(channel) = project.channels.iter().find(|c| Some(c.id) == track.channel)
@@ -7075,6 +7114,46 @@ mod tests {
     }
 
     #[test]
+    fn a_menu_bar_item_chosen_while_the_question_about_a_clips_edits_is_open_does_nothing() {
+        let mut app = App::new();
+        app.set_session(suhina_session::Session::new(crate::demo::demo_project()), &[]);
+        app.shown = View::Session;
+        app.ara_prompt = Some((Action::new("clip.moveMany", serde_json::json!({})), "Plug-in".into()));
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(Vec2::new(1280.0, 800.0))
+            .build_ui_state(|ui, app: &mut App| app.ui(ui), app);
+        harness.run();
+        harness.state_mut().queue_action("view.toggle");
+        harness.run();
+        assert_eq!(harness.state().shown, View::Session);
+        assert!(harness.state().ara_prompt.is_some(), "the question is still asked");
+        // Answered, the menu bar works again; the item chosen meanwhile is not run late.
+        harness.state_mut().ara_prompt = None;
+        harness.run();
+        assert_eq!(harness.state().shown, View::Session);
+        harness.state_mut().queue_action("view.toggle");
+        harness.run();
+        assert_eq!(harness.state().shown, View::Arrangement);
+    }
+
+    #[test]
+    fn an_agent_asking_to_connect_waits_for_the_question_about_a_clips_edits() {
+        use egui_kittest::kittest::Queryable;
+        let mut app = App::new();
+        app.set_session(suhina_session::Session::new(crate::demo::demo_project()), &[]);
+        app.ara_prompt = Some((Action::new("clip.moveMany", serde_json::json!({})), "Plug-in".into()));
+        app.ask_agent(1, "Helper".into());
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(Vec2::new(1280.0, 800.0))
+            .build_ui_state(|ui, app: &mut App| app.ui(ui), app);
+        harness.run();
+        assert!(harness.query_by_label("Allow Helper").is_none(), "one dialog at a time");
+        harness.state_mut().ara_prompt = None;
+        harness.run();
+        assert!(harness.query_by_label("Allow Helper").is_some());
+    }
+
+    #[test]
     fn a_drag_from_the_map_window_lands_where_the_pointer_is_on_the_main_window() {
         let mut app = App::new();
         let main = Rect::from_min_size(Pos2::new(1920.0, 100.0), Vec2::new(1280.0, 800.0));
@@ -7356,6 +7435,32 @@ mod tests {
         assert!(clips(&harness) < slots, "the track's clips went with it, no other clip did");
     }
 
+    /// The ARA edits prompt and the missing files panel are drawn over the window: plug-in
+    /// editors hide, and the keys that edit the project wait until they close.
+    #[test]
+    fn the_ara_prompt_and_the_missing_files_panel_hold_the_keys_and_hide_the_editors() {
+        use egui_kittest::kittest::Queryable;
+        let mut app = App::new();
+        app.set_session(suhina_session::Session::new(crate::demo::demo_project()), &[]);
+        assert!(!app.over_the_window());
+        app.missing.open = true;
+        assert!(app.over_the_window());
+        app.missing.open = false;
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(Vec2::new(1280.0, 800.0))
+            .build_ui_state(|ui, app: &mut App| app.ui(ui), app);
+        harness.run();
+        let count = |h: &egui_kittest::Harness<'_, App>| h.state().session().map_or(0, |s| s.project().tracks.len());
+        let tracks = count(&harness);
+        harness.get_by_label("Track Keys").click();
+        harness.run();
+        harness.state_mut().ara_prompt = Some((Action::new("clip.moveMany", json!({})), "Editor".into()));
+        assert!(harness.state().over_the_window());
+        harness.key_press(egui::Key::Delete);
+        harness.run();
+        assert_eq!(count(&harness), tracks, "Delete waits for the prompt");
+    }
+
     #[test]
     fn a_device_dropped_on_a_return_column_goes_on_the_return() {
         use egui_kittest::kittest::Queryable;
@@ -7377,7 +7482,7 @@ mod tests {
         harness.run();
         let project = harness.state().session().map(|s| s.project().clone()).unwrap();
         let channel = project.tracks.iter().find(|t| t.name == "A Reverb").and_then(|t| t.channel).unwrap();
-        let devices = &project.channels.iter().find(|c| c.id == channel).unwrap().devices;
+        let devices = &project.channel(channel).unwrap().devices;
         assert!(devices.iter().any(|d| d.name == "Delay"), "{devices:?}");
     }
 
@@ -7427,6 +7532,7 @@ mod tests {
             bit_depth: None,
             normalize: false,
             dither: None,
+            mp3_rate: None,
             overwrite: false,
         };
 
@@ -7484,6 +7590,7 @@ mod tests {
             bit_depth: None,
             normalize: false,
             dither: None,
+            mp3_rate: None,
             overwrite: false,
         };
 

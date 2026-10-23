@@ -3,7 +3,7 @@ description: Measurements, states and tokens of every UI component, from the min
 read_when: widget sizes, marker row, clip slot states, value field, slider, knob, toggle, meter, track header levels, device panel, piano roll layout, audition button, velocity lane top edge, ghost menu, ghost notes look, Scale menu, scale rows, key column mark, folded rows
 type: spec
 status: draft
-last_verified: 2026-10-22
+last_verified: 2026-10-23
 covers:
   - crates/ui/src/kit/theme.rs
   - crates/ui/src/session/session_view.rs
@@ -17,6 +17,7 @@ covers:
   - crates/ui/src/arrangement/timeline.rs
   - crates/ui/src/arrangement/automation_lanes.rs
   - crates/ui/src/kit/motion.rs
+  - crates/ui/src/kit/scroll.rs
   - crates/ui/src/settings/settings_view.rs
   - crates/ui/src/settings/themes.rs
   - crates/ui/src/kit/meter.rs
@@ -117,7 +118,7 @@ from top to bottom:
 | Search | 26 px, `window.background`, 11 px search icon (a ring and a handle in `text.hint`), placeholder "Search", shortcut hint right in 9 px mono `text.hint` |
 | Category filters | Wrapping row of buttons, 16 px high, 7 px side padding, 2 px gaps, 10 px text; selected `text.value` with `window.background` text, others `control.background` (hover `control.hoverBackground`) with `text.secondary` |
 | Sidebar | 104 px, a 1 px `border` on its right; section titles (Pinned, Recent, Folders) 10 px `text.hint` with 8 px top padding; items 17 px, 10 px `text.secondary` (`text.primary` when selected); selected item `control.activeBackground`, hover `panel.hoverBackground`; a folder's state at its right in 9 px mono `text.hint` ("…" scanning, "poll", "gone"); "+ Add folder" in `text.hint` opens a path field in its place |
-| Tree row | 17 px; indent 12 px per level; 10 px lead (a chevron in `text.hint` for what opens, a play triangle for a selected or hovered sample or MIDI file), 12 px type icon, 5 px, name 10 px `text.value` (`text.primary` selected), tag dots, meta right in 9 px mono `text.hint` (length, "plug-in", "MIDI effect", the folder a search found it in); selected row `control.activeBackground`, hover `panel.hoverBackground`; a 2 px `border.strong` bar at the right edge shows the scroll position |
+| Tree row | 17 px; indent 12 px per level; 10 px lead (a chevron in `text.hint` for what opens, a play triangle for a selected or hovered sample or MIDI file), 12 px type icon, 5 px, name 10 px `text.value` (`text.primary` selected), tag dots, meta right in 9 px mono `text.hint` (length, "plug-in", "MIDI effect", the folder a search found it in); selected row `control.activeBackground`, hover `panel.hoverBackground`; the list's scroll bar at the right edge is the one every scroll area has (as in a device's panel: thin until the pointer is near, dragged, clicked in its track), from `kit::scroll` |
 | Type icons | Our own strokes, 1.1 px, 12 px: folder and heading `text.secondary`; MIDI note `track.2` (ochre); audio wave `track.3` (steel blue); instrument and preset `track.4`; effect `track.1`; MIDI effect the effect's box in `track.2`; project page `text.secondary` |
 | Colour tag | 6 px dot after the name, 2 px apart, in the tag's colour; a tag's right-click menu in the footer offers the colour palette (Session view › Colour palette), then any colour |
 | Preview strip | 54 px, `window.background`, a 1 px `border` on top: 22 px play button (`control.background`, its glyph `accent` while playing), file name 10 px, length, BPM ("~" when detected) and key right in 9 px mono `text.secondary`; under them the waveform ([waveforms](../spec/waveforms.md); a MIDI file: 2 px note bars), played part `text.secondary`, rest `text.hint`, playhead 1 px `accent` |
@@ -224,7 +225,7 @@ fader and toggles stay in line across the mixer.
 | Colour band | 5 px down the left edge, in the strip's padding, the strip's full height, the track colour (dimmed as the header while the track is off); a click opens the palette (Colour palette) |
 | Name | 16 px, filled with the track colour as the column's header: the track's name in 11 px in the text colour that reads on it, 4 px in, cut off at the strip's edge |
 | Output | 16 px across the strip: "→" (14 px, 10 px `text.hint`) and the output dropdown the rest of the row ("Main" or a group track, as the Arrangement header's; `track.setOutput`). Its menu lists Main and every group track but the track itself |
-| Device list | 16 px rows, one per device in chain order: its name in 10 px `text.secondary` 4 px in (`text.hint` while the device is off), "plug-in" right in 9 px `text.hint` for a plug-in; `control.hoverBackground` hovered, `control.activeBackground` for the picked devices, the same ones the detail area's chain lights. The wheel scrolls it. "No devices" in 10 px `text.hint` when the chain is empty. A click picks the device, selects the track and opens the detail area on its devices; Ctrl (Cmd) adds a device to the picks or takes it out, Shift picks the run from the last one; a double-click opens a plug-in's editor. Delete (`device.removeMany`), Ctrl+C, Ctrl+X and Ctrl+V (`device.copy`, `device.paste`, after the last pick) and Ctrl+D (`device.duplicateMany`: copies right after the last pick, which become the picks; the clipboard stays) act on the picks, in the strip and in the chain alike, and a panel's X on one of several picks removes them all. A row or a chain's panel dragged onto another track's column, header, strip or lane moves the device there (`device.moveToTrack`), with Ctrl held copies it; a label beside the pointer says which |
+| Device list | 16 px rows, one per device in chain order: its name in 10 px `text.secondary` 4 px in (`text.hint` while the device is off), "plug-in" right in 9 px `text.hint` for a plug-in; `control.hoverBackground` hovered, `control.activeBackground` for the picked devices, the same ones the detail area's chain lights. The wheel scrolls it. "No devices" in 10 px `text.hint` when the chain is empty. A click picks the device, selects the track and opens the detail area on its devices; Ctrl (Cmd) adds a device to the picks or takes it out, Shift picks the run from the last one; a double-click opens a plug-in's editor. Delete (`device.removeMany`), Ctrl+C, Ctrl+X and Ctrl+V (`device.copy`, `device.paste`, after the last pick) and Ctrl+D (`device.duplicateMany`: copies right after the last pick, which become the picks; the clipboard stays; the picks must be in one chain or branch) act on the picks, in the strip and in the chain alike, and a panel's X on one of several picks removes them all. A row or a chain's panel dragged onto another track's column, header, strip or lane moves the device there (`device.moveToTrack`), with Ctrl held copies it; a label beside the pointer says which |
 | Send knob | A knob with the return's letter in its centre (8 px mono `text.hint`), pointer `text.value` (`text.primary` hovered); −70 dB … +6 dB over the travel. A 1.5 px `text.value` dot under it when the send is before the fader |
 | Knob | 22 px; circle r 9, `control.background` fill, 1 px `text.hint` stroke; pointer 1.5 px from centre to r 8; travel −135° … +135°; pan pointer `text.primary`, sends `#C9C4BB` |
 | Toggles | 18 px at the bottom, at every height: track on (the track number, or the return's letter, in 10 px mono) and, 2 px apart, solo ("S" in 10 px) and cue ("C" in 10 px), a quarter each; on a track that plays notes or audio, solo, cue and arm take a fifth each and track on the rest |
@@ -687,3 +688,10 @@ The rest of this table is planned.
 | Note | Track colour; opacity 0.4 + 0.6 × velocity / 127; name in 9 px when ≥ 2 beats wide; 1 px gap to neighbours; selected = 1 px `text.primary` inset |
 | Velocity lane | 72 px default (resizable); 36 px scale column (127, 64, 1); one 1 px stem per note with a 5 × 2 head, chord notes 4 px apart; selected stem `text.primary` |
 | Velocity tools | 18 px: Randomize, Ramp, Deviation as small value fields |
+
+A note-playing Arrangement header has a neutral Auto / On / Off chip after record arm.
+It is 24 px wide on a compact row and 32 px on an expanded row. The popup explains
+what input monitoring means, offers Auto, Always on and Off, and shows a contextual
+footer for the current or hovered choice. MIDI monitoring is independent of record
+arm and headphone cue. Only record arm uses red; the MIDI input menu has the same
+choices. Header layout reserves this chip's width before names and level controls.

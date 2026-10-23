@@ -696,7 +696,7 @@ static COMMANDS: &[CommandSpec] = &[
     },
     CommandSpec {
         id: "clip.shiftFades",
-        label: "Lengthen or shorten the fade-in or fade-out of several arrangement clips by the same beats, each from its own, kept from 0 to what the clip's other fade leaves; as one undo step",
+        label: "Lengthen or shorten the fade-in or fade-out of several arrangement clips by the same beats, each from its own, kept from 0 to what the clip's other fade leaves; clips with no audio are left as they are; as one undo step",
         params: &[
             CLIPS,
             param("edge", ParamType::Text, "in or out"),
@@ -1175,7 +1175,7 @@ static COMMANDS: &[CommandSpec] = &[
     },
     CommandSpec {
         id: "track.setMidiInput",
-        label: "Choose which MIDI controllers a track hears while armed: every port, one port by name (from midi.inputs), or none, and every channel or one; saved with the project",
+        label: "Choose a track's MIDI input port, channel and monitoring: auto (while armed), in (always) or off (recording only); saved with the project",
         params: &[
             TRACK,
             optional(
@@ -1184,6 +1184,7 @@ static COMMANDS: &[CommandSpec] = &[
                 "\"all\" (the default), \"none\", or a port's name; left out keeps the port",
             ),
             optional("channel", ParamType::Integer, "1 to 16, or 0 for every channel; left out keeps the channel"),
+            optional("monitor", ParamType::Text, "auto, in or off; left out keeps the mode"),
         ],
         kind: CommandKind::Edit,
         run: set_midi_input,
@@ -1205,7 +1206,7 @@ static COMMANDS: &[CommandSpec] = &[
     },
     CommandSpec {
         id: "track.setArm",
-        label: "Arm a track or disarm it: an armed track's instrument plays what the MIDI inputs play (midi.inputs), whether the transport runs or not. Arming is not an edit: it is not undone and not saved",
+        label: "Arm a track for recording or disarm it. Auto input monitoring follows arm; In and Off are independent. Arming is not an edit: it is not undone and not saved",
         params: &[
             TRACK,
             param("armed", ParamType::Bool, "true arms the track"),
@@ -1616,7 +1617,7 @@ static COMMANDS: &[CommandSpec] = &[
     },
     CommandSpec {
         id: "project.export",
-        label: "Render the mix, or the named node of the track tree, to an audio file: wav (32-bit float or 16/24-bit PCM), flac or ogg, with sample rate, depth, range, tail, normalise and dither",
+        label: "Render the mix, or the named node of the track tree, to an audio file: wav (32-bit float or 16/24-bit PCM), flac, ogg or mp3, with sample rate, depth, mp3 rate, range, tail, normalise and dither",
         params: &[
             optional(
                 "path",
@@ -1624,9 +1625,14 @@ static COMMANDS: &[CommandSpec] = &[
                 "the file to write (output is an alias); its extension decides the format when format is left out",
             ),
             optional("output", ParamType::Text, "the file to write; an alias of path"),
-            optional("format", ParamType::Text, "wav (default), flac or ogg"),
-            optional("sample_rate", ParamType::Integer, "hertz; 48000 by default"),
-            optional("bit_depth", ParamType::Text, "32f (the default for wav), 24 or 16"),
+            optional("format", ParamType::Text, "wav (default), flac, ogg or mp3"),
+            optional("sample_rate", ParamType::Integer, "hertz; 48000 by default; with mp3, 32, 44.1 or 48 kHz"),
+            optional("bit_depth", ParamType::Text, "32f (the default for wav), 24 or 16; an error with ogg or mp3"),
+            optional(
+                "mp3_rate",
+                ParamType::Text,
+                "the mp3's rate: 320 (default), 256, 192 or 128 kbps, or the variable qualities v0 and v2",
+            ),
             optional("overwrite", ParamType::Bool, "true replaces an existing file; it is never replaced without this"),
             optional(
                 "range",
@@ -1856,7 +1862,7 @@ static COMMANDS: &[CommandSpec] = &[
     },
     CommandSpec {
         id: "device.duplicateMany",
-        label: "Copy several devices of a track (groups with everything in them) right after the last of them, in their order, as one undo step; the device clipboard stays as it was",
+        label: "Copy several devices of a track (groups with everything in them), all from one chain or branch, right after the last of them, in their order, as one undo step; the device clipboard stays as it was",
         params: &[TRACK, DEVICES],
         kind: CommandKind::Edit,
         run: devices::duplicate_many,
@@ -2654,7 +2660,7 @@ fn clips(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
         if only.is_some_and(|t| t != track) {
             continue;
         }
-        let name = p.tracks.iter().find(|t| t.id == track).map(|t| t.name.as_str()).unwrap_or_default();
+        let name = p.track(track).map(|t| t.name.as_str()).unwrap_or_default();
         for (index, clip) in lane.clips.iter().enumerate() {
             out.push(clip_json(p, name, track, index, clip));
         }
@@ -2670,7 +2676,7 @@ fn audio_overlaps(session: &mut Session, params: &Value) -> Result<Value, Comman
         Some(_) => Some(track_id(p, params)?),
         None => None,
     };
-    let track_name = |id: TrackId| p.tracks.iter().find(|t| t.id == id).map(|t| t.name.as_str()).unwrap_or_default();
+    let track_name = |id: TrackId| p.track(id).map(|t| t.name.as_str()).unwrap_or_default();
     let clip = |place: suhina_model::OverlapClip| {
         let found = p.arrangement.lanes.get(place.lane).and_then(|l| l.clips.get(place.index));
         let name = found.and_then(|c| p.content(c.content)).map(|c| c.name.as_str());
@@ -2794,7 +2800,7 @@ fn set_volume(session: &mut Session, params: &Value) -> Result<Value, CommandErr
     let gain = gain_of_db(db);
     let mut off = false;
     for (_, id) in &channels {
-        if let Some(channel) = session.project.channels.iter_mut().find(|c| c.id == *id) {
+        if let Some(channel) = session.project.channel_mut(*id) {
             channel.volume = gain;
             off |= automation::override_lane(&mut channel.automation, |l| l.param == suhina_model::automation::VOLUME);
         }
@@ -2836,7 +2842,7 @@ fn adjust_volume(session: &mut Session, params: &Value) -> Result<Value, Command
     let mut volumes = Vec::with_capacity(channels.len());
     let mut off = false;
     for (_, id) in &channels {
-        let Some(channel) = session.project.channels.iter_mut().find(|c| c.id == *id) else { continue };
+        let Some(channel) = session.project.channel_mut(*id) else { continue };
         let now = to_db(channel.volume).unwrap_or(f64::NEG_INFINITY);
         let next = (now + db).clamp(MIN_VOLUME_DB, MAX_VOLUME_DB);
         channel.volume = gain_of_db(next);
@@ -2854,7 +2860,7 @@ fn set_pan(session: &mut Session, params: &Value) -> Result<Value, CommandError>
     let channels = channel_ids(&session.project, params)?;
     let mut off = false;
     for (_, id) in &channels {
-        if let Some(channel) = session.project.channels.iter_mut().find(|c| c.id == *id) {
+        if let Some(channel) = session.project.channel_mut(*id) {
             channel.pan = pan;
             off |= automation::override_lane(&mut channel.automation, |l| l.param == suhina_model::automation::PAN);
         }
@@ -2885,7 +2891,7 @@ fn adjust_pan(session: &mut Session, params: &Value) -> Result<Value, CommandErr
     let mut pans = Vec::with_capacity(channels.len());
     let mut off = false;
     for (_, id) in &channels {
-        let Some(channel) = session.project.channels.iter_mut().find(|c| c.id == *id) else { continue };
+        let Some(channel) = session.project.channel_mut(*id) else { continue };
         channel.pan = (channel.pan + pan).clamp(-1.0, 1.0);
         off |= automation::override_lane(&mut channel.automation, |l| l.param == suhina_model::automation::PAN);
         pans.push(channel.pan);
@@ -2910,7 +2916,7 @@ fn set_mute(session: &mut Session, params: &Value) -> Result<Value, CommandError
     let channels = channel_ids(&session.project, params)?;
     let mut off = false;
     for (_, id) in &channels {
-        if let Some(channel) = session.project.channels.iter_mut().find(|c| c.id == *id) {
+        if let Some(channel) = session.project.channel_mut(*id) {
             channel.mute = mute;
             off |= automation::override_lane(&mut channel.automation, |l| l.param == suhina_model::automation::MUTE);
         }
@@ -2941,7 +2947,7 @@ pub(crate) fn gain_of_db(db: f64) -> f64 {
 fn channel_ids(p: &Project, params: &Value) -> Result<Vec<(TrackId, ChannelId)>, CommandError> {
     let mut out = Vec::new();
     for track in track_list(p, params)? {
-        let found = p.tracks.iter().find(|t| t.id == track).ok_or("the track is missing")?;
+        let found = p.track(track).ok_or("the track is missing")?;
         let channel = found.channel.ok_or_else(|| format!("track {:?} has no mixer channel", found.name))?;
         out.push((track, channel));
     }
@@ -2970,14 +2976,13 @@ pub(crate) fn track_list(p: &Project, params: &Value) -> Result<Vec<TrackId>, Co
 }
 
 fn channel_id_of(p: &Project, track: TrackId) -> Option<ChannelId> {
-    p.tracks.iter().find(|t| t.id == track).and_then(|t| t.channel)
+    p.track(track).and_then(|t| t.channel)
 }
 
 pub(crate) fn group_tracks(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let p = &mut session.project;
     let members = track_list(p, params)?;
-    let parents: Vec<Option<TrackId>> =
-        members.iter().map(|id| p.tracks.iter().find(|t| t.id == *id).and_then(|t| t.parent)).collect();
+    let parents: Vec<Option<TrackId>> = members.iter().map(|id| p.track(*id).and_then(|t| t.parent)).collect();
     let parent = parents.first().copied().flatten();
     if parents.iter().any(|x| *x != parent) {
         return Err("the tracks to group must all be in the same group, or in none".into());
@@ -3040,12 +3045,12 @@ pub(crate) fn group_tracks(session: &mut Session, params: &Value) -> Result<Valu
 fn ungroup_track(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let p = &mut session.project;
     let group = track_id(p, params)?;
-    let channel = channel_id_of(p, group).and_then(|id| p.channels.iter().find(|c| c.id == id));
+    let channel = channel_id_of(p, group).and_then(|id| p.channel(id));
     let Some(channel) = channel.filter(|c| c.role == ChannelRole::Submix) else {
         return Err("only a group track can be ungrouped".into());
     };
     let (group_channel, output) = (channel.id, channel.output);
-    let parent = p.tracks.iter().find(|t| t.id == group).and_then(|t| t.parent);
+    let parent = p.track(group).and_then(|t| t.parent);
     for track in p.tracks.iter_mut().filter(|t| t.parent == Some(group)) {
         track.parent = parent;
     }
@@ -3061,9 +3066,7 @@ fn ungroup_track(session: &mut Session, params: &Value) -> Result<Value, Command
 fn set_group(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let p = &mut session.project;
     let track = track_id(p, params)?;
-    let role_of = |p: &Project, t: TrackId| {
-        channel_id_of(p, t).and_then(|id| p.channels.iter().find(|c| c.id == id)).map(|c| c.role)
-    };
+    let role_of = |p: &Project, t: TrackId| channel_id_of(p, t).and_then(|id| p.channel(id)).map(|c| c.role);
     if matches!(role_of(p, track), Some(ChannelRole::Effect | ChannelRole::Master)) {
         return Err("a return track cannot go into a group".into());
     }
@@ -3080,7 +3083,7 @@ fn set_group(session: &mut Session, params: &Value) -> Result<Value, CommandErro
     let output = match group {
         None => None,
         Some(g) => {
-            let name = p.tracks.iter().find(|t| t.id == g).map(|t| t.name.clone()).unwrap_or_default();
+            let name = p.track(g).map(|t| t.name.clone()).unwrap_or_default();
             if role_of(p, g) != Some(ChannelRole::Submix) {
                 return Err(format!("{name:?} is not a group track").into());
             }
@@ -3101,9 +3104,8 @@ fn set_group(session: &mut Session, params: &Value) -> Result<Value, CommandErro
     let block: Vec<Track> = p.tracks.iter().filter(|t| family.contains(&t.id)).cloned().collect();
     p.tracks.retain(|t| !family.contains(&t.id));
     // The group's own tracks, top-level returns aside, and where the block goes among them.
-    let is_return = |p: &Project, t: &Track| {
-        t.channel.and_then(|id| p.channels.iter().find(|c| c.id == id)).is_some_and(|c| c.role == ChannelRole::Effect)
-    };
+    let is_return =
+        |p: &Project, t: &Track| t.channel.and_then(|id| p.channel(id)).is_some_and(|c| c.role == ChannelRole::Effect);
     let siblings: Vec<TrackId> =
         p.tracks.iter().filter(|t| t.parent == group && !is_return(p, t)).map(|t| t.id).collect();
     let index = index.map_or(siblings.len(), |i| usize::try_from(i).unwrap_or(usize::MAX).min(siblings.len()));
@@ -3118,11 +3120,11 @@ fn set_group(session: &mut Session, params: &Value) -> Result<Value, CommandErro
     .unwrap_or(p.tracks.len())
     .min(p.tracks.len());
     p.tracks.splice(at..at, block);
-    if let Some(t) = p.tracks.iter_mut().find(|t| t.id == track) {
+    if let Some(t) = p.track_mut(track) {
         t.parent = group;
     }
     if let Some(channel) = channel_id_of(p, track)
-        && let Some(c) = p.channels.iter_mut().find(|c| c.id == channel)
+        && let Some(c) = p.channel_mut(channel)
     {
         c.output = output;
     }
@@ -3162,11 +3164,11 @@ fn rename_track(session: &mut Session, params: &Value) -> Result<Value, CommandE
     let name = params.get("name").and_then(Value::as_str).map(str::trim).filter(|n| !n.is_empty());
     let name = name.ok_or("name must be a text, not empty")?.to_string();
     let track = track_id(&session.project, params)?;
-    if let Some(t) = session.project.tracks.iter_mut().find(|t| t.id == track) {
+    if let Some(t) = session.project.track_mut(track) {
         t.name.clone_from(&name);
     }
     if let Some(channel) = channel_id_of(&session.project, track)
-        && let Some(c) = session.project.channels.iter_mut().find(|c| c.id == channel)
+        && let Some(c) = session.project.channel_mut(channel)
     {
         c.name.clone_from(&name);
     }
@@ -3177,7 +3179,7 @@ fn rename_track(session: &mut Session, params: &Value) -> Result<Value, CommandE
 fn color_group(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let group = track_id(&session.project, params)?;
     let p = &mut session.project;
-    let own = p.tracks.iter().find(|t| t.id == group).map(|t| t.color).ok_or("the track is missing")?;
+    let own = p.track(group).map(|t| t.color).ok_or("the track is missing")?;
     let colour = match params.get("color") {
         None | Some(Value::Null) => own,
         Some(_) => crate::clip_color::parse_color(params, "color")?.or(own),
@@ -3243,7 +3245,7 @@ fn set_color(session: &mut Session, params: &Value) -> Result<Value, CommandErro
         }
     };
     let track = track_id(&session.project, params)?;
-    if let Some(t) = session.project.tracks.iter_mut().find(|t| t.id == track) {
+    if let Some(t) = session.project.track_mut(track) {
         t.color = color;
     }
     Ok(json!({ "color": text }))
@@ -3252,9 +3254,7 @@ fn set_color(session: &mut Session, params: &Value) -> Result<Value, CommandErro
 fn delete_track(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let track = track_id(&session.project, params)?;
     let p = &session.project;
-    let is_group = channel_id_of(p, track)
-        .and_then(|id| p.channels.iter().find(|c| c.id == id))
-        .is_some_and(|c| c.role == ChannelRole::Submix);
+    let is_group = channel_id_of(p, track).and_then(|id| p.channel(id)).is_some_and(|c| c.role == ChannelRole::Submix);
     if is_group {
         ungroup_track(session, params)?;
         return Ok(json!({ "deleted": track.0 }));
@@ -3568,7 +3568,7 @@ fn paste_clip(session: &mut Session, params: &Value) -> Result<Value, CommandErr
     let track = track_id(&session.project, params)?;
     {
         let p = &session.project;
-        let target = p.tracks.iter().find(|t| t.id == track).ok_or("the track is missing")?;
+        let target = p.track(track).ok_or("the track is missing")?;
         for (_, content) in &session.clipboard {
             let notes = content.lanes.iter().any(|l| matches!(l.data, LaneData::Notes(_)));
             let audio = content.lanes.iter().any(|l| matches!(l.data, LaneData::Audio(_)));
@@ -3615,7 +3615,7 @@ fn paste_clip(session: &mut Session, params: &Value) -> Result<Value, CommandErr
     let lane = match p.arrangement.lanes.iter().position(|l| l.track == Some(track)) {
         Some(lane) => lane,
         None => {
-            let name = p.tracks.iter().find(|t| t.id == track).map(|t| t.name.clone()).unwrap_or_default();
+            let name = p.track(track).map(|t| t.name.clone()).unwrap_or_default();
             let id = p.new_lane_id()?;
             p.arrangement.lanes.push(ArrangementLane { id, name, track: Some(track), clips: Vec::new() });
             p.arrangement.lanes.len() - 1
@@ -3703,7 +3703,8 @@ fn rename_clip(session: &mut Session, params: &Value) -> Result<Value, CommandEr
     Ok(json!({ "name": name }))
 }
 
-/// `clip.shiftFades {clips, edge, beats}` (#715).
+/// `clip.shiftFades {clips, edge, beats}` (#715). Only an audio clip has fades, as in
+/// `clip.setFades`: a clip with no audio lane is left as it is and not counted in `clips`.
 fn shift_fades(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let fade_in = match params.get("edge").and_then(Value::as_str) {
         Some("in") => true,
@@ -3715,6 +3716,13 @@ fn shift_fades(session: &mut Session, params: &Value) -> Result<Value, CommandEr
     let chosen = clip_list(p, params)?;
     let mut changed = 0;
     for (track, index) in chosen {
+        let lane = p.arrangement.lanes.iter().find(|l| l.track == Some(track));
+        let content = lane.and_then(|l| l.clips.get(index)).map(|c| c.content).ok_or("the clip is missing")?;
+        // Only an audio clip has fades (`clip.setFades`): a mixed selection leaves the others.
+        let audio = p.content(content).is_some_and(|c| c.lanes.iter().any(|l| matches!(l.data, LaneData::Audio(_))));
+        if !audio {
+            continue;
+        }
         let clip = p
             .arrangement
             .lanes
@@ -3870,7 +3878,7 @@ fn set_output(session: &mut Session, params: &Value) -> Result<Value, CommandErr
                 .iter()
                 .find(|t| t.id == track)
                 .and_then(|t| t.channel)
-                .and_then(|id| p.channels.iter().find(|c| c.id == id))
+                .and_then(|id| p.channel(id))
                 .ok_or("the target track has no mixer channel")?;
             if target.role != ChannelRole::Submix {
                 return Err(format!("{:?} is not a group track; route to \"main\" or a group", target.name).into());
@@ -3882,7 +3890,7 @@ fn set_output(session: &mut Session, params: &Value) -> Result<Value, CommandErr
                     Some(id) if id == from => {
                         return Err(format!("routing into {:?} would make a loop", target.name).into());
                     }
-                    Some(id) => next = p.channels.iter().find(|c| c.id == id).and_then(|c| c.output),
+                    Some(id) => next = p.channel(id).and_then(|c| c.output),
                     None => break,
                 }
             }
@@ -3942,12 +3950,24 @@ fn set_midi_input(session: &mut Session, params: &Value) -> Result<Value, Comman
             _ => return Err("channel must be 0 (every channel) or 1 to 16".into()),
         },
     };
+    let monitor = match params.get("monitor") {
+        None => None,
+        Some(v) => Some(match v.as_str() {
+            Some("auto") => suhina_model::Monitor::Auto,
+            Some("in") => suhina_model::Monitor::In,
+            Some("off") => suhina_model::Monitor::Off,
+            _ => return Err("monitor must be auto, in or off".into()),
+        }),
+    };
     let track = session.project.tracks.iter_mut().find(|t| t.id == id).ok_or("the track is missing")?;
     if let Some(port) = port {
         track.midi_input.port = port;
     }
     if let Some(channel) = channel {
         track.midi_input.channel = channel;
+    }
+    if let Some(monitor) = monitor {
+        track.midi_input.monitor = monitor;
     }
     Ok(json!({ "midi_input": midi_input_json(&track.midi_input) }))
 }
@@ -3984,7 +4004,7 @@ fn set_audio_input(session: &mut Session, params: &Value) -> Result<Value, Comma
             _ => return Err("monitor must be auto, in or off".into()),
         }),
     };
-    let track = session.project.tracks.iter_mut().find(|t| t.id == id).ok_or("the track is missing")?;
+    let track = session.project.track_mut(id).ok_or("the track is missing")?;
     if let Some(channels) = channels {
         track.audio_input.channels = channels;
     }
@@ -4018,7 +4038,12 @@ pub(crate) fn midi_input_json(input: &suhina_model::MidiInput) -> Value {
         MidiPort::Nothing => "none",
         MidiPort::Named(name) => name.as_str(),
     };
-    json!({ "port": port, "channel": input.channel })
+    let monitor = match input.monitor {
+        suhina_model::Monitor::Auto => "auto",
+        suhina_model::Monitor::In => "in",
+        suhina_model::Monitor::Off => "off",
+    };
+    json!({ "port": port, "channel": input.channel, "monitor": monitor })
 }
 
 fn set_arm(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
@@ -4105,7 +4130,7 @@ fn move_clip(session: &mut Session, params: &Value) -> Result<Value, CommandErro
                 c.lanes.iter().any(|l| matches!(l.data, LaneData::Audio(_))),
             )
         });
-        let target = p.tracks.iter().find(|t| t.id == to).ok_or("the target track is missing")?;
+        let target = p.track(to).ok_or("the target track is missing")?;
         let fits = (!kinds.0 || target.content.notes) && (!kinds.1 || target.content.audio) && (kinds.0 || kinds.1);
         if !fits {
             let what = if kinds.1 { "an audio clip" } else { "a MIDI clip" };
@@ -4115,7 +4140,7 @@ fn move_clip(session: &mut Session, params: &Value) -> Result<Value, CommandErro
     let to_lane = match p.arrangement.lanes.iter().position(|l| l.track == Some(to)) {
         Some(lane) => lane,
         None => {
-            let name = p.tracks.iter().find(|t| t.id == to).map(|t| t.name.clone()).unwrap_or_default();
+            let name = p.track(to).map(|t| t.name.clone()).unwrap_or_default();
             let id = p.new_lane_id()?;
             p.arrangement.lanes.push(ArrangementLane { id, name, track: Some(to), clips: Vec::new() });
             p.arrangement.lanes.len() - 1
@@ -4180,8 +4205,8 @@ fn move_slot(session: &mut Session, params: &Value) -> Result<Value, CommandErro
             c.lanes.iter().any(|l| matches!(l.data, LaneData::Audio(_))),
         )
     });
-    let target = project.tracks.iter().find(|t| t.id == to_track).ok_or("the target track is missing")?;
-    let source_track = project.tracks.iter().find(|t| t.id == from_track).ok_or("the source track is missing")?;
+    let target = project.track(to_track).ok_or("the target track is missing")?;
+    let source_track = project.track(from_track).ok_or("the source track is missing")?;
     let fits = (!kinds.0 || target.content.notes) && (!kinds.1 || target.content.audio) && (kinds.0 || kinds.1);
     if !fits {
         let what = if kinds.1 { "an audio clip" } else { "a MIDI clip" };
@@ -4829,7 +4854,7 @@ pub(crate) fn scene_index(p: &Project, params: &Value) -> Result<usize, CommandE
 }
 
 fn track_name(p: &Project, track: TrackId) -> String {
-    p.tracks.iter().find(|t| t.id == track).map_or_else(|| track.0.to_string(), |t| t.name.clone())
+    p.track(track).map_or_else(|| track.0.to_string(), |t| t.name.clone())
 }
 
 fn undo(session: &mut Session, _: &Value) -> Result<Value, CommandError> {
@@ -4881,7 +4906,7 @@ pub(crate) fn channel_param<'a>(session: &'a mut Session, params: &Value) -> Res
         .find(|t| t.id == track)
         .and_then(|t| t.channel)
         .ok_or("the track has no mixer channel")?;
-    session.project.channels.iter_mut().find(|c| c.id == channel).ok_or_else(|| "the track's channel is missing".into())
+    session.project.channel_mut(channel).ok_or_else(|| "the track's channel is missing".into())
 }
 
 /// The read-only form of [`channel_param`], for the `Read` commands that do not edit.
@@ -4894,12 +4919,12 @@ pub(crate) fn channel_read<'a>(session: &'a Session, params: &Value) -> Result<&
         .find(|t| t.id == track)
         .and_then(|t| t.channel)
         .ok_or("the track has no mixer channel")?;
-    session.project.channels.iter().find(|c| c.id == channel).ok_or_else(|| "the track's channel is missing".into())
+    session.project.channel(channel).ok_or_else(|| "the track's channel is missing".into())
 }
 
 fn channel_of<'a>(p: &'a Project, track: &Track) -> Option<&'a Channel> {
     let id = track.channel?;
-    p.channels.iter().find(|c| c.id == id)
+    p.channel(id)
 }
 
 pub(crate) fn number(params: &Value, name: &str) -> Result<f64, CommandError> {
