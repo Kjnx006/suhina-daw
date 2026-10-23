@@ -118,13 +118,11 @@ pub(crate) enum Kind {
 /// effect or an effect (everything else, unknown and missing devices included).
 pub(crate) fn kind_of(session: &Session, device: &Device) -> Kind {
     match &device.kind {
-        DeviceKind::Builtin(id) => {
-            if suhina_device_registry::info(id).is_some_and(|info| info.role == Role::Instrument) {
-                Kind::Instrument
-            } else {
-                Kind::Effect
-            }
-        }
+        DeviceKind::Builtin(id) => match suhina_device_registry::info(id).map(|info| info.role) {
+            Some(Role::Instrument) => Kind::Instrument,
+            Some(Role::MidiEffect) => Kind::MidiEffect,
+            _ => Kind::Effect,
+        },
         DeviceKind::Sd => match crate::devices::sd_graph(device).map(|g| g.role) {
             Ok(suhina_device_sdk::DeviceRole::Instrument) => Kind::Instrument,
             Ok(suhina_device_sdk::DeviceRole::MidiEffect) => Kind::MidiEffect,
@@ -155,6 +153,9 @@ pub(crate) fn check_chain(session: &Session, devices: &[Device], plays_notes: bo
     let midi = kinds.iter().take_while(|k| **k == Kind::MidiEffect).count();
     if kinds.iter().skip(midi).any(|k| *k == Kind::MidiEffect) {
         return Err("MIDI effects go first in a track's chain".into());
+    }
+    if !plays_notes && midi > 0 {
+        return Err("a MIDI effect goes on a MIDI track".into());
     }
     let instruments: Vec<usize> =
         kinds.iter().enumerate().filter(|(_, k)| **k == Kind::Instrument).map(|(i, _)| i).collect();
@@ -208,7 +209,7 @@ fn plays_notes(session: &Session, params: &Value) -> Result<bool, CommandError> 
 
 /// Applies `edit` to a copy of the track's devices, checks the chain's rules on the result and
 /// keeps it only when they hold, so a refused edit changes nothing.
-fn edit_chain<T>(
+pub(crate) fn edit_chain<T>(
     session: &mut Session,
     params: &Value,
     edit: impl FnOnce(&mut Vec<Device>) -> Result<T, CommandError>,
