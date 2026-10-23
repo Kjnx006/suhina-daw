@@ -48,7 +48,7 @@ use crate::detail::detail_view::{self, ClipRef};
 use crate::detail::follow_view;
 use crate::detail::piano_roll::{self, PianoRollState};
 use crate::interaction::drop::{self, BrowserItem, DropProbe, DropTarget};
-use crate::interaction::grid::{Grid, SlotState};
+use crate::interaction::grid::{SlotState, TrackGrid};
 use crate::interaction::pick::{PickField, PickRequest};
 use crate::interaction::status::Status;
 use crate::kit::motion;
@@ -2162,7 +2162,7 @@ impl App {
         self.frame_trace.mark("input");
 
         let grid = self.session().map(|s| {
-            let mut grid = Grid::build(s.project(), s.player().map(|p| p.monitor()));
+            let mut grid = TrackGrid::build(s.project(), s.player().map(|p| p.monitor()));
             grid.midi_ports = self.projects.midi_ports().to_vec();
             grid.metronome = s.metronome();
             grid.input_channels =

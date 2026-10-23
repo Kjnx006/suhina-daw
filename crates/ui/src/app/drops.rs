@@ -641,7 +641,7 @@ impl App {
     /// How far each column's playing clip is through its loop — or through itself, without one —
     /// from the engine's monitor: the beats since the clip's launch, folded through its offset
     /// and loop, as the piano roll's playhead maps them.
-    pub(super) fn progress(&self, grid: &Grid) -> Vec<Option<f32>> {
+    pub(super) fn progress(&self, grid: &TrackGrid) -> Vec<Option<f32>> {
         let Some(monitor) = self.session().and_then(|s| s.player()).map(|p| p.monitor()) else {
             return Vec::new();
         };

@@ -432,7 +432,7 @@ impl App {
                         (json!({ "clip": id.0 }), name)
                     }),
                     View::Session => self.view.selected_slot.and_then(|(track, scene)| {
-                        let grid = self.session().map(|s| Grid::build(s.project(), None))?;
+                        let grid = self.session().map(|s| TrackGrid::build(s.project(), None))?;
                         let slot = grid.columns.iter().find(|c| c.track == track)?.slots.get(scene)?;
                         (slot.state != crate::interaction::grid::SlotState::Empty)
                             .then(|| (json!({ "track": track.0, "scene": scene + 1 }), slot.name.clone()))
@@ -605,7 +605,7 @@ impl App {
                     "selection.left" => Step::Left,
                     _ => Step::Right,
                 };
-                let grid = self.session().map(|s| Grid::build(s.project(), None));
+                let grid = self.session().map(|s| TrackGrid::build(s.project(), None));
                 if let Some((track, scene)) = grid.and_then(|g| session_view::step_slot(&g, from, step)) {
                     self.view.select_slot(track, scene);
                 }

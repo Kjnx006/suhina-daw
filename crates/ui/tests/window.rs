@@ -15,7 +15,7 @@ use suhina_session::Session;
 use suhina_ui::arrangement::arrangement_view::{self, ArrangementViewState};
 use suhina_ui::arrangement::timeline::Timeline;
 use suhina_ui::demo::demo_project;
-use suhina_ui::interaction::grid::{Grid, SlotState};
+use suhina_ui::interaction::grid::{SlotState, TrackGrid};
 use suhina_ui::kit::widgets::Action;
 use suhina_ui::session::session_view::{self, SessionViewState};
 use suhina_ui::settings::themes::FileAction;
@@ -49,14 +49,14 @@ impl egui::DroppedFile for TestFile {
 }
 
 pub(super) struct SessionHarness {
-    pub(super) grid: Grid,
+    pub(super) grid: TrackGrid,
     pub(super) state: SessionViewState,
     pub(super) actions: Vec<Action>,
 }
 
 pub(super) fn view() -> Harness<'static, SessionHarness> {
     let view = SessionHarness {
-        grid: Grid::build(&demo_project(), None),
+        grid: TrackGrid::build(&demo_project(), None),
         state: SessionViewState::default(),
         actions: Vec::new(),
     };

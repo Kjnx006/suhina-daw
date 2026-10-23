@@ -362,7 +362,7 @@ while a control worker is busy.
 | A way for the user or an agent to change something | a command in `session` | Typed params, undo, a test in `session/tests` |
 | A new kind of file to decode or analyse | `media` | Input sizes are hostile; cap them |
 | Something agents need | `automation`, on top of commands | File roots; `isError` for failed commands |
-| A view or control in the UI | `ui`, in the folder of its view, drawn from `Grid`-like data built from the project and monitors ([Inside the `ui` crate](#inside-the-ui-crate)) | Dispatches commands; never edits the model directly; sizes and colours from `theme` and `docs/design/` |
+| A view or control in the UI | `ui`, in the folder of its view, drawn from `TrackGrid`-like data built from the project and monitors ([Inside the `ui` crate](#inside-the-ui-crate)) | Dispatches commands; never edits the model directly; sizes and colours from `theme` and `docs/design/` |
 | A built-in instrument or effect | a crate under `devices/`, blocks in `dsp` | ADR 0004; `conformance::check` in a test; import mapping in the format crate |
 
 ## Planned parts

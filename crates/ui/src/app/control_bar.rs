@@ -9,7 +9,7 @@ impl App {
     pub(super) fn control_bar(
         &mut self,
         ui: &mut Ui,
-        grid: Option<&Grid>,
+        grid: Option<&TrackGrid>,
         cpu: Option<u32>,
         ram: Option<u64>,
         actions: &mut Vec<Action>,
@@ -332,7 +332,7 @@ impl App {
         painter.hline(bar.x_range(), bar.bottom() - 0.5, theme::hairline(theme::border()));
     }
 
-    pub(super) fn status_bar(&self, ui: &mut Ui, grid: Option<&Grid>) {
+    pub(super) fn status_bar(&self, ui: &mut Ui, grid: Option<&TrackGrid>) {
         let bar = ui.max_rect();
         let painter = ui.painter_at(bar);
         let (text, color) = match &self.status {

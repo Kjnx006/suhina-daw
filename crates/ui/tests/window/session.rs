@@ -66,7 +66,7 @@ fn a_folded_group_hides_its_columns_in_the_session_view() {
     let group = project.tracks.pop().unwrap();
     project.tracks.insert(0, group);
     let view =
-        SessionHarness { grid: Grid::build(&project, None), state: SessionViewState::default(), actions: vec![] };
+        SessionHarness { grid: TrackGrid::build(&project, None), state: SessionViewState::default(), actions: vec![] };
     let mut harness = Harness::builder().with_size(SIZE).build_ui_state(
         |ui, v: &mut SessionHarness| session_view::show(ui, &v.grid, &[], &mut v.state, &mut v.actions),
         view,
@@ -202,7 +202,7 @@ fn a_clips_name_selects_it_and_its_mark_launches_it() {
 #[test]
 fn the_arrows_step_through_the_slots_of_tracks_and_stop_at_the_edges() {
     use suhina_ui::session::session_view::{Step, step_slot};
-    let grid = Grid::build(&demo_project(), None);
+    let grid = TrackGrid::build(&demo_project(), None);
     let (drums, bass, vox) = (TrackId(1), TrackId(2), TrackId(4));
     assert_eq!(step_slot(&grid, (bass, 1), Step::Up), Some((bass, 0)));
     assert_eq!(step_slot(&grid, (bass, 1), Step::Down), Some((bass, 2)));
