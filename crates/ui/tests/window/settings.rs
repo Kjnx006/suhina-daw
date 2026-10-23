@@ -368,7 +368,7 @@ fn settings_set_the_toolbar_size_and_the_mouse_switches() {
 fn settings_audio_on(host: &'static str) -> Result<Harness<'static, App>, String> {
     let mut app = demo_app();
     app.projects_mut().set_audio_system(std::sync::Arc::new(StandAudio(host)));
-    app.projects_mut().open_output(None).map_err(|e| e.0)?;
+    app.projects_mut().open_output(None).map_err(|e| e.message().to_owned())?;
     let mut harness = window(app);
     harness.key_press_modifiers(Modifiers::COMMAND, Key::Comma);
     harness.run();

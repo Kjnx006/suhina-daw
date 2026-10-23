@@ -215,7 +215,7 @@ pub fn render_launch_script(
         while let Some(step) = next.next_if(|s| frame_of(s.at) <= done) {
             results.push(match session.execute(&step.id, &step.params) {
                 Ok(result) => json!({ "at": step.at, "id": step.id, "ok": true, "result": result }),
-                Err(e) => json!({ "at": step.at, "id": step.id, "ok": false, "error": e.0 }),
+                Err(e) => json!({ "at": step.at, "id": step.id, "ok": false, "error": e.message().to_owned() }),
             });
         }
         let until = next.peek().map_or(total, |s| frame_of(s.at)).clamp(done + 1, total).min(done + 512);

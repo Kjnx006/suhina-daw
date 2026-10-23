@@ -754,7 +754,7 @@ impl App {
         let id = match self.projects.add(session, None) {
             Ok(id) => id,
             Err(e) => {
-                self.status = Status::Error(e.0);
+                self.status = Status::Error(e.message().to_owned());
                 return None;
             }
         };
@@ -1454,7 +1454,7 @@ impl App {
                         self.browser.relist();
                         self.status = Status::Done(format!("Added {text} to the browser"));
                     }
-                    Err(e) => self.status = Status::Error(e.0),
+                    Err(e) => self.status = Status::Error(e.message().to_owned()),
                 }
                 return;
             }
@@ -1496,7 +1496,7 @@ impl App {
         match self.projects.execute("project.collect", &json!({ "folder": folder.display().to_string() })) {
             Ok(_) => true,
             Err(e) => {
-                self.status = Status::Error(e.0);
+                self.status = Status::Error(e.message().to_owned());
                 false
             }
         }
@@ -1553,7 +1553,7 @@ impl App {
                 true
             }
             Err(e) => {
-                self.status = Status::Error(e.0);
+                self.status = Status::Error(e.message().to_owned());
                 false
             }
         }
@@ -1976,7 +1976,7 @@ impl App {
             // Traced like every other command, so a trace shows tabs switched and closed (#821).
             suhina_plugins::trace!("action {} {}", action.id, action.params);
             if let Err(e) = self.projects.execute(action.id, &action.params) {
-                self.status = Status::Error(e.0);
+                self.status = Status::Error(e.message().to_owned());
             }
             return;
         }
@@ -2069,14 +2069,14 @@ impl App {
             }
             // Recording and consolidating audio write files next to the project: an unsaved one
             // is saved first, so the next try works (#682, #704).
-            Err(e) if e.0.starts_with("save the project first") => {
+            Err(e) if e.message().to_owned().starts_with("save the project first") => {
                 self.status = Status::Hint(format!(
                     "Save the project first: {}",
-                    e.0.trim_start_matches("save the project first: ")
+                    e.message().to_owned().trim_start_matches("save the project first: ")
                 ));
                 self.save_active(false);
             }
-            Err(e) => self.status = Status::Error(e.0),
+            Err(e) => self.status = Status::Error(e.message().to_owned()),
         }
     }
 
@@ -2655,7 +2655,7 @@ impl App {
                 if let (Some(track), Some(device), Ok(session)) = (track, device, self.projects.session_mut(None))
                     && let Err(e) = session.set_ara_floating(track, device, float)
                 {
-                    self.status = Status::Error(e.0);
+                    self.status = Status::Error(e.message().to_owned());
                 }
                 continue;
             }

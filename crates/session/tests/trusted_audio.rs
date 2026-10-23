@@ -26,7 +26,7 @@ fn wav(path: &Path) {
 }
 
 fn run(projects: &mut Projects, id: &str, params: Value) -> Value {
-    projects.execute(id, &params).map_err(|e| e.0).unwrap()
+    projects.execute(id, &params).map_err(String::from).unwrap()
 }
 
 #[test]

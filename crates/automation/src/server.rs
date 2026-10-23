@@ -320,7 +320,7 @@ impl SuhinaMcp {
         project: Option<u32>,
         f: impl FnOnce(&mut Session) -> Result<T, String> + Send + 'static,
     ) -> Result<T, String> {
-        self.with_projects(move |projects| f(projects.session_mut(project.map(ProjectId)).map_err(|e| e.0)?)).await
+        self.with_projects(move |projects| f(projects.session_mut(project.map(ProjectId)).map_err(String::from)?)).await
     }
 }
 
@@ -342,10 +342,10 @@ impl SuhinaMcp {
         let output = self.audio_output;
         let result = self
             .with_projects(move |projects| {
-                let (opened, mut warnings) = Session::open(&path).map_err(|e| e.0)?;
-                let id = projects.add(opened, None).map_err(|e| e.0)?;
-                let session = projects.session_mut(Some(id)).map_err(|e| e.0)?;
-                let mut info = session.execute("project.info", &json!({})).map_err(|e| e.0)?;
+                let (opened, mut warnings) = Session::open(&path).map_err(String::from)?;
+                let id = projects.add(opened, None).map_err(String::from)?;
+                let session = projects.session_mut(Some(id)).map_err(String::from)?;
+                let mut info = session.execute("project.info", &json!({})).map_err(String::from)?;
                 info["source"] = json!(display_path(&path));
                 let audio_output = if output { start_audio(projects, id, &mut warnings) } else { Value::Null };
                 Ok(json!({ "project": id.0, "info": info, "warnings": warnings, "audio_output": audio_output }))
@@ -360,7 +360,7 @@ impl SuhinaMcp {
     async fn project_inspect(&self, Parameters(p): Parameters<InspectParams>) -> Result<CallToolResult, McpError> {
         let result = self
             .with_session(p.project, |session| {
-                let mut read = |id: &str| session.execute(id, &json!({})).map_err(|e| e.0);
+                let mut read = |id: &str| session.execute(id, &json!({})).map_err(String::from);
                 Ok(json!({ "info": read("project.info")?, "tracks": read("project.tracks")?, "clips": read("project.clips")? }))
             })
             .await;
@@ -414,9 +414,11 @@ impl SuhinaMcp {
                 pending: None,
             };
             let (data, params) = app.poll(move |projects, cancelled| request.poll(projects, cancelled)).await?;
-            return tokio::task::spawn_blocking(move || suhina_session::export_from(&data, &params).map_err(|e| e.0))
-                .await
-                .map_err(|e| format!("export worker failed: {e}"))?;
+            return tokio::task::spawn_blocking(move || {
+                suhina_session::export_from(&data, &params).map_err(String::from)
+            })
+            .await
+            .map_err(|e| format!("export worker failed: {e}"))?;
         }
         let output = self.audio_output;
         let files = self.files();
@@ -425,7 +427,7 @@ impl SuhinaMcp {
             let workspace = files.workspace(projects, target);
             let source = save_source(projects, target, &p.id);
             let params = confine(&workspace, &p.id, p.params.unwrap_or_else(|| json!({})), source.as_deref())?;
-            let mut value = projects.execute_in(target, &p.id, &params).map_err(|e| e.0)?;
+            let mut value = projects.execute_in(target, &p.id, &params).map_err(String::from)?;
             if let Some(audio_output) = play_active(projects, &p.id, output)
                 && let Some(object) = value.as_object_mut()
             {
@@ -482,7 +484,7 @@ impl SuhinaMcp {
                         confine(&workspace, &step.id, step.params.unwrap_or_else(|| json!({})), source.as_deref());
                     let outcome = match (why, params) {
                         (Some(why), _) => Err(why.into()),
-                        (None, Err(e)) => Err(suhina_session::CommandError(e)),
+                        (None, Err(e)) => Err(suhina_session::CommandError::from(e)),
                         (None, Ok(params)) => projects.execute_in(target, &step.id, &params),
                     };
                     if outcome.is_ok() {
@@ -492,7 +494,7 @@ impl SuhinaMcp {
                         Ok(value) => results.push(json!({ "id": step.id, "ok": true, "result": value })),
                         Err(e) => {
                             failed = true;
-                            results.push(json!({ "id": step.id, "ok": false, "error": e.0 }));
+                            results.push(json!({ "id": step.id, "ok": false, "error": e.message().to_owned() }));
                             if stop_on_error {
                                 break;
                             }
@@ -537,7 +539,7 @@ impl SuhinaMcp {
                 let workspace = files.workspace(projects, project_id.map(ProjectId));
                 let path = workspace.writable(&output, overwrite)?;
                 let env = projects.plugin_env();
-                let session = projects.session_mut(project_id.map(ProjectId)).map_err(|e| e.0)?;
+                let session = projects.session_mut(project_id.map(ProjectId)).map_err(String::from)?;
                 if launches.is_some() && scene.is_some() {
                     return Err("give either scene or launches, not both".into());
                 }
@@ -743,7 +745,7 @@ impl ExportRequest {
             session.gather_export_data(deadline)
         } else {
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
-            let gathered = session.begin_export_gather(deadline).map_err(|e| e.0)?;
+            let gathered = session.begin_export_gather(deadline).map_err(String::from)?;
             self.pending = Some((id, deadline));
             gathered
         };

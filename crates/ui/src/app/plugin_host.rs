@@ -156,7 +156,7 @@ impl App {
                     })
                     .collect();
             }
-            Err(e) => self.status = Status::Error(e.0),
+            Err(e) => self.status = Status::Error(e.message().to_owned()),
         }
         match self.projects.execute("plugin.list", &json!({})) {
             Ok(found) => {
@@ -186,7 +186,7 @@ impl App {
                 self.plugins.failed = reasons(&found["failed"]);
                 self.plugins.incompatible = reasons(&found["incompatible"]);
             }
-            Err(e) => self.status = Status::Error(e.0),
+            Err(e) => self.status = Status::Error(e.message().to_owned()),
         }
     }
 
@@ -214,14 +214,14 @@ impl App {
                 let params = json!({ "folder": folder, "format": format.name() });
                 match self.projects.execute("plugin.addFolder", &params) {
                     Ok(_) => self.plugins.new_folder.clear(),
-                    Err(e) => self.status = Status::Error(e.0),
+                    Err(e) => self.status = Status::Error(e.message().to_owned()),
                 }
                 self.plugins_read = false;
             }
             PluginRequest::SetFolderEnabled(folder, enabled) => {
                 let params = json!({ "folder": folder, "enabled": enabled });
                 if let Err(e) = self.projects.execute("plugin.setFolderEnabled", &params) {
-                    self.status = Status::Error(e.0);
+                    self.status = Status::Error(e.message().to_owned());
                 } else {
                     self.status = Status::Hint(format!(
                         "{folder} is {}; the next scan {}",
@@ -243,7 +243,7 @@ impl App {
                         // The browser lists what sessions see, so it is listed again.
                         self.browser.relist();
                     }
-                    Err(e) => self.status = Status::Error(e.0),
+                    Err(e) => self.status = Status::Error(e.message().to_owned()),
                 }
                 self.plugins_read = false;
             }
@@ -253,7 +253,7 @@ impl App {
                     match self.projects.execute("plugin.setEnabled", &json!({ "plugin": spec, "enabled": enabled })) {
                         Ok(_) => done += 1,
                         Err(e) => {
-                            self.status = Status::Error(e.0);
+                            self.status = Status::Error(e.message().to_owned());
                             break;
                         }
                     }
@@ -283,7 +283,7 @@ impl App {
             }
             PluginRequest::RemoveFolder(folder) => {
                 if let Err(e) = self.projects.execute("plugin.removeFolder", &json!({ "folder": folder })) {
-                    self.status = Status::Error(e.0);
+                    self.status = Status::Error(e.message().to_owned());
                 }
                 self.plugins_read = false;
             }

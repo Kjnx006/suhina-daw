@@ -25,5 +25,5 @@ impl Execute for Projects {
 
 /// Runs command `id` with `params`, its error as text.
 pub fn run(target: &mut impl Execute, id: &str, params: Value) -> Result<Value, String> {
-    target.execute(id, &params).map_err(|e| e.0)
+    target.execute(id, &params).map_err(String::from)
 }

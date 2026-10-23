@@ -12,7 +12,7 @@ impl App {
             Ok(_) => {
                 self.about.audio_hosts = self.projects.audio_system().map(|s| s.hosts()).unwrap_or_default();
             }
-            Err(e) => self.status = Status::Error(e.0),
+            Err(e) => self.status = Status::Error(e.message().to_owned()),
         }
         self.list_midi_inputs();
     }
@@ -20,7 +20,7 @@ impl App {
     /// Lists the MIDI input ports for Settings › Audio (`midi.inputs`).
     pub(super) fn list_midi_inputs(&mut self) {
         self.midi_listed = Some(std::time::Instant::now());
-        self.about.midi_inputs = self.projects.execute("midi.inputs", &json!({})).map_err(|e| e.0).map(|listed| {
+        self.about.midi_inputs = self.projects.execute("midi.inputs", &json!({})).map_err(String::from).map(|listed| {
             listed["inputs"]
                 .as_array()
                 .map(|ports| {
@@ -45,7 +45,7 @@ impl App {
                 self.settings.midi_inputs_off = self.projects.midi_inputs_off();
                 self.settings_changed = true;
             }
-            Err(e) => self.status = Status::Error(e.0),
+            Err(e) => self.status = Status::Error(e.message().to_owned()),
         }
         self.list_midi_inputs();
     }
@@ -64,7 +64,7 @@ impl App {
                         result["cue_db"].as_f64().map_or_else(|| "silent".to_string(), |db| format!("{db:+.0} dB"));
                     self.status = Status::Done(format!("Cue volume: {db}"));
                 }
-                Err(e) => self.status = Status::Error(e.0),
+                Err(e) => self.status = Status::Error(e.message().to_owned()),
             }
             return;
         }
@@ -80,7 +80,7 @@ impl App {
                         (None, None) => Status::Done("Cue: with the main output".to_string()),
                     };
                 }
-                Err(e) => self.status = Status::Error(e.0),
+                Err(e) => self.status = Status::Error(e.message().to_owned()),
             }
             return;
         }
@@ -106,7 +106,7 @@ impl App {
                     )),
                 };
             }
-            Err(e) => self.status = Status::Error(e.0),
+            Err(e) => self.status = Status::Error(e.message().to_owned()),
         }
     }
 
@@ -197,7 +197,7 @@ impl App {
         if let Some(limit) = outcome.tag_limit
             && let Err(e) = self.projects.execute("library.setTag", &json!({ "limit": limit }))
         {
-            self.status = Status::Error(e.0);
+            self.status = Status::Error(e.message().to_owned());
         }
         if let Some(request) = outcome.plugins.clone() {
             self.plugin_request(request);

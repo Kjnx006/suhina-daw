@@ -95,7 +95,7 @@ fn rig(project: Project) -> Rig {
 
 impl Rig {
     fn run(&mut self, id: &str, params: Value) -> Result<Value, String> {
-        self.session.execute(id, &params).map_err(|e| e.0)
+        self.session.execute(id, &params).map_err(String::from)
     }
 
     /// Renders until frame `until`, feeding the input `level`.

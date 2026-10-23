@@ -29,7 +29,7 @@ impl App {
                         self.browser.relist();
                         self.status = Status::Done(format!("Added {} to the browser", path.display()));
                     }
-                    Err(e) => self.status = Status::Error(e.0),
+                    Err(e) => self.status = Status::Error(e.message().to_owned()),
                 }
             } else if is(&path, "json") || is(&path, "zip") {
                 self.themes.import(path);
@@ -422,7 +422,7 @@ impl App {
                         );
                         self.status = Status::Done(label);
                     }
-                    Err(e) => self.status = Status::Error(e.0),
+                    Err(e) => self.status = Status::Error(e.message().to_owned()),
                 }
                 return;
             }
@@ -443,7 +443,7 @@ impl App {
         };
         let Ok(session) = self.projects.session_mut(None) else { return };
         if let Err(e) = session.execute("clip.copy", &copy) {
-            self.status = Status::Error(e.0);
+            self.status = Status::Error(e.message().to_owned());
             return;
         }
         // On a lane the copy follows the stacking setting for its kind, as a moved clip does.
@@ -631,7 +631,7 @@ impl App {
                     };
                 }
                 Err(e) => {
-                    self.status = Status::Error(e.0);
+                    self.status = Status::Error(e.message().to_owned());
                     break;
                 }
             }

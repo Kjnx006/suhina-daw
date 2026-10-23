@@ -45,7 +45,7 @@ impl App {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
         let Some(session) = self.projects.get_mut(id) else { return };
         match session.begin_export_gather(deadline) {
-            Err(e) => self.status = Status::Error(e.0),
+            Err(e) => self.status = Status::Error(e.message().to_owned()),
             Ok(ExportGather::Ready(data)) => {
                 let name = self.projects.name(id).unwrap_or("the mix").to_string();
                 self.launch_export(id, name, job, *data);
@@ -110,7 +110,7 @@ impl App {
         let params = job.params();
         let (done, receive) = std::sync::mpsc::channel();
         let spawned = std::thread::Builder::new().name("suhina-export".into()).spawn(move || {
-            let _unheard = done.send(suhina_session::export_from(&data, &params).map_err(|e| e.0));
+            let _unheard = done.send(suhina_session::export_from(&data, &params).map_err(String::from));
         });
         match spawned {
             Ok(_) => {

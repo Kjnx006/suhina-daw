@@ -87,9 +87,23 @@ pub use suhina_project_file::{EXTENSION as PROJECT_EXTENSION, is_project_file};
 /// Undo steps kept per session; the oldest are dropped first.
 const MAX_UNDO: usize = 256;
 
-/// Why a command did not run. The session is unchanged when this is returned.
+/// Why a command did not run. The session is unchanged when this is returned. Its text is read
+/// with [`CommandError::message`] or taken with `String::from` (#764 › 12).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CommandError(pub String);
+pub struct CommandError(String);
+
+impl CommandError {
+    /// What went wrong, as a person reads it.
+    pub fn message(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<CommandError> for String {
+    fn from(error: CommandError) -> Self {
+        error.0
+    }
+}
 
 impl fmt::Display for CommandError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

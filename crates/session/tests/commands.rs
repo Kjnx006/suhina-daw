@@ -206,7 +206,7 @@ fn bad_parameters_never_change_the_project() {
             let mut session = Session::new(project());
             let result = session.execute(spec.id, &params);
             if let Err(e) = result {
-                assert!(!e.0.is_empty());
+                assert!(!e.message().to_owned().is_empty());
                 assert_eq!(session.project(), &project(), "{} with {params} changed the project", spec.id);
             }
         }

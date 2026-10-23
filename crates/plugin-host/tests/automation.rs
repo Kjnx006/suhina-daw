@@ -179,9 +179,9 @@ fn a_session_sets_and_automates_a_running_plug_ins_parameter() {
     let set = session.execute("device.setParam", &json!({ "track": 1, "device": 0, "param": "0", "value": 7.0 }));
     assert_eq!(set.unwrap()["value"], 1.0);
     let error = session.execute("device.setParam", &json!({ "track": 1, "device": 0, "param": "9", "value": 0.5 }));
-    assert!(error.unwrap_err().0.contains("no parameter 9"));
+    assert!(error.unwrap_err().message().to_owned().contains("no parameter 9"));
     let error = session.execute("device.setParam", &json!({ "track": 1, "device": 0, "param": "gain", "value": 0.5 }));
-    assert!(error.unwrap_err().0.contains("not a plug-in parameter id"));
+    assert!(error.unwrap_err().message().to_owned().contains("not a plug-in parameter id"));
 
     // A lane: the gain at 0 from here on, heard once the new graph plays.
     let automate = json!({ "track": 1, "device": 0, "param": "0", "points": [0, 0.0, 1000, 0.0] });

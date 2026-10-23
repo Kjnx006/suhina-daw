@@ -444,7 +444,7 @@ fn a_crashed_plug_in_is_reported_and_restarts_by_command() {
     until(&mut session, &mut renderer, "starting", |s| s["status"] == "running");
     until(&mut session, &mut renderer, "crashing", |s| s["status"] == "crashed");
     let error = session.execute("device.openEditor", &json!({ "track": 1, "device": 0 })).unwrap_err();
-    assert!(error.0.contains("crashed"), "{error}");
+    assert!(error.message().to_owned().contains("crashed"), "{error}");
     session.execute("device.restart", &json!({ "track": 1, "device": 0 })).unwrap();
     until(&mut session, &mut renderer, "restarting", |s| s["status"] == "running");
 }
@@ -473,7 +473,7 @@ fn a_plug_in_devices_editor_opens_and_closes_by_command() {
     other.channels[0].devices.push(Device { kind: DeviceKind::Builtin("utility".into()), ..plugin_device("u") });
     let (mut session, _renderer) = self::session(other, false);
     let error = session.execute("device.openEditor", &json!({ "track": 1, "device": 1 })).unwrap_err();
-    assert!(error.0.contains("not a plug-in"), "{error}");
+    assert!(error.message().to_owned().contains("not a plug-in"), "{error}");
 }
 
 /// On Windows an editor opened by command floats above the window the session was given: that

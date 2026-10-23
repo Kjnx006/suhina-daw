@@ -59,7 +59,7 @@ fn project_built(notes: Vec<Note>) -> Project {
 }
 
 fn run(session: &mut Session, params: Value) -> Result<Value, String> {
-    session.execute("note.quantize", &params).map_err(|e| e.0)
+    session.execute("note.quantize", &params).map_err(String::from)
 }
 
 fn notes(session: &Session, content: u32) -> Vec<Note> {

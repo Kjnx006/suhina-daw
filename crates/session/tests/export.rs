@@ -15,7 +15,7 @@ use suhina_session::Session;
 const SR: u32 = 48_000;
 
 fn run(session: &mut Session, params: Value) -> Result<Value, String> {
-    session.execute("project.export", &params).map_err(|e| e.0)
+    session.execute("project.export", &params).map_err(String::from)
 }
 
 fn temp_file(name: &str, extension: &str) -> PathBuf {
@@ -111,8 +111,8 @@ fn a_worker_export_keeps_the_commands_parameter_validation() {
     let params = json!({"path": path.display().to_string(), "normalise": true});
     let direct = session.execute("project.export", &params).unwrap_err();
     let worker = suhina_session::export_from(&data, &params).unwrap_err();
-    assert_eq!(worker.0, direct.0);
-    assert!(worker.0.contains("unknown parameter"));
+    assert_eq!(worker.message(), direct.message());
+    assert!(worker.message().contains("unknown parameter"));
     assert!(!path.exists());
 }
 

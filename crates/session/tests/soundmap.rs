@@ -176,7 +176,7 @@ fn the_sample_map_takes_every_recent_item_as_a_place() {
     run(&mut p, "library.addFolder", json!({ "folder": samples.display().to_string() })).unwrap();
     run(&mut p, "clip.addFiles", json!({ "paths": [used.display().to_string()], "track": 3, "start": 0.0 })).unwrap();
     for place in ["recent:all", "recent:samples"] {
-        let files = suhina_session::scope_files(&mut p, Some(place)).map_err(|e| e.0).unwrap();
+        let files = suhina_session::scope_files(&mut p, Some(place)).map_err(String::from).unwrap();
         let names: Vec<_> = files.iter().filter_map(|f| f.path.file_name()).collect();
         assert_eq!(names, ["kick 0.wav"], "{place}");
     }

@@ -338,7 +338,7 @@ impl eframe::App for Window {
         if let Some(offer) = self.app.take_recovery_request() {
             match Session::recover(&offer.backup, offer.file.as_deref()) {
                 Ok((session, warnings)) => self.show_session(session, warnings, OpenAs::NewTab),
-                Err(e) => self.app.set_status(Status::Error(e.0)),
+                Err(e) => self.app.set_status(Status::Error(e.message().to_owned())),
             }
         }
         if let Some(backup) = self.app.take_reveal_request()
@@ -496,7 +496,7 @@ impl Window {
                 self.show_session(session, warnings, how);
                 self.remember(path);
             }
-            Err(e) => self.app.set_status(Status::Error(e.0)),
+            Err(e) => self.app.set_status(Status::Error(e.message().to_owned())),
         }
     }
 
@@ -508,7 +508,7 @@ impl Window {
         };
         match made {
             Ok((session, warnings)) => self.show_session(session, warnings, OpenAs::NewTab),
-            Err(e) => self.app.set_status(Status::Error(e.0)),
+            Err(e) => self.app.set_status(Status::Error(e.message().to_owned())),
         }
     }
 

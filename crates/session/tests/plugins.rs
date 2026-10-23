@@ -164,7 +164,7 @@ fn plugin_commands_belong_to_suhina_not_to_a_project() {
     assert!(p.is_empty());
     assert!(run(&mut p, "plugin.folders", json!({})).is_ok());
     let id: ProjectId = p.add(Session::new(Project::default()), None).unwrap();
-    let error = p.execute_in(Some(id), "plugin.folders", &json!({})).unwrap_err().0;
+    let error = p.execute_in(Some(id), "plugin.folders", &json!({})).unwrap_err().message().to_owned();
     assert!(error.contains("not run on one project"), "{error}");
 }
 
