@@ -3636,6 +3636,14 @@ fn track_header(
     // A track that can be armed has its arm button after cue, as wide.
     let arm =
         lane.armable.then(|| Rect::from_min_size(Pos2::new(cue.right() + 2.0, row.top()), Vec2::new(SOLO, HEADER_ROW)));
+    let monitor_width = if rect.height() < SHOWS_MIXER { 24.0 } else { 32.0 };
+    let monitor = lane.plays_notes.then(|| {
+        Rect::from_min_size(
+            Pos2::new(arm.unwrap_or(cue).right() + 2.0, row.top()),
+            Vec2::new(monitor_width, HEADER_ROW),
+        )
+    });
+    let controls_end = monitor.unwrap_or(arm.unwrap_or(cue)).right();
     // A lane tall enough for two rows has its volume and pan beside the buttons, where the
     // other level controls are, and the automation button, the name and the sends on the row
     // below, the button under the track-on toggle; a short lane keeps one row of buttons, name
@@ -3644,7 +3652,7 @@ fn track_header(
     // Beside the buttons only where the volume bar keeps its room; a narrow header has the name
     // on the first row and the volume, the sends and the pan across the second, the bar as wide
     // as it can be.
-    let beside_room = row.right() - PAN_FIELD - 4.0 - (arm.unwrap_or(cue).right() + PAD);
+    let beside_room = row.right() - PAN_FIELD - 4.0 - (controls_end + PAD);
     let side = tall && beside_room >= LEAST_VOLUME;
     let stacked = tall && !side;
     let below = Rect::from_min_max(
@@ -3695,10 +3703,7 @@ fn track_header(
             Pos2::new(sends_left - SEND_GAP - 4.0, below.top() + HEADER_ROW),
         )
     } else {
-        Rect::from_min_max(
-            Pos2::new(arm.unwrap_or(cue).right() + PAD, row.top()),
-            Pos2::new(lanes_button.left() - 4.0, row.bottom()),
-        )
+        Rect::from_min_max(Pos2::new(controls_end + PAD, row.top()), Pos2::new(lanes_button.left() - 4.0, row.bottom()))
     };
     let name_color = if lane.mute { theme::text_hint() } else { theme::text_primary() };
     widgets::text_in(painter, name, Align2::LEFT_CENTER, &lane.name, theme::ui_font(theme::TEXT), name_color);
@@ -3748,11 +3753,37 @@ fn track_header(
         widgets::text_in(painter, toggle, Align2::CENTER_CENTER, &number, theme::mono_font(theme::TEXT_SMALL), text);
     }
 
+    if let Some(at) = monitor.filter(|at| at.intersects(clip)) {
+        let mode = lane.midi_input.monitor;
+        let text = menus::monitor_name(mode);
+        let response = widgets::button_area(
+            ui,
+            at.intersect(clip),
+            id.with("midi-monitor"),
+            format!("MIDI monitoring of {}: {text}", lane.name),
+        )
+        .on_hover_text(format!(
+            "Input monitoring · {text}\n{}\nClick to choose when you hear your MIDI keyboard.",
+            menus::midi_monitor_explanation(mode)
+        ));
+        let active = mode == suhina_engine::model::Monitor::In;
+        let (fill, ink) = widgets::toggle_colors(ui, &response, active);
+        painter.rect_filled(at, 0.0, fill);
+        widgets::text_in(
+            painter,
+            at,
+            Align2::CENTER_CENTER,
+            text,
+            theme::ui_font(if at.height() < 16.0 { 9.0 } else { 10.0 }),
+            ink,
+        );
+        egui::Popup::menu(&response).show(|ui| menus::midi_monitor_choices(ui, lane.track, mode, actions));
+    }
     // Two rows: volume and pan beside the buttons, the sends after the name below; or, narrow,
     // the volume, the sends and the pan across the second row.
     if tall {
         let (volume, pan) = if side {
-            let left = arm.unwrap_or(cue).right() + PAD;
+            let left = controls_end + PAD;
             let pan =
                 Rect::from_min_max(Pos2::new(row.right() - PAN_FIELD, row.top()), Pos2::new(row.right(), row.bottom()));
             (Rect::from_min_max(Pos2::new(left, row.top()), Pos2::new((pan.left() - 4.0).max(left), row.bottom())), pan)

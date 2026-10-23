@@ -1141,12 +1141,12 @@ fn arming_is_exclusive_unless_ctrl_is_held_and_changes_no_project() {
     let armed = |h: &Harness<'static, App>| {
         h.state().session().map(|s| s.project().tracks.iter().take(4).map(|t| s.is_armed(t.id)).collect::<Vec<_>>())
     };
-    harness.get_by_label("Arm Drums to play it from a MIDI controller").click();
+    harness.get_by_label("Arm Drums for recording").click();
     harness.run();
-    harness.get_by_label("Arm Keys to play it from a MIDI controller").click();
+    harness.get_by_label("Arm Keys for recording").click();
     harness.run();
     assert_eq!(armed(&harness), Some(vec![false, false, true, false]));
-    harness.get_by_label("Arm Vox to play it from a MIDI controller").click_modifiers(Modifiers::COMMAND);
+    harness.get_by_label("Arm Vox for recording").click_modifiers(Modifiers::COMMAND);
     harness.run();
     assert_eq!(armed(&harness), Some(vec![false, false, true, true]));
     assert!(!harness.state().session().is_some_and(Session::can_undo), "arming is not an edit");
@@ -1159,7 +1159,7 @@ fn arming_is_exclusive_unless_ctrl_is_held_and_changes_no_project() {
     assert_eq!(armed(&harness), Some(vec![false, false, false, true]));
     assert!(harness.query_by_label("Disarm Vox").is_some());
     // Return tracks play no notes: nothing to arm.
-    assert!(harness.query_by_label("Arm A Reverb to play it from a MIDI controller").is_none());
+    assert!(harness.query_by_label("Arm A Reverb for recording").is_none());
 }
 
 /// MIDI ports by name that open into nothing.
@@ -1196,7 +1196,10 @@ fn a_tracks_menu_chooses_the_midi_port_and_channel_it_hears() {
     harness.run();
     harness.get_by_label("Pads In").click();
     harness.run();
-    assert_eq!(input(&harness), Some(MidiInput { port: MidiPort::Named("Pads In".into()), channel: None }));
+    assert_eq!(
+        input(&harness),
+        Some(MidiInput { port: MidiPort::Named("Pads In".into()), channel: None, ..Default::default() })
+    );
 
     harness.get_by_label("Track Keys").click_secondary();
     harness.run();
@@ -1204,7 +1207,10 @@ fn a_tracks_menu_chooses_the_midi_port_and_channel_it_hears() {
     harness.run();
     harness.get_by_label("Ch 10").click();
     harness.run();
-    assert_eq!(input(&harness), Some(MidiInput { port: MidiPort::Named("Pads In".into()), channel: Some(10) }));
+    assert_eq!(
+        input(&harness),
+        Some(MidiInput { port: MidiPort::Named("Pads In".into()), channel: Some(10), ..Default::default() })
+    );
     assert!(harness.state().session().is_some_and(Session::can_undo), "an edit, saved with the project");
 }
 
@@ -1217,7 +1223,7 @@ fn an_audio_track_is_armed_to_hear_its_input_and_its_menu_chooses_the_channels()
     let mut app = App::new();
     app.set_session(Session::new(project), &[]);
     let mut harness = window(app);
-    harness.get_by_label(&format!("Arm {name} to hear its audio input")).click();
+    harness.get_by_label(&format!("Arm {name} for recording")).click();
     harness.run();
     assert!(harness.state().session().is_some_and(|s| s.is_armed(suhina_engine::model::TrackId(1))));
 
@@ -1650,7 +1656,7 @@ fn parent_name(h: &Harness<'static, App>, name: &str) -> Option<String> {
     let session = h.state().session()?;
     let p = session.project();
     let parent = p.tracks.iter().find(|t| t.name == name)?.parent?;
-    p.tracks.iter().find(|t| t.id == parent).map(|t| t.name.clone())
+    p.track(parent).map(|t| t.name.clone())
 }
 
 #[test]
@@ -3593,7 +3599,7 @@ fn bass_send(harness: &Harness<'static, App>) -> Option<(f64, bool)> {
     let project = harness.state().session()?.project();
     let bass = project.tracks.iter().find(|t| t.name == "Bass")?.channel?;
     let reverb = project.tracks.iter().find(|t| t.name == "A Reverb")?.channel?;
-    let send = project.channels.iter().find(|c| c.id == bass)?.sends.iter().find(|s| s.target == reverb)?;
+    let send = project.channel(bass)?.sends.iter().find(|s| s.target == reverb)?;
     Some((send.level, send.pre_fader))
 }
 

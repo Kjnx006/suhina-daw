@@ -337,7 +337,7 @@ fn send_warnings(project: &suhina_engine::model::Project, source: Option<TrackId
     use suhina_engine::model::ChannelRole;
 
     let Some(source) = source else { return Vec::new() };
-    let Some(own) = project.tracks.iter().find(|t| t.id == source).and_then(|t| t.channel) else {
+    let Some(own) = project.track(source).and_then(|t| t.channel) else {
         return Vec::new();
     };
     // The channels that play into the node: their output chains reach the source's channel.
@@ -362,7 +362,7 @@ fn send_warnings(project: &suhina_engine::model::Project, source: Option<TrackId
     for channel in project.channels.iter().filter(|c| under.contains(&c.id)) {
         for send in &channel.sends {
             if !said.contains(&send.target)
-                && let Some(target) = project.channels.iter().find(|c| c.id == send.target)
+                && let Some(target) = project.channel(send.target)
                 && target.role == ChannelRole::Effect
             {
                 said.push(send.target);

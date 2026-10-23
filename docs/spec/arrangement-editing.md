@@ -837,3 +837,24 @@ them is drawn.
 - Dragging along the ruler to scrub (a drag there selects time now).
 - Closing or opening a gap with a time selection (Delete Time, Insert Time).
 - A consolidated audio clip warped to the project, so it follows a later tempo change.
+
+## MIDI input monitoring
+
+A note-playing track has one small Auto / On / Off control immediately after its record-arm
+button, before its name or volume controls. A click opens the three choices, with a tooltip
+explaining the current state; it is not a second record-arm button or headphone cue. The same
+choices appear in the MIDI input menu, beside port and channel selection. Auto (the default)
+hears the input while armed; On hears it independently of arming; Off never hears the live
+input. Recording still depends on arm and record, including when monitoring is Off; On alone
+never records. Monitoring does not suppress clip playback. The selected mode is project data,
+set through `track.setMidiInput` with `monitor: auto | in | off`, and supports undo and redo.
+Changing mode releases notes that are no longer monitored, without retriggering held keys.
+Old projects without this field retain Auto. Compact and expanded headers reserve space for the monitor control before names and level controls.
+
+The popup is titled Hear your MIDI keyboard and offers three single-line choices: Automatic,
+Always on and Off. A fixed-height footer explains the hovered or keyboard-focused choice,
+or the current mode when none is hovered. Automatic says when the input is heard, Always on
+says recording need not be enabled, and Off says live input is silent but can still be
+recorded. Tooltips explain the selected mode and the separate record-ready
+button, without requiring knowledge of "armed" or "play-through". The file/API value `in`
+remains unchanged.

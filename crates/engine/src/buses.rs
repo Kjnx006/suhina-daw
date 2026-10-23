@@ -326,9 +326,9 @@ pub(crate) fn cue_gains(project: &Project, track: TrackId, pan: bool) -> Option<
     let channel = project.channels.iter().find(|c| c.id == channel_id)?;
     let volume = if channel.volume.is_finite() { channel.volume.max(0.0) } else { 0.0 };
     let pan = if pan && channel.pan.is_finite() { channel.pan.clamp(-1.0, 1.0) } else { 0.0 };
-    let angle = (pan + 1.0) * std::f64::consts::FRAC_PI_4;
+    let (left, right) = suhina_dsp::pan::gains(pan);
     let scale = volume * std::f64::consts::SQRT_2 * 0.25;
-    Some(((angle.cos() * scale) as f32, (angle.sin() * scale) as f32))
+    Some(((left * scale) as f32, (right * scale) as f32))
 }
 
 /// A track's equal-power pan (when `pan`) and the volume of every channel from its own up to,
@@ -362,7 +362,7 @@ pub(crate) fn gains_until(
         volume *= gain(master);
     }
     let pan = if pan && channel.pan.is_finite() { channel.pan.clamp(-1.0, 1.0) } else { 0.0 };
-    let angle = (pan + 1.0) * std::f64::consts::FRAC_PI_4;
+    let (left, right) = suhina_dsp::pan::gains(pan);
     let scale = volume * std::f64::consts::SQRT_2 * 0.25;
-    Some(((angle.cos() * scale) as f32, (angle.sin() * scale) as f32))
+    Some(((left * scale) as f32, (right * scale) as f32))
 }

@@ -176,7 +176,7 @@ CHAPTERS = [
      "on a second pair of the device (previews, per-track cue, cue volume); return tracks "
      "imported and drawn. Missing crossfader, track delay, send fields in the Arrangement headers."),
     (19, "Recording New Clips", 13, 0.45, "partial",
-     "Arming and input monitoring (MIDI controllers, audio inputs); MIDI and audio recording into "
+     "Independent record arm and Auto / In / Off input monitoring (MIDI controllers, audio inputs); MIDI and audio recording into "
      "an empty slot from the next launch boundary (ended on the next one, then played looped) or "
      "into the arrangement, several armed tracks at once, a count-in of 1, 2 or 4 bars, takes lined "
      "up with what was heard, audio written to WAV files off the audio thread, one undo step per "

@@ -16,6 +16,8 @@
   Communicate with it through lock-free queues.
 - **Tests:** required for every change. Format code needs round-trip and malformed-input tests;
   DSP and engine code is tested by rendering offline and comparing against golden files.
+  A test module over 150 lines lives in a `<file>_tests.rs` beside its source, not inline;
+  `python scripts/inline_tests.py move <file>` moves one, and CI checks it (`--check`).
 - **Documentation:** a change that alters how something works updates the documents that
   describe it in the same pull request (architecture, ADRs, specs, ROADMAP); `AGENTS.md` ›
   *Before you finish a task* lists which document covers what. Leave out what `main` writes after

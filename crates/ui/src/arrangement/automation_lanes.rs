@@ -334,7 +334,7 @@ impl Params {
     pub fn build(project: &Project) -> Self {
         let mut tracks = HashMap::new();
         for track in &project.tracks {
-            let Some(channel) = track.channel.and_then(|id| project.channels.iter().find(|c| c.id == id)) else {
+            let Some(channel) = track.channel.and_then(|id| project.channel(id)) else {
                 continue;
             };
             let lane_of = |lanes: &[AutomationLane], id: &str| lanes.iter().find(|l| l.param == id).cloned();
@@ -1790,8 +1790,7 @@ mod tests {
     fn sd_parameters_are_listed_and_use_their_control_scale() {
         let mut project = crate::demo::demo_project();
         let track = project.tracks[0].id;
-        let Some(channel) = project.tracks[0].channel.and_then(|id| project.channels.iter_mut().find(|c| c.id == id))
-        else {
+        let Some(channel) = project.tracks[0].channel.and_then(|id| project.channel_mut(id)) else {
             return;
         };
         let mut graph =
@@ -1912,8 +1911,7 @@ mod tests {
     fn built_in_and_sd_parameters_carry_their_group() {
         let mut project = crate::demo::demo_project();
         let track = project.tracks[0].id;
-        let Some(channel) = project.tracks[0].channel.and_then(|id| project.channels.iter_mut().find(|c| c.id == id))
-        else {
+        let Some(channel) = project.tracks[0].channel.and_then(|id| project.channel_mut(id)) else {
             return;
         };
         channel.devices.push(suhina_engine::model::Device::new("FM Synth", DeviceKind::Builtin("fm-synth".into())));

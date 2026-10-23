@@ -223,6 +223,7 @@ Change this code, and check these documents.
 | `crates/engine/src/input_tests.rs` | [0017: Inputs, arming and live latency](decisions/0017-inputs-and-latency.md) |
 | `crates/engine/src/launcher.rs` | [Architecture](architecture.md), [0005: Edits while playing](decisions/0005-edits-while-playing.md), [Arrangement editing](spec/arrangement-editing.md), [Clip launching](spec/clip-launching.md) |
 | `crates/engine/src/launcher/modes.rs` | [Clip launching](spec/clip-launching.md) |
+| `crates/engine/src/launcher/prepare.rs` | [0003: Time-stretching and stretch modes](decisions/0003-time-stretching.md) |
 | `crates/engine/src/lib.rs` | [0005: Edits while playing](decisions/0005-edits-while-playing.md), [0024: Musical time and tempo over the song](decisions/0024-musical-time-and-tempo.md), [Export](spec/export.md) |
 | `crates/engine/src/live.rs` | [0017: Inputs, arming and live latency](decisions/0017-inputs-and-latency.md) |
 | `crates/engine/src/live_tests.rs` | [0017: Inputs, arming and live latency](decisions/0017-inputs-and-latency.md) |
@@ -383,6 +384,7 @@ Change this code, and check these documents.
 | `crates/ui/src/kit/logo.rs` | [Components](design/components.md) |
 | `crates/ui/src/kit/meter.rs` | [Components](design/components.md), [Level meters](spec/level-meters.md) |
 | `crates/ui/src/kit/motion.rs` | [Components](design/components.md) |
+| `crates/ui/src/kit/scroll.rs` | [Components](design/components.md) |
 | `crates/ui/src/kit/theme.rs` | [0009: egui for the UI; familiar workflow, Suhina's own look](decisions/0009-ui-toolkit-and-look.md), [Design brief](design/brief.md), [Components](design/components.md) |
 | `crates/ui/src/kit/waveform.rs` | [Components](design/components.md), [Waveforms](spec/waveforms.md) |
 | `crates/ui/src/kit/waveform/tests.rs` | [Waveforms](spec/waveforms.md) |
