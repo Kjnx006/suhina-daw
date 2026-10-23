@@ -9,7 +9,7 @@ use std::sync::Arc;
 use suhina_model::*;
 
 use super::super::tests::{clip, project, with};
-use crate::fade_tests::{assert_golden, left, max_diff};
+use crate::fade_tests::{assert_golden_within, left, max_diff};
 use crate::{AudioData, AudioPool, LaunchCommand, Plugins, Renderer, render_launches};
 
 /// A low rate keeps the golden file small.
@@ -84,7 +84,8 @@ fn launched_stretched_clips_render_like_their_golden_file() {
     assert!((hz(&out, 0.2, 0.9) - 440.0).abs() < 8.0, "{} Hz", hz(&out, 0.2, 0.9));
     assert!((hz(&out, 1.2, 1.9) - 330.0).abs() < 8.0, "{} Hz", hz(&out, 1.2, 1.9));
     assert!((hz(&out, 2.2, 2.7) - 440.0).abs() < 8.0, "{} Hz", hz(&out, 2.2, 2.7));
-    assert_golden("launched-stretched", &out);
+    // The stretcher's floating-point maths differs in the last digits between platforms.
+    assert_golden_within("launched-stretched", &out, 1e-4);
 }
 
 /// Renders `commands` (each at its time in seconds) with `renderer` for `seconds`, in blocks of

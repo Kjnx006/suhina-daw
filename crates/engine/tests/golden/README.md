@@ -19,7 +19,9 @@ playback: both run the same `Renderer::process` (AGENTS.md › One render path).
   over at the next bar from where the first was, and the first launched again from its start a
   bar later; 2.75 seconds. Made with the stretchers built when the graph was built, before they
   moved to the worker thread (ADR 0003 › decision 7), so it shows that launches sound the same.
-  Its test also checks each clip's pitch; it has no envelope written out.
+  Its test also checks each clip's pitch; it has no envelope written out. It is compared within
+  1e-4, not 1e-6: the stretcher's floating-point maths differs in the last digits between
+  platforms.
 
 Each file is little-endian 32-bit floats, one channel, one per frame. The tests also check every
 frame against the envelope written out in the test (linear fades times the 2 ms click guard,
