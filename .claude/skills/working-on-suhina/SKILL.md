@@ -5,7 +5,8 @@ description: How to work in the Suhina codebase - choosing between a review, new
 
 [`AGENTS.md`](../../../AGENTS.md) holds the rules and decides designs; read it first. This skill
 does not repeat it. It adds what the rules mean while working and what this codebase's code and
-tests look like. Find the documents for a task through [`docs/INDEX.md`](../../../docs/INDEX.md).
+tests look like. Find the documents for a task with `python scripts/docs.py find WORDS` or `covers PATH`
+([`docs/INDEX.md`](../../../docs/INDEX.md) lists them all).
 
 ## First: which task is this?
 

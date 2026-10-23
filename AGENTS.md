@@ -6,9 +6,10 @@ machine names stay lowercase (`suhina-*` crates, binaries, file names). Read thi
 then [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`docs/architecture.md`](docs/architecture.md)
 (layers, data flow, threads, and where new code goes).
 
-**Find documentation through [`docs/INDEX.md`](docs/INDEX.md)** before reading code: it lists
-every document with the words it is read for (*Read when*), and maps code paths to the documents
-that describe them (*Code and its documents*). Read only the documents that match your task.
+**Find documentation by asking, before reading code:** `python scripts/docs.py find WORDS` lists
+the documents about something, best first, and `python scripts/docs.py covers PATH` the documents
+that describe a file. [`docs/INDEX.md`](docs/INDEX.md) lists every document in a line. Read only
+the documents that match your task.
 
 ## 1. Golden rules
 
@@ -147,7 +148,7 @@ docs/
   research/   status analysis of our own project: parity against another DAW's public manual
               (ADR 0016; an ordinary document whose marked parts scripts/parity/ keeps current)
               and its two figures
-  INDEX.md    generated list of documents and the code each covers (scripts/docs.py)
+  INDEX.md    generated list of documents, one line each (scripts/docs.py find and covers query it)
   commands.md generated list of every command (suhina-cli commands --markdown)
 assets/brand/ the logo as SVG: `suhina-logo.svg` (the name with the wave, drawn on the splash by
               `crates/ui/src/kit/logo.rs`) and `suhina-mark.svg` (the wave mark alone, for icons)
