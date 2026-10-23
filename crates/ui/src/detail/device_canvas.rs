@@ -10,9 +10,14 @@ use std::{cell::RefCell, sync::Arc};
 use suhina_device_sdk::{DeviceGraph, ui::*};
 use suhina_engine::model::TrackId;
 
+/// An `.sd` device's state read into its graph, kept per state so a panel parses it once.
 pub(crate) struct Parsed {
+    /// The graph, without its panels (they are the fields below).
     pub graph: DeviceGraph,
+    /// Its compact panel, shared so the canvas's images can be cached.
     pub canvas: Option<Arc<DeviceUi>>,
+    /// Its expanded panel, opened from the device's header.
+    pub expanded: Option<Arc<DeviceUi>>,
 }
 thread_local! {static GRAPHS:RefCell<Vec<(u64,Option<Arc<Parsed>>)>>=const{RefCell::new(Vec::new())};}
 pub(crate) fn graph(bytes: &[u8]) -> Option<Arc<Parsed>> {
@@ -35,7 +40,8 @@ pub(crate) fn graph(bytes: &[u8]) -> Option<Arc<Parsed>> {
     }
     let parsed = std::str::from_utf8(bytes).ok().and_then(|text| DeviceGraph::from_sd(text).ok()).map(|mut graph| {
         let canvas = graph.ui.take().map(Arc::new);
-        Arc::new(Parsed { graph, canvas })
+        let expanded = graph.expanded.take().map(Arc::new);
+        Arc::new(Parsed { graph, canvas, expanded })
     });
     GRAPHS.with(|cache| {
         let mut cache = cache.borrow_mut();
@@ -1368,8 +1374,8 @@ mod tests {
     #[test]
     fn historical_sampler_waveforms_keep_recording_controls() {
         use egui_kittest::kittest::Queryable;
-        let mut graph = suhina_device_registry::stock::definition("sampler").unwrap();
-        let mut canvas = graph.ui.take().unwrap();
+        let panel = suhina_device_registry::panel("sampler").unwrap();
+        let mut canvas = DeviceUi::clone(panel.ui.as_ref().unwrap());
         canvas.controls.retain(|c| !matches!(c.widget, Some(Widget::SampleRecording)));
         canvas.controls.iter_mut().find(|c| matches!(c.widget, Some(Widget::SampleWaveform))).unwrap().bounds =
             [0., 22., 900., 76.];
@@ -1414,23 +1420,9 @@ mod tests {
     #[test]
     fn sampler_tabs_render_with_sdk_controls_and_dispatch() {
         use egui_kittest::kittest::Queryable;
-        let definition = suhina_device_registry::stock::definition("sampler").unwrap();
-        let canvas = Arc::new(definition.ui.unwrap());
-        let specs = definition.parameters;
-        let mut parameters: Vec<_> = specs
-            .iter()
-            .map(|p| GraphParameter {
-                id: p.id.clone(),
-                name: p.name.clone(),
-                default: p.default,
-                min: p.min,
-                max: p.max,
-                value: p.default,
-                ui: p.ui.clone(),
-                unit: p.unit.clone(),
-                control: p.control,
-            })
-            .collect();
+        let panel = suhina_device_registry::panel("sampler").unwrap();
+        let canvas = panel.ui.clone().unwrap();
+        let mut parameters: Vec<_> = panel.parameters.iter().map(|p| GraphParameter::new(p, p.default)).collect();
         let empty_canvas = canvas.clone();
         let empty_parameters = parameters.clone();
         let mut empty = egui_kittest::Harness::builder().with_size(Vec2::new(916., 184.)).build_ui(move |ui| {
@@ -1751,6 +1743,7 @@ mod tests {
     }
     fn parameter(id: &str, logarithmic: bool) -> GraphParameter {
         GraphParameter {
+            text: String::new(),
             default: 0.5,
             ui: Default::default(),
             control: Default::default(),
@@ -1765,21 +1758,7 @@ mod tests {
     #[test]
     fn delay_panel_renders_and_selector_dispatches_a_literal() {
         let graph = super::delay_example::build().unwrap();
-        let parameters: Vec<_> = graph
-            .parameters
-            .iter()
-            .map(|p| GraphParameter {
-                id: p.id.clone(),
-                name: p.name.clone(),
-                min: p.min,
-                max: p.max,
-                default: p.default,
-                value: p.default,
-                unit: p.unit.clone(),
-                control: p.control,
-                ui: p.ui.clone(),
-            })
-            .collect();
+        let parameters: Vec<_> = graph.parameters.iter().map(|p| GraphParameter::new(p, p.default)).collect();
         let canvas = Arc::new(graph.ui.unwrap());
         let preview_canvas = canvas.clone();
         let preview_parameters = parameters.clone();
@@ -1914,21 +1893,7 @@ mod tests {
     fn delay_menus_open_choose_and_cancel_without_spurious_edits() {
         use egui_kittest::kittest::Queryable;
         let graph = super::delay_example::build().unwrap();
-        let parameters: Vec<_> = graph
-            .parameters
-            .iter()
-            .map(|p| GraphParameter {
-                id: p.id.clone(),
-                name: p.name.clone(),
-                min: p.min,
-                max: p.max,
-                default: p.default,
-                value: p.default,
-                unit: p.unit.clone(),
-                control: p.control,
-                ui: p.ui.clone(),
-            })
-            .collect();
+        let parameters: Vec<_> = graph.parameters.iter().map(|p| GraphParameter::new(p, p.default)).collect();
         let canvas = Arc::new(graph.ui.unwrap());
         let reset_canvas = canvas.clone();
         let mut harness = egui_kittest::Harness::builder().with_size(Vec2::new(956., 210.)).build_ui_state(
@@ -2056,22 +2021,12 @@ mod tests {
     /// `SUHINA_UI_SNAPSHOTS` is set; drawing it needs a GPU adapter, which test machines may lack.
     #[test]
     fn sampler_slice_controls_replace_loop_fields() {
-        let graph = suhina_device_registry::stock::definition("sampler").unwrap();
-        let canvas = Arc::new(graph.ui.unwrap());
-        let parameters: Vec<_> = graph
+        let panel = suhina_device_registry::panel("sampler").unwrap();
+        let canvas = panel.ui.clone().unwrap();
+        let parameters: Vec<_> = panel
             .parameters
             .iter()
-            .map(|p| GraphParameter {
-                id: p.id.clone(),
-                name: p.name.clone(),
-                default: p.default,
-                min: p.min,
-                max: p.max,
-                value: if p.id == "playback" { 3. } else { p.default },
-                ui: p.ui.clone(),
-                unit: p.unit.clone(),
-                control: p.control,
-            })
+            .map(|p| GraphParameter::new(p, if p.id == "playback" { 3. } else { p.default }))
             .collect();
         for (id, expected) in [("loop_start", false), ("loop_end", false), ("sensitivity", true), ("slice_by", true)] {
             let visible =
@@ -2105,26 +2060,19 @@ mod tests {
     }
     #[test]
     fn waveform_manual_edit_navigation_and_inactive_colors() {
-        let graph = suhina_device_registry::stock::definition("sampler").unwrap();
-        let canvas = Arc::new(graph.ui.unwrap());
-        let parameters: Vec<_> = graph
+        let panel = suhina_device_registry::panel("sampler").unwrap();
+        let canvas = panel.ui.clone().unwrap();
+        let parameters: Vec<_> = panel
             .parameters
             .iter()
-            .map(|p| GraphParameter {
-                id: p.id.clone(),
-                name: p.name.clone(),
-                default: p.default,
-                min: p.min,
-                max: p.max,
-                value: match p.id.as_str() {
+            .map(|p| {
+                let value = match p.id.as_str() {
                     "playback" | "slice_by" => 3.,
                     "start" => 0.2,
                     "end" => 0.8,
                     _ => p.default,
-                },
-                ui: p.ui.clone(),
-                unit: p.unit.clone(),
-                control: p.control,
+                };
+                GraphParameter::new(p, value)
             })
             .collect();
         let ctx = egui::Context::default();

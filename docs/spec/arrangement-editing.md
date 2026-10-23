@@ -3,7 +3,7 @@ description: How arrangement clips behave when moved (along a lane, to another t
 read_when: start marker, clip offset, loop start, moving clips, clip.move, overlapping clips, clip stacking, trimming, splitting, clip.split, split at playhead, cut a clip, consolidate, clip.consolidate, join clips, render a range, bounce, allow sample stacking, allow MIDI stacking, fades, fade-in, fade-out, clip.setFades, fade handles, fade shape, fade curve, curve handle, inShape, outShape, inCurve, outCurve, linear, equal_power, fast, slow, s_curve, FadeShape, FadeCurve, play position, play start marker, ruler click, transport.setPosition, stop returns, playhead, grid, grid lines, snapping, snap to grid, launcher.setQuantization, quantisation, Alt, off the grid, markers, locators, marker row, marker.add, marker.move, marker.rename, marker.delete, marker.jump, project.markers, fold, folded group, unfold, group triangle, group lane, volume, pan, mute, solo, mixer controls, knob, the wheel over a value, deselect, click on empty space, clip note preview, short lane
 type: spec
 status: draft
-last_verified: 2026-10-20
+last_verified: 2026-10-21
 covers:
   - crates/session/src/commands.rs
   - crates/ui/src/arrangement/timeline.rs
@@ -543,7 +543,9 @@ between beats it waits for the next one. The launcher's beat is the playhead's, 
 launches land on the arrangement's bars.
 
 **A jump while playing** ends the notes that sound (with their release) and the audio clips that
-play, and plays on from the new beat as a start would. Launches and a scene tempo that were
+play, and plays on from the new beat as a start would: a note that sounds there is chased, whether
+the jump moves the marker (a click on the ruler, `transport.setPosition`) or only the playhead
+(`Locate`, when the audio output is opened again); a loop's wrap is not a jump and chases nothing. Launches and a scene tempo that were
 waiting are queued again for the next boundary from the new beat. Time-stretched clips are
 silent until the stretch worker has caught up with the new place (about one block in practice).
 

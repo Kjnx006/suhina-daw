@@ -19,7 +19,7 @@ use crate::kit::widgets::{self, button};
 
 const WIDTH: f32 = 620.0;
 const HEIGHT: f32 = 380.0;
-const SAVE_WIDTH: f32 = 420.0;
+pub(crate) const SAVE_WIDTH: f32 = 420.0;
 pub(crate) const LINE: f32 = 20.0;
 pub(crate) const BUTTON: Vec2 = Vec2::new(96.0, 18.0);
 

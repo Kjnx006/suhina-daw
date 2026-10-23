@@ -192,3 +192,62 @@ fn a_session_sets_and_automates_a_running_plug_ins_parameter() {
         assert!(error.is_err(), "{bad}");
     }
 }
+
+/// The window has a shown plug-in list its parameters in the background for its generated
+/// panel (#679): the report carries the list once it answers, and commands meanwhile never find
+/// the plug-in busy.
+#[test]
+fn a_shown_plug_ins_parameters_are_listed_in_the_background_for_its_panel() {
+    let mut device = gain("clap", &[]);
+    device.automation.clear();
+    let p = project(512.0, vec![device]);
+    let mut renderer = Renderer::stopped(&p, &AudioPool::new(), SR).unwrap();
+    renderer.set_offline(true);
+    let mut session = Session::new(p);
+    session.attach_player(Player::new(renderer.controller(), None));
+    session.set_plugin_env(env());
+    session.execute("transport.play", &json!({})).unwrap();
+    let device = json!({ "track": 1, "device": 0 });
+    let deadline = Instant::now() + PATIENT;
+    while session.execute("device.plugin", &device).unwrap()["status"] != "running" {
+        session.sync_plugins();
+        play(&mut renderer, 2);
+        assert!(Instant::now() < deadline, "the plug-in did not start");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let track = suhina_model::TrackId(1);
+    assert_eq!(session.plugin_report_at(track, &[0]).unwrap().params, None, "nothing listed yet");
+    session.list_plugin_params_at(track, &[0]);
+    // While it lists, commands still answer.
+    assert!(
+        session.execute("device.setParam", &json!({ "track": 1, "device": 0, "param": "0", "value": 0.5 })).is_ok()
+    );
+    let listed = loop {
+        session.sync_plugins();
+        play(&mut renderer, 2);
+        if let Some(list) = session.plugin_report_at(track, &[0]).unwrap().params {
+            break list;
+        }
+        assert!(Instant::now() < deadline, "the list did not come");
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    assert_eq!((listed[0].id, listed[0].min, listed[0].max), (0, 0.0, 1.0));
+    assert!(session.execute("device.pluginParams", &device).is_ok());
+    // Asked again at once, it is not listed again: the list is fresh for a couple of seconds.
+    session.list_plugin_params_at(track, &[0]);
+    assert!(session.execute("device.pluginParams", &device).is_ok());
+    // A restart forgets the old process's list: the panel waits for the new one's. Rendered in
+    // real time from here, a block does not wait the offline timeout on the stopped process, and
+    // the new one has its own deadline.
+    renderer.set_offline(false);
+    session.execute("device.restart", &device).unwrap();
+    assert_eq!(session.plugin_report_at(track, &[0]).unwrap().params, None, "a restarting plug-in lists nothing");
+    let deadline = Instant::now() + PATIENT;
+    while session.execute("device.plugin", &device).unwrap()["status"] != "running" {
+        session.sync_plugins();
+        play(&mut renderer, 2);
+        assert!(Instant::now() < deadline, "the plug-in did not start again");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(session.plugin_report_at(track, &[0]).unwrap().params, None, "the old list is gone");
+}

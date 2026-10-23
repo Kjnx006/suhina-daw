@@ -167,8 +167,14 @@ impl AraNote {
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct AraDocument {
     pub name: String,
+    /// The document this track belongs to: the instances of one plug-in in one host process
+    /// with the same key share one document, each track a region sequence of it, so the
+    /// plug-in sees every track (ADR 0028 decision 2). Empty: a document of its own.
+    pub document: String,
     /// The region sequence's name: the track's.
     pub sequence: String,
+    /// The track's place among the project's tracks (the sequence's order).
+    pub order: u32,
     pub tempo_bpm: f64,
     /// The song's tempo map as ARA's tempo entries: (seconds, quarter notes), in order, at least
     /// two; between two entries the tempo is even. Empty: an even `tempo_bpm` from the start.
@@ -226,7 +232,8 @@ pub struct AraRegion {
 impl AraDocument {
     fn to_json(&self) -> Value {
         json!({
-            "name": self.name, "sequence": self.sequence, "tempo_bpm": self.tempo_bpm,
+            "name": self.name, "document": self.document, "sequence": self.sequence, "order": self.order,
+            "tempo_bpm": self.tempo_bpm,
             "tempo": self.tempo.iter().map(|(s, q)| json!([s, q])).collect::<Vec<_>>(),
             "bars": self.bars.iter().map(|(n, d, q)| json!([n, d, q])).collect::<Vec<_>>(),
             "sources": self.sources.iter().map(|s| json!({ "id": s.id, "name": s.name, "address": s.address }))
@@ -296,7 +303,8 @@ impl AraDocument {
                 .filter(|l| l.len() <= MAX_ARA_OBJECTS)?
                 .iter()
                 .map(|e| {
-                    let n = u32::try_from(e.get(0)?.as_u64()?).ok().filter(|n| (1..=64).contains(n))?;
+                    // A project's numerators are 1 to 99 (`TimeSignature` in the model).
+                    let n = u32::try_from(e.get(0)?.as_u64()?).ok().filter(|n| (1..=99).contains(n))?;
                     let d = u32::try_from(e.get(1)?.as_u64()?).ok().filter(|d| (1..=64).contains(d))?;
                     Some((n, d, number(e.get(2)?)?))
                 })
@@ -307,7 +315,13 @@ impl AraDocument {
         }
         Some(Self {
             name: text(value, "name")?,
+            // An older engine's document is one of its own.
+            document: match value.get("document") {
+                None | Some(Value::Null) => String::new(),
+                Some(_) => text(value, "document")?,
+            },
             sequence: text(value, "sequence")?,
+            order: value.get("order").and_then(Value::as_u64).and_then(|o| u32::try_from(o).ok()).unwrap_or(0),
             tempo_bpm,
             tempo,
             bars,
@@ -504,6 +518,13 @@ pub enum Message {
         notes: Vec<AraNote>,
         truncated: bool,
     },
+    /// How far an ARA plug-in's analysis of the instance's track has come, 0 to 1 (the least
+    /// done of its sources), or `None` once nothing is being analysed (unasked): sent when it
+    /// moves by a percent, so its clips can say so.
+    AraAnalysis {
+        instance: u32,
+        progress: Option<f32>,
+    },
     CloseEditor {
         instance: u32,
     },
@@ -547,6 +568,7 @@ impl Message {
             | Self::EditorResized { instance, .. }
             | Self::LatencyChanged { instance, .. }
             | Self::AraNotes { instance, .. }
+            | Self::AraAnalysis { instance, .. }
             | Self::CloseEditor { instance }
             | Self::EditorClosed { instance } => Some(*instance),
             Self::Error { instance, .. } => *instance,
@@ -627,6 +649,9 @@ impl Message {
                 "op": "ara_notes", "instance": instance, "region": region, "truncated": truncated,
                 "notes": notes.iter().map(|n| n.to_json()).collect::<Vec<_>>(),
             }),
+            Self::AraAnalysis { instance, progress } => {
+                json!({ "op": "ara_analysis", "instance": instance, "progress": progress })
+            }
             Self::AraSelect { instance, region } => {
                 json!({ "op": "ara_select", "instance": instance, "region": region })
             }
@@ -774,6 +799,13 @@ impl Message {
                     .collect::<Option<Vec<_>>>()?,
                 truncated: value.get("truncated")?.as_bool()?,
             },
+            "ara_analysis" => Self::AraAnalysis {
+                instance: instance()?,
+                progress: match value.get("progress") {
+                    None | Some(Value::Null) => None,
+                    Some(p) => Some((p.as_f64().filter(|p| p.is_finite())? as f32).clamp(0.0, 1.0)),
+                },
+            },
             "ara_select" => Self::AraSelect {
                 instance: instance()?,
                 region: match value.get("region") {
@@ -825,7 +857,9 @@ mod tests {
             tempo: vec![(0.0, 0.0), (0.5, 1.0), (2.5, 4.0)],
             bars: vec![(4, 4, 0.0), (3, 4, 8.0)],
             name: "Song".into(),
+            document: "4242-1".into(),
             sequence: "Vocal".into(),
+            order: 3,
             tempo_bpm: 120.0,
             sources: vec![AraSource { id: "content-7".into(), name: "take.wav".into(), address: "/dev/shm/a".into() }],
             regions: vec![AraRegion {
@@ -863,6 +897,12 @@ mod tests {
         let mut long = good.clone();
         long["name"] = json!("x".repeat(MAX_ARA_TEXT + 1));
         assert!(load(long).is_none());
+        let mut longest_bar = good.clone();
+        longest_bar["bars"][1][0] = json!(99);
+        assert!(load(longest_bar).is_some(), "a 99/4 bar, which a project can hold");
+        let mut too_long = good.clone();
+        too_long["bars"][1][0] = json!(100);
+        assert!(load(too_long).is_none());
         let mut many = good;
         many["sources"] = json!(vec![json!({ "id": "a", "name": "a", "address": "a" }); MAX_ARA_OBJECTS + 1]);
         assert!(load(many).is_none());

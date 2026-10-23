@@ -3,7 +3,7 @@ description: How third-party plug-ins are hosted out of process (process model, 
 read_when: plug-in, plugin host, CLAP, VST3, VST2, sandbox, out of process, IPC, shared memory, unsafe, plug-in crash, scanning, plug-in editor
 type: decision
 status: current
-last_verified: 2026-10-20
+last_verified: 2026-10-22
 covers:
   - crates/ipc/**
   - crates/plugins/**
@@ -285,7 +285,15 @@ workspace forbids.
    (`Session::project_as_heard`, which the save uses too) and starts its own offline instances
    with them, so it plays what is heard, edits made in an editor since the project was opened
    included (#363). The running instances are only asked for their state: the render's
-   instances are separate host processes, as for any offline render.
+   instances are separate host processes, as for any offline render. An export from the app
+   gathers the same states over its window's frames, never waited for on its thread
+   (`Session::gather_export_data`): the round of reads is its own ledger, so a project stopped
+   mid-read takes the instances and not the answers, the deadline settles what did not answer
+   by name, and a cancelled export's late replies start nothing. Replies are consumed while
+   the round's ledger is still installed, including replies from detached instances. A failed
+   state read also names the plug-in before falling back. These warnings travel with the
+   export result, even when another tab is active. Attached MCP exports use the same frame
+   gather, including exports in batches; only one gather can own a project's reads at a time.
 6. **`unsafe` only in two crates.** `crates/ipc` (shared memory and block sync, linked into the
    engine) and `crates/plugin-host` (the plug-in host process) may use `unsafe`; every other
    crate stays `forbid`. Both offer safe APIs, keep `unsafe` blocks small, explain each one in a
@@ -295,7 +303,12 @@ workspace forbids.
    the instance stays on the host's main thread (with the plug-in's main-thread callbacks), the
    started audio processor on its audio thread. Every audio port the plug-in declares gets a
    buffer with the channels it declared (a plug-in may read them all, and one given fewer can
-   crash, #327); the link's stereo goes through the main ports and the rest get silence. A
+   crash, #327); the link goes through the main ports and the rest get silence, by one channel
+   rule for both formats (`audio::feed_main` and `audio::collect_main` in
+   `crates/plugin-host/src/audio.rs`, #767): a channel of the main input the link has none for
+   repeats the link's last channel, so a mono source reaches both sides of a stereo input; a
+   channel of the link the main output has none for repeats the output's last, so a mono output
+   reaches both sides of a stereo link. A
    plug-in is named `clap:<file>` or
    `clap:<file>#<id>`; the only `unsafe` the host needs for it is opening the file. A CLAP gain
    built into the host (`test:clap`, made with `clack-plugin`) lets the tests run the whole path
@@ -305,7 +318,7 @@ workspace forbids.
    thread (connected through their connection points, the controller given the component's
    state; the host makes the messages and attribute lists they send each other,
    `IHostApplication::createInstance` in `crates/plugin-host/src/vst3_message.rs`, without which
-   some plug-ins crash as soon as they are connected and others when given a state), `setProcessing` and `process` on the audio thread, stereo on the main buses and
+   some plug-ins crash as soon as they are connected and others when given a state), `setProcessing` and `process` on the audio thread, the link on the main buses (by the rule above) and
     silent buffers for any other bus. A plug-in is named `vst3:<bundle or file>[#<class id>]`;
     in a bundle, the executable is looked up per system: `Contents/<arch>-win/<name>` on Windows,
     `Contents/x86_64-linux/<stem>.so` on Linux, and on macOS in `Contents/MacOS` (the file named

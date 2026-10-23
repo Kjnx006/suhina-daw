@@ -102,6 +102,10 @@ struct Shared {
     /// Each voice's jump generation on the graph before when the worker handed it over: a jump
     /// that graph asked for after it is one the new writer did not follow.
     handed_jump: Vec<AtomicU64>,
+    /// Each voice's index in the graph before, published with the handover: the swap finds the
+    /// old reader at once instead of searching every one (hundreds of voices on the audio
+    /// thread).
+    handed_from: Vec<AtomicU64>,
 }
 
 /// One voice on the worker side.
@@ -225,6 +229,9 @@ impl StretchWorker {
             // The jump the voice is at now, published with the claim below.
             if let Some(handed_jump) = self.shared.handed_jump.get(index) {
                 handed_jump.store(old.jumped, Ordering::Release);
+            }
+            if let Some(handed_from) = self.shared.handed_from.get(index) {
+                handed_from.store(old_index as u64, Ordering::Release);
             }
             // Claimed first, or the audio side has swapped the graph in already: then this
             // voice starts afresh, as its reader keeps its own ring.
@@ -384,7 +391,8 @@ impl AheadReader {
         let jumps = voices.iter().map(|_| Jump::default()).collect();
         let adopted = voices.iter().map(|_| AtomicU64::new(0)).collect();
         let handed_jump = voices.iter().map(|_| AtomicU64::new(0)).collect();
-        let shared = Arc::new(Shared { jumps, adopted, handed_jump, ..Shared::default() });
+        let handed_from = voices.iter().map(|_| AtomicU64::new(0)).collect();
+        let shared = Arc::new(Shared { jumps, adopted, handed_jump, handed_from, ..Shared::default() });
         let mut readers = Vec::with_capacity(voices.len());
         let mut writers = Vec::with_capacity(voices.len());
         for (voice, start, length, key) in voices {
@@ -433,8 +441,13 @@ impl AheadReader {
                 Ok(_) => continue,
                 Err(ring) => ring,
             };
-            let Some(old_index) = before.readers.iter().position(|r| r.ring == ring) else { continue };
-            let Some(old) = before.readers.get_mut(old_index) else { continue };
+            let Some(old_index) =
+                self.shared.handed_from.get(index).and_then(|i| usize::try_from(i.load(Ordering::Acquire)).ok())
+            else {
+                continue;
+            };
+            // The index is the old graph's; its ring confirms it is the reader handed over.
+            let Some(old) = before.readers.get_mut(old_index).filter(|r| r.ring == ring) else { continue };
             std::mem::swap(&mut reader.consumer, &mut old.consumer);
             std::mem::swap(&mut reader.ring, &mut old.ring);
             reader.next = old.next;

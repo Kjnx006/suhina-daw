@@ -39,7 +39,6 @@ suhina-device-reverb = { path = "devices/reverb" }
 suhina-device-pitch = { path = "devices/pitch" }
 suhina-device-sampler = { path = "devices/sampler" }
 suhina-device-registry = { path = "crates/device-registry" }
-suhina-device-bundle = { path = "crates/device-bundle" }
 suhina-stretch = { path = "crates/stretch" }
 suhina-output = { path = "crates/output" }
 suhina-realtime = { path = "crates/realtime" }
@@ -85,6 +84,12 @@ opt-level = 2
 [profile.dev]
 opt-level = 1
 debug = "line-tables-only"
+
+# Test binaries without debug info: each one's .pdb on Windows is about 120 MB, and old copies pile
+# up in target/debug/deps. A panic still names its file and line; for line numbers in a backtrace,
+# run with CARGO_PROFILE_TEST_DEBUG=line-tables-only.
+[profile.test]
+debug = false
 
 [profile.release]
 lto = "thin"

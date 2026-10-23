@@ -415,6 +415,9 @@ pub struct ArrangementViewState {
     /// Where the volume, pan and gain fields were drawn last frame: the wheel over one changes its
     /// value instead of scrolling the view, which has to know before they draw themselves again.
     value_areas: Vec<Rect>,
+    /// Where the waveform zoom slider was drawn last frame: the wheel over it steps the zoom
+    /// and leaves the view where it is.
+    zoom_area: Option<Rect>,
     /// Volume and pan as knobs instead of fields (Settings › Session and mixer).
     pub knobs: bool,
     /// The track the user last worked on: the header they clicked, or the track of the clip they
@@ -512,6 +515,7 @@ impl Default for ArrangementViewState {
             track_anchor: None,
             folds: Folds::default(),
             value_areas: Vec::new(),
+            zoom_area: None,
             knobs: false,
             targeted: None,
             track_drag: None,
@@ -1132,7 +1136,8 @@ fn show_lanes(ui: &mut Ui, timeline: &Timeline, state: &mut ArrangementViewState
     // field's (`value_areas`), so the view leaves them alone.
     let fields = std::mem::take(&mut state.value_areas);
     if let Some(pointer) = widgets::pointer_over(ui, area) {
-        let over_field = fields.iter().any(|rect| rect.contains(pointer)) && widgets::wheel_moves_value(ui);
+        let over_field = (fields.iter().any(|rect| rect.contains(pointer)) && widgets::wheel_moves_value(ui))
+            || state.zoom_area.is_some_and(|rect| rect.contains(pointer));
         let zoom = ui.input(|i| i.zoom_delta());
         if zoom != 1.0 && time.contains(pointer) && !over_field {
             let beat = (pointer.x - time.left() + state.scroll.x) / state.beat_width;
@@ -1459,6 +1464,7 @@ fn show_lanes(ui: &mut Ui, timeline: &Timeline, state: &mut ArrangementViewState
             Sense::click_and_drag(),
         );
         response.widget_info(|| egui::WidgetInfo::slider(true, f64::from(state.waveform_zoom), "Waveform zoom"));
+        state.zoom_area = Some(response.rect);
         if response.double_clicked() {
             state.waveform_zoom = 1.0;
         } else if (response.clicked() || response.dragged())
@@ -3126,8 +3132,8 @@ fn clip_box<'a>(
         suhina_plugins::trace::state(
             &format!("fade handles of clip-{}", clip.id.0),
             format!(
-                "on {} row {}/{} at beat {:.3} for {:.3}, clip {:?}, row {:?}, selected {selected}, pointer in {pointer_in}",
-                lane.name, clip.row, clip.rows, clip.start, clip.length, rect, row.clip
+                "on {} row {}/{} at beat {:.3} for {:.3}, selected {selected}, pointer in {pointer_in}",
+                lane.name, clip.row, clip.rows, clip.start, clip.length
             ),
         );
     }
@@ -3359,6 +3365,14 @@ fn paint_clip(
     {
         paint_ara_notes(painter, rect, marks, notes, tempo, start, clip.length, x_of, beat_width, ink);
     }
+    // An ARA plug-in loading or analysing the track's audio: said on the clip, which shows no
+    // notes yet and cannot be edited in it until it is done.
+    if clip.audio
+        && let Some((name, progress)) = timeline.ara_activity.get(&lane.track)
+        && marks.height() >= 4.0
+    {
+        paint_ara_activity(painter, marks, body, ink, name, *progress);
+    }
     // Where a looping clip starts another pass: a notch in its top and bottom edges and a
     // dashed line between them, the repeats drawn as the clip itself (#700).
     if !clip.seams.is_empty() {
@@ -3433,6 +3447,37 @@ fn clip_grab_area(rect: Rect) -> Option<Rect> {
 /// it (a title bar); the drag that moves the clip takes the whole upper half.
 fn clip_name_bar(rect: Rect) -> Option<Rect> {
     (rect.height() >= CLIP_BODY_LEAST).then(|| Rect::from_min_size(rect.min, Vec2::new(rect.width(), CLIP_NAME_BAR)))
+}
+
+/// An ARA plug-in loading or analysing a clip's audio, over the clip's waveform: the body dimmed,
+/// "<plug-in> loading" or "<plug-in> analysing N %" in the middle of what is in view, and a
+/// thin bar along the bottom that fills with the analysis.
+fn paint_ara_activity(
+    painter: &egui::Painter,
+    marks: Rect,
+    body: Color32,
+    ink: Color32,
+    name: &str,
+    progress: Option<f32>,
+) {
+    let view = marks.intersect(painter.clip_rect());
+    if !view.is_positive() {
+        return;
+    }
+    painter.rect_filled(view, 0.0, body.gamma_multiply(0.55));
+    let text = match progress {
+        None => format!("{name} loading\u{2026}"),
+        Some(p) => format!("{name} analysing {} %", (p * 100.0).round() as u32),
+    };
+    if view.width() >= 60.0 && view.height() >= 12.0 {
+        widgets::text_in(painter, view, Align2::CENTER_CENTER, &text, theme::ui_font(theme::TEXT_SMALL), ink);
+    }
+    let track = Rect::from_min_max(Pos2::new(marks.left(), marks.bottom() - 2.0), marks.right_bottom());
+    painter.rect_filled(track, 0.0, motion::mix(body, ink, 0.2));
+    if let Some(p) = progress {
+        let done = Rect::from_min_max(track.min, Pos2::new(track.left() + track.width() * p, track.bottom()));
+        painter.rect_filled(done, 0.0, theme::accent());
+    }
 }
 
 /// Text and marks that read on `background`: dark on a light colour, light on a dark one.

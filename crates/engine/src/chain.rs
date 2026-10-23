@@ -100,6 +100,13 @@ pub(crate) struct Chain {
     /// The channel's volume `post` was built with, when a live volume may scale it: `None` for
     /// a bus or an automated volume (those take a new graph).
     pub(crate) built_volume: Option<f64>,
+    /// The pan it was built at, when its pan is applied live ([`Chain::set_live_pan`]): its gains
+    /// and its post-fader sends' are then built centred and [`Chain::pan`] carries the pan. None
+    /// for a bus (a group's pan does not apply) or a track with mix lanes, whose gains hold it.
+    pub(crate) built_pan: Option<f64>,
+    /// The pan's equal-power factors on the left and right gains (1 and 1 centred), smoothed like
+    /// a fader as a live pan turns them; 1 and 1 without a live pan.
+    pub(crate) pan: (LiveVolume, LiveVolume),
     /// A fader move since the graph was built, as a factor on `post`, its cue and its post-fader
     /// sends, smoothed like a fader in OSS hosts (a one-pole low pass at about 25 Hz).
     pub(crate) live: LiveVolume,
@@ -131,7 +138,7 @@ pub(crate) struct Chain {
     context: ProcessContext,
     /// The sample rate its devices were prepared for, which turns a span's first frame into its
     /// song position.
-    sample_rate: f64,
+    pub(crate) sample_rate: f64,
     /// Frames of the current block the devices have run over.
     done: usize,
     /// When the block runs in stages with other chains ([`Chain::advance`]): the next slot to
@@ -153,6 +160,33 @@ pub(crate) struct Chain {
     next_off: u64,
     /// The scale last sent to the devices ([`Chain::set_scale`]); `None` before the first.
     scale: Option<Option<MusicalScale>>,
+}
+
+/// The identity of built-in device `id` for graph swaps: a device that holds a file changes with
+/// the file, so its identity carries the state's hash, the `.sd` devices' trick, and a model swap
+/// rebuilds one device alone; a Sampler's carries its sample (#600). A chain and the groups in it
+/// give the same device the same identity.
+pub(crate) fn device_identity(id: &str, stored: &suhina_model::Device, audio: &crate::AudioPool) -> String {
+    if suhina_device_registry::is_file_device(id) {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        use std::hash::{Hash, Hasher};
+        let hashed = match std::str::from_utf8(stored.state.as_deref().unwrap_or(&[])) {
+            Ok(text) => {
+                text.hash(&mut hasher);
+                hasher.finish()
+            }
+            Err(_) => hasher.finish(),
+        };
+        format!("{id}:{hashed:016x}")
+    } else {
+        stored.sample_file().map_or_else(
+            || id.to_owned(),
+            |file| {
+                let source = audio.files.get(file).map(std::sync::Arc::as_ptr);
+                format!("{id}:{file}:{source:?}")
+            },
+        )
+    }
 }
 
 impl Chain {
@@ -271,6 +305,7 @@ impl Chain {
                     }
                     let mut builder = crate::group::Builder {
                         sample_rate,
+                        audio,
                         assets,
                         plugins: &mut *plugins,
                         keys: &keys,
@@ -312,29 +347,7 @@ impl Chain {
             latency = latency.saturating_add(device.latency());
             slots.push(if info.role == Role::MidiEffect { Slot::MidiDevice(device) } else { Slot::Device(device) });
             positions.push(position);
-            // A device that holds a file changes with the file: its identity carries the state's
-            // hash, the `.sd` devices' trick, so a model swap rebuilds one device alone; a
-            // Sampler's carries its sample (#600).
-            if suhina_device_registry::is_file_device(id) {
-                let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                use std::hash::{Hash, Hasher};
-                let hashed = match std::str::from_utf8(stored.state.as_deref().unwrap_or(&[])) {
-                    Ok(text) => {
-                        text.hash(&mut hasher);
-                        hasher.finish()
-                    }
-                    Err(_) => hasher.finish(),
-                };
-                ids.push(format!("{id}:{hashed:016x}"));
-            } else {
-                ids.push(stored.sample_file().map_or_else(
-                    || id.clone(),
-                    |file| {
-                        let source = audio.files.get(file).map(std::sync::Arc::as_ptr);
-                        format!("{id}:{file}:{source:?}")
-                    },
-                ));
-            }
+            ids.push(device_identity(id, stored, audio));
             params.push(values);
         }
         let mut instrument = slots.iter().any(crate::group::is_instrument);
@@ -392,13 +405,16 @@ impl Chain {
             next_off: NOT_HELD,
             scale: None,
             built_volume: None,
+            built_pan: None,
+            pan: (LiveVolume::default(), LiveVolume::default()),
             live: LiveVolume::default(),
         })
     }
 
     /// A chain without devices for a track that plays into a bus, so its sound reaches the bus
-    /// at its gains and with its share of latency compensation. Allocates.
-    pub(crate) fn passthrough(track: TrackId, column: u32) -> Self {
+    /// at its gains and with its share of latency compensation, at `sample_rate` (which its
+    /// fader's smoothing follows). Allocates.
+    pub(crate) fn passthrough(track: TrackId, column: u32, sample_rate: u32) -> Self {
         Self {
             track,
             column,
@@ -424,8 +440,8 @@ impl Chain {
             midi_scratch: Vec::new(),
             deadline: None,
             context: ProcessContext::default(),
-            // It runs no devices, so nothing reads it.
-            sample_rate: 48_000.0,
+            // No devices read it; the live volume's smoothing does.
+            sample_rate: f64::from(sample_rate),
             done: 0,
             stage: 0,
             waiting: None,
@@ -437,6 +453,8 @@ impl Chain {
             next_off: NOT_HELD,
             scale: None,
             built_volume: None,
+            built_pan: None,
+            pan: (LiveVolume::default(), LiveVolume::default()),
             live: LiveVolume::default(),
         }
     }
@@ -450,6 +468,25 @@ impl Chain {
         {
             self.live.target = (volume / built) as f32;
         }
+    }
+
+    /// Takes a pan knob's turn to `pan` (-1 to 1) from the next block, smoothed: the equal-power
+    /// gains of the new pan against those it was built at; ignored without a
+    /// [`Chain::built_pan`]. Never allocates.
+    pub(crate) fn set_live_pan(&mut self, pan: f64) {
+        if self.built_pan.is_none() || !pan.is_finite() {
+            return;
+        }
+        let (left, right) = pan_factors(pan);
+        self.pan.0.target = left;
+        self.pan.1.target = right;
+    }
+
+    /// Builds the chain with its pan applied live from `pan`: its gains are centred.
+    pub(crate) fn set_built_pan(&mut self, pan: f64) {
+        let (left, right) = pan_factors(pan);
+        self.built_pan = Some(pan);
+        self.pan = (LiveVolume::fixed(left), LiveVolume::fixed(right));
     }
 
     /// Sets the gains applied after the devices: the track's gains up to where its sound goes.
@@ -499,10 +536,10 @@ impl Chain {
     /// [`Chain::begin`], before any of the block runs. Never allocates.
     /// Tells the chain's plug-ins where the song is as the block starts
     /// ([`PluginProcessor::transport`]). Never allocates.
-    pub(crate) fn transport(&mut self, playing: bool, position: u64, tempo: f64) {
+    pub(crate) fn transport(&mut self, song: &crate::plugin::SongPosition) {
         for slot in self.plugin_slots() {
             if let Some(processor) = slot.processor.as_mut() {
-                processor.transport(playing, position, tempo);
+                processor.transport(song);
             }
         }
     }
@@ -513,6 +550,11 @@ impl Chain {
             slot.params.plan(time, frames);
         }
         self.device_lanes.plan(time, frames);
+        for slot in &mut self.slots {
+            if let Slot::Group(group) = slot {
+                group.plan(time, frames);
+            }
+        }
     }
 
     /// Fills the track's mixer gains for a block of `frames` frames whose first frame is at
@@ -908,6 +950,9 @@ impl Chain {
     /// the result to where the track plays into, and the sends read it before that.
     pub(crate) fn complete(&mut self, frames: usize, context: &ProcessContext) {
         self.live.plan(frames, self.sample_rate);
+        self.pan.0.plan(frames, self.sample_rate);
+        self.pan.1.plan(frames, self.sample_rate);
+        self.plan_sends(frames);
         self.context = *context;
         self.run(frames);
     }
@@ -917,22 +962,24 @@ impl Chain {
     pub(crate) fn mix(&mut self, out: &mut [f32], cue: &mut [f32], frames: usize) {
         let (gain_left, gain_right) = self.post;
         let live = self.live;
+        let pan = self.pan;
         let Some(buffer) = self.buffer.get_mut(..frames.min(MAX_BLOCK) * 2) else { return };
         self.delay.run(buffer);
         let pairs = out.as_chunks_mut::<2>().0.iter_mut().zip(buffer.as_chunks::<2>().0);
         match &self.mix {
-            None if live.steady() => {
+            None if live.steady() && pan.0.steady() && pan.1.steady() => {
                 let fader = live.at(0);
+                let (left, right) = (gain_left * fader * pan.0.at(0), gain_right * fader * pan.1.at(0));
                 for ([l, r], [cl, cr]) in pairs {
-                    *l += cl * gain_left * fader;
-                    *r += cr * gain_right * fader;
+                    *l += cl * left;
+                    *r += cr * right;
                 }
             }
             None => {
                 for (frame, ([l, r], [cl, cr])) in pairs.enumerate() {
                     let fader = live.at(frame);
-                    *l += cl * gain_left * fader;
-                    *r += cr * gain_right * fader;
+                    *l += cl * gain_left * fader * pan.0.at(frame);
+                    *r += cr * gain_right * fader * pan.1.at(frame);
                 }
             }
             // A pan or mute lane alone leaves the volume to the fader, which still moves live.
@@ -949,9 +996,10 @@ impl Chain {
             for (frame, ([l, r], [cl, cr])) in
                 cue.as_chunks_mut::<2>().0.iter_mut().zip(buffer.as_chunks::<2>().0).enumerate()
             {
+                // The pan is (1, 1) unless the chain applies it live.
                 let fader = live.at(frame);
-                *l += cl * cue_left * fader;
-                *r += cr * cue_right * fader;
+                *l += cl * cue_left * fader * pan.0.at(frame);
+                *r += cr * cue_right * fader * pan.1.at(frame);
             }
         }
     }
@@ -1480,9 +1528,22 @@ impl Default for LiveVolume {
     }
 }
 
+/// The equal-power factors of pan `pan` (-1 to 1) on centred gains: 1 and 1 centred, √2 and 0 at
+/// the left end.
+pub(crate) fn pan_factors(pan: f64) -> (f32, f32) {
+    let pan = if pan.is_finite() { pan.clamp(-1.0, 1.0) } else { 0.0 };
+    let angle = (pan + 1.0) * std::f64::consts::FRAC_PI_4;
+    ((angle.cos() * std::f64::consts::SQRT_2) as f32, (angle.sin() * std::f64::consts::SQRT_2) as f32)
+}
+
 impl LiveVolume {
+    /// A factor at `value`, not moving.
+    pub(crate) fn fixed(value: f32) -> Self {
+        Self { target: value, now: value, from: value, to: value, frames: 1 }
+    }
+
     /// Plans the next block of `frames` frames at `sample_rate`.
-    fn plan(&mut self, frames: usize, sample_rate: f64) {
+    pub(crate) fn plan(&mut self, frames: usize, sample_rate: f64) {
         self.from = self.now;
         let coefficient = (156.825 / sample_rate.max(1.0)).min(1.0);
         let left = (1.0 - coefficient).powi(i32::try_from(frames).unwrap_or(i32::MAX));
@@ -1515,7 +1576,7 @@ mod live_volume_tests {
     /// The left output of a passthrough chain fed ones, after a fader move to `volume` has
     /// settled, with a pan lane at the centre when `pan_lane`.
     fn settled(volume: f64, pan_lane: bool) -> f32 {
-        let mut chain = Chain::passthrough(TrackId(1), 0);
+        let mut chain = Chain::passthrough(TrackId(1), 0, 48_000);
         if pan_lane {
             let mut channel = Channel::new(ChannelId(1), "C1");
             channel.automation.push(AutomationLane {
@@ -1536,6 +1597,34 @@ mod live_volume_tests {
             chain.mix(&mut out, &mut [], 256);
         }
         out.get(255 * 2).copied().unwrap_or_default()
+    }
+
+    /// The left output of a passthrough chain at `sample_rate`, fed ones, 2 ms after a fader
+    /// move from 1 to 0: the first frame of the block after a 2 ms one.
+    fn after_2_ms(sample_rate: u32) -> f32 {
+        let mut chain = Chain::passthrough(TrackId(1), 0, sample_rate);
+        chain.built_volume = Some(1.0);
+        chain.set_live_volume(0.0);
+        let frames = sample_rate as usize / 500;
+        let mut out = vec![0.0; frames * 2];
+        for _ in 0..2 {
+            chain.buffer.fill(1.0);
+            chain.complete(frames, &ProcessContext::default());
+            out.fill(0.0);
+            chain.mix(&mut out, &mut [], frames);
+        }
+        out[0]
+    }
+
+    /// A fader move fades in the same time whatever the device's rate.
+    #[test]
+    fn a_passthrough_fader_fades_in_the_same_time_at_any_rate() {
+        let at_48k = after_2_ms(48_000);
+        assert!(at_48k > 0.1 && at_48k < 0.9, "{at_48k}");
+        for rate in [44_100, 96_000] {
+            let other = after_2_ms(rate);
+            assert!((other - at_48k).abs() < 1e-3, "{rate} Hz: {other} against {at_48k}");
+        }
     }
 
     #[test]
@@ -1749,7 +1838,7 @@ mod jump_tests {
     /// block ended; the notes it starts come in the next block. The releases must come first.
     #[test]
     fn a_release_before_a_block_comes_before_the_notes_the_block_starts() {
-        let mut chain = Chain::passthrough(TrackId(0), 0);
+        let mut chain = Chain::passthrough(TrackId(0), 0, 48_000);
         chain.instrument = true;
         chain.note_on(0, 0, 60, 1.0, 1_000_000);
         chain.pending.clear();

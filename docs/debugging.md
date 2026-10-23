@@ -3,11 +3,12 @@ description: How to find out what the running app does around a bug: the trace l
 read_when: debugging, bug hunting, trace, SUHINA_TRACE, --trace, diagnostic log, live debugging, UI lag, slow frame, frame time, stutter, plug-in host log, ARA, Melodyne, playhead jumps, flicker, timing, latency, screen recording, video frames, contact sheet, tester, hang, freeze, working a bug through
 type: howto
 status: current
-last_verified: 2026-10-21
+last_verified: 2026-10-22
 covers:
   - crates/plugins/src/trace.rs
   - crates/ui/src/kit/frame_trace.rs
   - scripts/video_frames.py
+  - scripts/trace-summary.py
   - .claude/skills/trace-debugging/SKILL.md
 ---
 
@@ -69,12 +70,15 @@ host process have their own id, so `grep "\[12345\]"` shows one process. To foll
 | `host unloads N` / `host unloaded N in …` | host | an instance let go of, and how long it took |
 | `vst3 unload: …` / `vst3 drop: …` / `vst3 audio: …` | host (`vst3.rs`) | each step of a VST3 plug-in's teardown, to find the call that hangs |
 | `ara region …` | host (`ara.rs`) | an ARA playback region described to the plug-in: start, duration, offset |
+| `ara document "<key>" shared with another track` | host (`ara.rs`) | a track's plug-in joining the ARA document another track's made (one a plug-in and project) |
+| `ara audio N: playing/stopped, song at S s, peak P` | host (`vst3.rs`) | once a second for an ARA-bound instance N: the song position it was told and its loudest sample, so a silent ARA track says whether the plug-in played nothing |
 | `ara analysis progress …`, `ara content changed …`, `ara notes …` | host | the plug-in's analysis and content notifications, and the notes read |
 | `ara plug-in asks transport …` | host | the plug-in's play, stop and position requests |
 | `ara musical context changed` | host | the tempo map or time signatures sent to the plug-in again |
 | `slow frame N ms: part ms, …; what was shown` | app (`kit/frame_trace.rs`) | a frame whose drawing took 25 ms or more, part by part (› UI time) |
 | `frames: N in 1.0 s …` | app | once a second while the window draws: frames, drawing time on average and the longest, the longest wait between frames |
-| `audio: device underruns N (+n), stretched frames late N (+n), engine load …` | app | once a second, when sound went missing since the last look or the engine's load is 70 % or more (› Audio dropouts) |
+| `audio: device underruns N (+n), stretched frames late N (+n), … plug-in blocks late N (+n, most <plug-in on track>: n), engine load …` | app | once a second, when sound went missing since the last look or the engine's load is 70 % or more (› Audio dropouts) |
+| `slow engine update: N ms (graph …)` | app (`session/src/lib.rs`) | a project change whose new engine graph took 25 ms or more to make, part by part |
 | `slow <work>: N ms` | app | library listings, browser rows, the sample map and its cache, a drop, adding to a track: anything that took 5 ms or more |
 
 ### UI time
@@ -92,7 +96,16 @@ The parts, in the order the frame draws them: `input` (keys, polls, the sample m
 `detail` (the detail area: clip column, devices, piano roll), `view setup`, `timeline` (the
 Arrangement's lanes and clips, rebuilt only after the project changed: `timeline rebuilt`),
 `arrangement view` or `session view` (drawing it), `views`, `drags`, `dialogs`, `commands`
-(running what the frame asked for) and `rest`. The part that stands out is where to look.
+(running what the frame asked for), `quit check` (advancing all projects' nonblocking plug-in state checks
+before asking whether to save on quit) and `rest`. The part that stands
+out is where to look.
+
+A closed project's plug-ins are unloaded on a thread of their own, so the window goes on drawing
+meanwhile: `closed project let go in …` says how long it took. Quitting lets every project go at
+once and shows "Closing Suhina" for up to 2 s: `quit: projects let go in …`, or
+`quit: projects not let go, closing anyway after 2s` when a plug-in was still busy (an ARA plug-in
+finishing an analysis can hold its host for many seconds); its host process then ends on its own
+once the plug-in is done.
 
 Once a second a `frames:` line sums up: how many frames, their drawing time on average and the
 longest, and the longest wait between two frames. A long wait with short drawing means the time
@@ -110,9 +123,18 @@ happens. Two counters tell the causes apart:
 - **stretched frames late:** a warped (stretched) clip's audio, made ahead on a thread of its
   own, was not ready when the engine reached it, so that clip alone played silence. A Live Set
   with many warped clips leans on this.
+- **plug-in blocks late:** a plug-in's block was not back from its host process by the time the
+  engine had to hand the device its buffer, so that block passed the sound through unprocessed (a
+  crackle on that track). The line names the plug-in late most often and its track. A return's
+  plug-ins run after every track that sends to them, so they have the least time left.
 
 Lines come only when a counter grew or the load is high, so a session that plays cleanly writes
 none.
+
+What is normal: a few late plug-in blocks in the first second of playback (every plug-in wakes at
+once), and a few thousand stretched frames late right after a jump of the play position (the
+stretched clips there are made from the new place first). Late blocks that keep coming while it
+plays, or underruns at all, are the bug.
 
 ### Adding a trace point
 
@@ -136,6 +158,19 @@ points on the audio thread must not allocate: there, set an atomic and trace fro
 
 ### Reading it
 
+Start with the summary, which sums up what was heard and seen and says when:
+
+```bash
+python scripts/trace-summary.py trace.log            # the whole session
+python scripts/trace-summary.py trace.log --since 120  # its last two minutes
+python scripts/trace-summary.py trace.log --follow     # live, only the lines worth acting on
+```
+
+It lists the processes and the plug-ins each host runs, the audio counters with their times and
+the plug-in most often late, the slowest frames by the part that took the time, the slow engine
+updates, plug-ins loaded twice, failed, slow to let go or never let go, the ARA documents and
+notes, and the last actions. Then read the log around the times it names.
+
 - **Order and gaps:** the timestamps show what came before what, and how long each step took. A
   plug-in that stayed "Loading" showed as `host unloads 1` with no `host unloaded 1` after it, for
   120 seconds (the start timeout); the steps of `vst3 drop:` then named the call that hung.
@@ -156,8 +191,10 @@ screen (OBS, ShareX or the like) while you reproduce the bug, then:
 python scripts/video_frames.py extract bug.mp4 frames --fps 6
 python scripts/video_frames.py extract bug.mp4 full --fps 24 --from 21 --to 30
 
-# A contact sheet: a run of frames in one image, each with its number and second.
+# A contact sheet: a run of frames in one image, each with its number and second. Frames
+# extracted with --from (and --fps) are given the same, so the seconds are the video's.
 python scripts/video_frames.py sheet frames overview.jpg --every 3 --cols 10 --size 320x180
+python scripts/video_frames.py sheet full detail.jpg --first 1 --last 12 --fps 24 --from 21
 
 # The same part of each frame at full size: the clip, the plug-in's timeline.
 python scripts/video_frames.py sheet frames clip.jpg --first 130 --last 150 --cols 3 --size 640x210 --crop 760,520,1920,900
@@ -165,7 +202,7 @@ python scripts/video_frames.py sheet frames clip.jpg --first 130 --last 150 --co
 # Where thin vertical lines are in a strip of each frame, printed when they change: a playhead,
 # an insert marker. --scale turns pixels into bars (pixels a bar, a pixel x and the bar there),
 # --pointer follows the mouse in a band (the ruler).
-python scripts/video_frames.py track full --strip 800,1700,740,746 --fps 24 --scale 99.5,806,4 --pointer 528,550
+python scripts/video_frames.py track full --strip 800,1700,740,746 --fps 24 --from 21 --scale 99.5,806,4 --pointer 528,550
 ```
 
 `track` printed this for the Melodyne playhead bug: after each click the line went to the new
@@ -174,7 +211,7 @@ DAW never went back.
 
 ```text
   23.04s frame   50  lines=[7.05]  pointer=7.09
-  23.09s frame   51  lines=[7.57]  pointer=7.09
+  23.08s frame   51  lines=[7.57]  pointer=7.09
   23.21s frame   54  lines=[7.05]  pointer=7.09
 ```
 

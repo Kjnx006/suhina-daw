@@ -23,6 +23,7 @@
 //!
 //! A plug-in is named `clap:<file>` (the first plug-in in the file) or `clap:<file>#<id>`, or
 //! `test:clap` for the gain plug-in built into the host for tests ([`crate::test_clap`]), or
+//! `test:clap-mix` for the same gain mixing its first two channels into the first, or
 //! `test:clap-delay` for the delay whose latency is a parameter ([`crate::test_clap_delay`]), or
 //! `test:clap-ports` for the one with a rack's port layout ([`crate::test_clap_ports`]).
 
@@ -43,8 +44,12 @@ use clack_extensions::posix_fd::{FdFlags, HostPosixFd, HostPosixFdImpl, PluginPo
 use clack_extensions::state::{HostState, HostStateImpl, PluginState};
 use clack_extensions::timer::{HostTimer, HostTimerImpl, PluginTimer, TimerId};
 use clack_host::events::Match;
-use clack_host::events::event_types::{MidiEvent, NoteOffEvent, NoteOnEvent, ParamValueEvent};
+use clack_host::events::event_types::{
+    MidiEvent, NoteOffEvent, NoteOnEvent, ParamValueEvent, TransportEvent, TransportFlags,
+};
+use clack_host::events::{EventFlags, EventHeader};
 use clack_host::prelude::*;
+use clack_host::utils::{BeatTime, SecondsTime};
 use suhina_ipc::{Event, EventKind, MAX_EVENTS, Served};
 use suhina_plugins::ParamInfo;
 
@@ -330,6 +335,11 @@ fn entry(spec: &str) -> Result<(PluginEntry, Option<String>), String> {
             .map_err(|e| format!("test plug-in: {e}"))?;
         return Ok((entry, None));
     }
+    if spec == "test:clap-mix" {
+        let entry = PluginEntry::load_from_clack::<crate::test_clap::MixEntry>(c"suhina-test-clap-mix")
+            .map_err(|e| format!("test plug-in: {e}"))?;
+        return Ok((entry, None));
+    }
     if spec == "test:clap-delay" {
         let entry = PluginEntry::load_from_clack::<crate::test_clap_delay::Entry>(c"suhina-test-clap-delay")
             .map_err(|e| format!("test plug-in: {e}"))?;
@@ -437,11 +447,12 @@ impl ClapPlugin {
         self.stop = Arc::new(AtomicBool::new(false));
         let (audio_stop, audio_pending, ports, number) =
             (self.stop.clone(), self.pending.clone(), self.ports.clone(), self.number);
+        let sample_rate = self.configuration.sample_rate;
         let audio = thread::Builder::new()
             .name("plug-in audio".into())
             .spawn(move || {
                 let _realtime = crate::real_time_thread();
-                serve(number, stopped, served, ports, audio_pending, &audio_stop)
+                serve(number, stopped, served, ports, (audio_pending, sample_rate), &audio_stop)
             })
             .map_err(|e| e.to_string())?;
         self.audio = Some(audio);
@@ -745,14 +756,14 @@ fn serve(
     stopped: StoppedPluginAudioProcessor<Host>,
     mut served: Served,
     (input_ports, output_ports): (Ports, Ports),
-    pending: PendingParams,
+    (pending, sample_rate): (PendingParams, f64),
     stop: &AtomicBool,
 ) -> Option<Stopped> {
     let processor = match stopped.start_processing() {
         Ok(started) => started,
         Err(e) => return Some((e.into_stopped_processor(), served)),
     };
-    let block = ClapBlock::new(processor, &served, (input_ports, output_ports), pending);
+    let block = ClapBlock::new(processor, &served, (input_ports, output_ports), pending, sample_rate);
     crate::audio::serve(instance, block, &mut served, stop).map(|block| (block.processor.stop_processing(), served))
 }
 
@@ -770,6 +781,64 @@ struct ClapBlock {
     out_events: EventBuffer,
     pending: PendingParams,
     steady_time: u64,
+    /// Where the song is, as the engine last said: given with every block.
+    transport: TransportEvent,
+    sample_rate: f64,
+}
+
+/// The transport before the engine says where the song is: stopped at the start, 120 BPM, 4/4.
+fn blank_transport() -> TransportEvent {
+    TransportEvent {
+        header: EventHeader::new_core(0, EventFlags::empty()),
+        flags: TransportFlags::HAS_TEMPO
+            | TransportFlags::HAS_BEATS_TIMELINE
+            | TransportFlags::HAS_SECONDS_TIMELINE
+            | TransportFlags::HAS_TIME_SIGNATURE,
+        song_pos_beats: BeatTime::from_float(0.0),
+        song_pos_seconds: SecondsTime::from_float(0.0),
+        tempo: 120.0,
+        tempo_inc: 0.0,
+        loop_start_beats: BeatTime::from_float(0.0),
+        loop_end_beats: BeatTime::from_float(0.0),
+        loop_start_seconds: SecondsTime::from_float(0.0),
+        loop_end_seconds: SecondsTime::from_float(0.0),
+        bar_start: BeatTime::from_float(0.0),
+        bar_number: 0,
+        time_signature_numerator: 4,
+        time_signature_denominator: 4,
+    }
+}
+
+/// Takes the song's place the engine sent with a block into `transport`.
+fn follow_song(transport: &mut TransportEvent, events: &[Event], sample_rate: f64) {
+    for event in events {
+        match event.kind {
+            EventKind::Transport { playing, position } => {
+                transport.flags.set(TransportFlags::IS_PLAYING, playing);
+                if sample_rate > 0.0 {
+                    transport.song_pos_seconds = SecondsTime::from_float(position as f64 / sample_rate);
+                }
+            }
+            EventKind::Tempo { bpm } => transport.tempo = f64::from(bpm),
+            EventKind::Beat { beat } => transport.song_pos_beats = BeatTime::from_float(beat),
+            EventKind::Cycle { on, start, end } => {
+                transport.flags.set(TransportFlags::IS_LOOP_ACTIVE, on);
+                transport.loop_start_beats = BeatTime::from_float(f64::from(start));
+                transport.loop_end_beats = BeatTime::from_float(f64::from(end));
+            }
+            EventKind::CycleSeconds { start, end } => {
+                transport.loop_start_seconds = SecondsTime::from_float(f64::from(start));
+                transport.loop_end_seconds = SecondsTime::from_float(f64::from(end));
+            }
+            EventKind::Bar { number, start, numerator, denominator } => {
+                transport.bar_number = i32::try_from(number).unwrap_or(i32::MAX);
+                transport.bar_start = BeatTime::from_float(start);
+                transport.time_signature_numerator = u16::from(numerator);
+                transport.time_signature_denominator = u16::from(denominator);
+            }
+            _ => {}
+        }
+    }
 }
 
 impl ClapBlock {
@@ -778,6 +847,7 @@ impl ClapBlock {
         served: &Served,
         (input_ports, output_ports): (Ports, Ports),
         pending: PendingParams,
+        sample_rate: f64,
     ) -> Self {
         let max_frames = served.max_frames() as usize;
         let inputs = input_ports.buffers(max_frames);
@@ -798,6 +868,8 @@ impl ClapBlock {
             out_events: EventBuffer::with_capacity(EVENT_CAPACITY),
             pending,
             steady_time: 0,
+            transport: blank_transport(),
+            sample_rate,
         }
     }
 }
@@ -817,18 +889,20 @@ impl crate::audio::Block for ClapBlock {
             out_events,
             pending,
             steady_time,
+            transport,
+            sample_rate,
         } = self;
         let channels = *channels;
         let frames = input.len() / channels.max(1);
-        // The link's channels into the main input port's first ones; silence elsewhere (a
-        // plug-in may have written to an input).
+        // The link's channels into the main input port, by the rule every format follows
+        // ([`crate::audio::feed_main`]); silence elsewhere (a plug-in may have written to an input).
         for (port, buffers) in inputs.iter_mut().enumerate() {
-            let main = input_ports.main == Some(port);
-            for (channel, buffer) in buffers.iter_mut().enumerate() {
-                let fed = main && channel < channels;
-                for (frame, sample) in buffer.iter_mut().take(frames).enumerate() {
-                    *sample = if fed { input.get(frame * channels + channel).copied().unwrap_or(0.0) } else { 0.0 };
-                }
+            if input_ports.main == Some(port) {
+                crate::audio::feed_main(input, channels, frames, buffers);
+                continue;
+            }
+            for buffer in buffers.iter_mut() {
+                buffer.iter_mut().take(frames).for_each(|sample| *sample = 0.0);
             }
         }
         let audio_in = input_audio.with_input_buffers(inputs.iter_mut().map(|port| AudioPortBuffer {
@@ -857,29 +931,21 @@ impl crate::audio::Block for ClapBlock {
         for event in events {
             push_event(in_events, event);
         }
+        follow_song(transport, events, *sample_rate);
         let processed = processor.process(
             &audio_in,
             &mut audio_out,
             &InputEvents::from_buffer(in_events),
             &mut OutputEvents::from_buffer(out_events),
             Some(*steady_time),
-            None,
+            Some(transport),
         );
         *steady_time = steady_time.wrapping_add(frames as u64);
         // A failed block stays silent (the output starts zeroed). The link's channels come from
-        // the main output port's first ones; a mono port feeds them all.
+        // the main output port, by the shared rule.
         let main = output_ports.main.and_then(|port| outputs.get(port)).filter(|_| processed.is_ok());
         if let Some(main) = main {
-            for channel in 0..channels {
-                let Some(buffer) = main.get(channel).or_else(|| main.last().filter(|_| main.len() == 1)) else {
-                    continue;
-                };
-                for (frame, sample) in buffer.iter().take(frames).enumerate() {
-                    if let Some(out) = output.get_mut(frame * channels + channel) {
-                        *out = *sample;
-                    }
-                }
-            }
+            crate::audio::collect_main(main, channels, frames, output);
         }
     }
 }
@@ -962,8 +1028,13 @@ fn push_event(buffer: &mut EventBuffer, event: &Event) {
             let (low, high) = ((bend & 0x7F) as u8, (bend >> 7) as u8);
             buffer.push(&MidiEvent::new(event.frame, 0, [0xE0 | (channel & 0x0F), low, high]));
         }
-        // The song's place goes to VST3 renderers that follow it (ADR 0028); not a CLAP event.
-        EventKind::Transport { .. } | EventKind::Tempo { .. } => {}
+        // The song's place goes to the plug-in as the block's transport ([`follow_song`]).
+        EventKind::Transport { .. }
+        | EventKind::Tempo { .. }
+        | EventKind::Beat { .. }
+        | EventKind::Bar { .. }
+        | EventKind::Cycle { .. }
+        | EventKind::CycleSeconds { .. } => {}
     }
 }
 
@@ -988,5 +1059,16 @@ mod tests {
         assert_eq!(many.channels.len(), MAX_PORTS);
         assert!(many.channels.iter().all(|c| *c == MAX_PORT_CHANNELS));
         assert_eq!(many.buffers(4).iter().flatten().count(), many.total_channels());
+    }
+    #[test]
+    fn the_loop_reaches_a_plug_in_on_both_timelines_it_is_told_of() {
+        // The transport says it has a seconds timeline, so the loop is on it too, not 0 to 0.
+        let mut transport = blank_transport();
+        let events = [Event::cycle(true, 4.0, 12.0), Event::cycle_seconds(2.0, 6.0)];
+        follow_song(&mut transport, &events, 48_000.0);
+        assert!(transport.flags.contains(TransportFlags::IS_LOOP_ACTIVE));
+        assert!(transport.flags.contains(TransportFlags::HAS_SECONDS_TIMELINE));
+        assert_eq!((transport.loop_start_beats.to_float(), transport.loop_end_beats.to_float()), (4.0, 12.0));
+        assert_eq!((transport.loop_start_seconds.to_float(), transport.loop_end_seconds.to_float()), (2.0, 6.0));
     }
 }

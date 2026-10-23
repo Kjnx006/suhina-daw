@@ -404,6 +404,7 @@ impl eframe::App for Window {
     /// left to offer next time.
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         let _finished_in_time = self.app.finish_backups();
+        let _let_go_in_time = self.app.let_go_of_projects();
         // Restart now, after an update: the new build starts as this one closes.
         if self.app.restart_wanted()
             && let Err(e) = suhina_update::relaunch()
@@ -420,6 +421,9 @@ impl Window {
     fn serve_agents(&mut self, ctx: &eframe::egui::Context) {
         let Some(agents) = self.agents.as_ref() else { return };
         agents.set_enabled(self.app.settings().agents);
+        let include_project = self.app.settings().mcp_project_folder;
+        let folders: Vec<PathBuf> = self.app.settings().mcp_write_folders.iter().map(PathBuf::from).collect();
+        self.app.projects_mut().set_mcp_write_folders(include_project, &folders);
         let opens = agents.take_opens();
         for event in agents.take_events() {
             match event {
@@ -629,8 +633,11 @@ fn pick(request: &suhina_ui::interaction::pick::PickRequest) -> Option<PathBuf> 
     }
     if request.field.folder() {
         dialog.pick_folder()
+    } else if request.field == suhina_ui::interaction::pick::PickField::ExportFile {
+        // The export writes a file that need not exist yet: a save dialog, not an open one.
+        dialog.add_filter(request.field.filter_label(), request.field.extensions()).save_file()
     } else {
-        dialog.add_filter("Projects", request.field.extensions()).pick_file()
+        dialog.add_filter(request.field.filter_label(), request.field.extensions()).pick_file()
     }
 }
 
