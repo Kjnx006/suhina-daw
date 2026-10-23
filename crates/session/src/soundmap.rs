@@ -99,14 +99,14 @@ impl Projects {
     /// The sample map's analysis, kept beside the library's indexes.
     pub fn sound_map_mut(&mut self) -> &mut SoundMap {
         let folder = self.file_library_mut().data_folder();
-        self.sound_map.get_or_insert_with(|| SoundMap::new(folder, SoundMap::default_threads()))
+        self.browser.sound_map.get_or_insert_with(|| SoundMap::new(folder, SoundMap::default_threads()))
     }
 
     /// Starts analysing the library's samples in the background, and keeps doing so as files
     /// come and go. The desktop app and the MCP server start it, as they start the library;
     /// tests and the CLI never analyse a user's folders unasked.
     pub fn start_sound_map(&mut self) {
-        self.sound_map_started = true;
+        self.browser.sound_map_started = true;
         // A large cache is read off the caller's thread (the window's).
         self.sound_map_mut().read_in_background(true);
         self.poll_sound_map();
@@ -115,7 +115,7 @@ impl Projects {
     /// Waits until every queued sample is analysed (tests, the CLI).
     pub fn wait_sound_map(&mut self) {
         self.poll_sound_map();
-        if let Some(map) = &mut self.sound_map {
+        if let Some(map) = &mut self.browser.sound_map {
             map.wait();
         }
     }
@@ -125,13 +125,13 @@ impl Projects {
     /// anything changed.
     pub fn poll_sound_map(&mut self) -> bool {
         let mut changed = false;
-        if self.sound_map_started {
+        if self.browser.sound_map_started {
             let library = self.file_library_mut();
             library.poll();
             let revision = library.revision();
             // While the update before is worked out, the index is not copied for the next: that
             // would be refused, and copied again every frame until it was not.
-            if self.sound_map_revision != Some(revision) && !self.sound_map_mut().updating() {
+            if self.browser.sound_map_revision != Some(revision) && !self.sound_map_mut().updating() {
                 if self.sound_map_mut().reads_in_background() {
                     // Listed and compared on a thread of its own: a large library held the
                     // window up for a second here.
@@ -142,17 +142,17 @@ impl Projects {
                             .collect()
                     });
                     if started {
-                        self.sound_map_revision = Some(revision);
+                        self.browser.sound_map_revision = Some(revision);
                     }
                 } else {
                     let files = sample_files(self);
                     self.sound_map_mut().update(&files);
-                    self.sound_map_revision = Some(revision);
+                    self.browser.sound_map_revision = Some(revision);
                 }
                 changed = true;
             }
         }
-        if let Some(map) = &mut self.sound_map {
+        if let Some(map) = &mut self.browser.sound_map {
             changed |= suhina_plugins::trace::timed("sound map: results", || map.poll());
         }
         changed
@@ -213,7 +213,7 @@ fn optional_text<'a>(params: &'a Value, name: &str) -> Result<Option<&'a str>, C
 fn status(projects: &mut Projects, _: &Value) -> Result<Value, CommandError> {
     projects.poll_sound_map();
     let files = sample_files(projects);
-    let started = projects.sound_map_started;
+    let started = projects.browser.sound_map_started;
     let folders: Vec<Value> = projects
         .sound_map_mut()
         .status(&files)
