@@ -140,12 +140,16 @@ change to one view touches the files of that view and parallel pull requests sel
 ```text
 crates/ui/src/
   lib.rs         the modules, and the types the app takes (App, Status, View)
-  app.rs, app/   the window: its state, menus, keys, layout and dialogs (project, loading,
+  app.rs, app/   the window: its state and frame in app.rs; in app/ its jobs, one file each
+                 (actions, keys, menu_bar, control_bar, tabs, detail_area, browser_panel, drops,
+                 plugin_host, audio_settings, exports) and its dialogs (project, loading,
                  missing files), the start panel and the splash
-  arrangement/   the Arrangement view: arrangement_view, timeline, automation_lanes
+  arrangement/   the Arrangement view: arrangement_view (with its parts in arrangement_view/),
+                 timeline, automation_lanes
   session/       the Session view: session_view, mixer_strip, slot_launch, launch_keys,
                  record_controls
-  detail/        the detail area: detail_view (device chain and clip properties), device_canvas,
+  detail/        the detail area: detail_view (device chain; its model, parameters, expanded panel,
+                 clip properties and group panel in detail_view/), device_canvas,
                  follow_view, the piano roll (piano_roll and its parts) and midi_tools
   browser.rs, browser/   the browser's state (browser.rs) and its views: browser_view,
                  sample_map, sample_map_panel
