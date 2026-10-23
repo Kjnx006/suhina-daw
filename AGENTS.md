@@ -19,13 +19,15 @@ that describe them (*Code and its documents*). Read only the documents that matc
 2. **Never crash.** Non-test code never panics: no `unwrap()`, `expect()`, `panic!`,
    `unreachable!`, `todo!` or `unimplemented!`. Return the crate's error type. Input-derived
    numbers are hostile: use `get()` and `checked_*`, cap allocations sized by input. No `unsafe`
-   (`unsafe_code = "forbid"` workspace-wide), except in the two crates plug-in hosting needs,
-   `crates/ipc` and `crates/plugin-host` ([ADR 0006](docs/decisions/0006-plug-in-hosting.md)):
+   (`unsafe_code = "forbid"` workspace-wide), except in three crates: the two plug-in hosting
+   needs, `crates/ipc` and `crates/plugin-host` ([ADR 0006](docs/decisions/0006-plug-in-hosting.md)),
+   and the MP3 encoder, `crates/mp3` ([ADR 0029](docs/decisions/0029-mp3-encoder.md)):
    there every `unsafe` block is small, tested and explained in a `// SAFETY:` comment, and the
    crate offers a safe API.
 3. **Real-time safety.** Code reachable from the audio callback never allocates, frees, locks,
-   blocks, logs or does I/O. Hand data to it through lock-free queues (`rtrb`) and swap whole
-   graphs atomically.
+   logs or does I/O. It blocks only to wait for a plug-in host's answer within the block's
+   deadline ([ADR 0006](docs/decisions/0006-plug-in-hosting.md) › 4). Hand data to it through
+   lock-free queues (`rtrb`) and swap whole graphs atomically.
 4. **One render path.** Offline rendering and real-time playback run the same engine code, so
    offline renders are the test oracle for the engine.
 5. **Plug-ins run sandboxed, out of process.** Third-party plug-ins (CLAP, VST3, later bridged
@@ -87,7 +89,9 @@ crates/
   flp      L1 FL Studio project (.flp) container and event stream; no model mapping yet (epic #271)
   project-file L1 Suhina's own project file (.suhina, versioned JSON): reads and writes the model (ADR 0010)
   media    L2 finds and decodes a project's audio files (symphonia) into the engine's AudioPool;
-           reads MIDI files, file metadata (tempo, key) and detects tempo
+           reads MIDI files, file metadata (tempo, key) and detects tempo; writes the files an
+           export renders (WAV, FLAC, Ogg Vorbis, MP3)
+  mp3      L2 MP3 encoding through the vendored LAME 3.100 encoder (ADR 0029); no file I/O
   library  L2 the browser's library: added folders, an index kept on disk and watched, search, pins,
            recent items, colour tags (ADR 0012)
   soundmap L2 the sample map: features of samples, layouts by how they sound (t-SNE), grids, kinds, the feature cache
@@ -146,7 +150,8 @@ docs/
   commands.md generated list of every command (suhina-cli commands --markdown)
 assets/brand/ the logo as SVG: `suhina-logo.svg` (the name with the wave, drawn on the splash by
               `crates/ui/src/kit/logo.rs`) and `suhina-mark.svg` (the wave mark alone, for icons)
-third_party/  vendored source built behind a feature: the ASIO SDK's host part (GPL-3.0, `asio`)
+third_party/  vendored source: the ASIO SDK's host part (GPL-3.0, built with `asio`) and LAME 3.100's
+              encoder (LGPL, always built for MP3 export; Suhina's own fft.c, ADR 0029)
 scripts/   research helpers (e.g. extracting and diffing .als files), the parity measurement
            (parity/, reading a manual the user owns; its output is never committed), docs.py
            (the docs index), release_notes.py and discord_post.py (release notes, Discord posts)
@@ -240,7 +245,18 @@ Several agents often run at once, so an agent never starts work that exists alre
   and the issue type; `labels` are the area and platform labels; `parent` is an open epic. Set the
   board's Priority and Phase afterwards. A pull request itself — its branch, its description and
   its merge — stays under the person's account.
-- **Comment on a pull request as the bot when the comment is an agent's feedback.** A review an
+- **Use the caller's existing access; do not request elevated access to post.** The two bot
+  workflows require repository write access, not admin access. Their posting rules apply only
+  when the caller already has the required access and the configured connector permits the action.
+  Without write access, post ordinary issues and PR comments through the user's authenticated
+  account, within the user's authorization; identify agent-written feedback as AI-assisted.
+  Trusted contributors can instead use the scoped comment commands in
+  [Trusted bot requests](docs/claim-bot.md#trusted-bot-requests). Post those requests as the user;
+  the bot records their authenticated identity. Do not ask for admin/write access, broader token
+  scopes, App keys or secrets to satisfy the bot posting convention. A denied connector action
+  is not permission to bypass its restriction with another tool: explain that limit and leave
+  the prepared text for the user when no authorized posting route is available.
+- **Comment on a pull request as the bot when the caller has write access and the comment is an agent's feedback.** A review an
   agent wrote, the changes it asks for or a summary of what it found goes onto the pull request's
   conversation through the [Comment on pull request](.github/workflows/comment-pr.yml) workflow, so
   it is written by `suhina-bot[bot]` and the person who ran the session is not its author. It is a
@@ -371,7 +387,9 @@ refactor"). When a pull request changes `crates/`, `devices/` or `apps/` and doe
 
 **Documentation is part of the change.** A pull request that changes how something works updates,
 in the same pull request, every document that describes it, so the docs never describe code
-that no longer exists:
+that no longer exists. [`docs/README.md`](docs/README.md) says what each kind of document holds
+(an ADR, a spec, a system document), how an ADR is amended and what the status fields mean;
+`python scripts/docs.py check` enforces it.
 
 | If you change | Update |
 |---|---|

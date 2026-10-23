@@ -3,7 +3,7 @@ description: Planned device groups - several devices on a track as one unit, wit
 read_when: device group, group effects, group devices, parallel processing, parallel chain, branch, macro, macro control, mix, dry/wet, group preset, nested devices, layering instruments
 type: spec
 status: current
-last_verified: 2026-10-19
+last_verified: 2026-10-22
 covers:
   - crates/model/src/lib.rs
   - crates/model/src/groups.rs
@@ -175,6 +175,11 @@ Nothing about a device changes when it moves into a group.
 
 - **Built-in devices** run in the engine as they do now (ADR 0004): made, prepared and given their
   parameters when the graph is built, real-time safe on the audio thread.
+  A device in a branch is built as one on a track is (`group::Builder` and `Chain::build` give the
+  same results, #766): a Sampler gets its decoded sample and its manual slices, a parameter that
+  follows an automation lane starts where the lane starts and follows it while playing (each
+  branch keeps the lanes of its devices, planned for every block with the chain's), and a device
+  that holds a file is known by a hash of its state, so a changed file is a new device.
 - **Plug-ins** still run out of process (ADR 0006, AGENTS.md rule 5). A group is not a process
   boundary and never runs a plug-in in the engine. A crashed or hung plug-in in a branch does what
   it does on a track: an effect passes its input, an instrument is silent, the branch and the rest

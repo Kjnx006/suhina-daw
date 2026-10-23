@@ -130,10 +130,12 @@ jobs:
       - name: Licence header in every source file (AGENTS.md › Licence header)
         run: python3 scripts/license_header.py --check
       # third_party/ is vendored unchanged; its README links artwork that was left out on purpose.
+      # The generated files are rewritten on main after the merge, so a link they still hold to a
+      # document a pull request deletes is mended there; the pull request may not edit them.
       - name: Links between repository files resolve
         uses: lycheeverse/lychee-action@v2
         with:
-          args: --offline --no-progress --exclude-path third_party "**/*.md"
+          args: --offline --no-progress --exclude-path third_party --exclude-path docs/INDEX.md --exclude-path docs/commands.md "**/*.md"
           fail: true
 
   fmt:
