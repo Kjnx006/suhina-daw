@@ -14,12 +14,13 @@ use serde_json::{Value, json};
 use suhina_model::Project;
 
 use crate::commands::{CommandKind, CommandSpec, ParamType, optional};
-use crate::{CommandError, ProjectId, Projects};
+use crate::{CommandError, Policy, ProjectId, Projects};
 
 /// When backups are written (Settings › General › Backups, `project.autosave`'s `interval`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Interval {
-    /// Just before each critical operation ([`CRITICAL_COMMANDS`], closing a project, quitting).
+    /// Just before each critical operation (a command whose [`crate::Policy::critical`] is set,
+    /// closing a project, quitting).
     Critical,
     /// Every so many minutes.
     Minutes(u32),
@@ -80,12 +81,6 @@ impl Interval {
         }
     }
 }
-
-/// Commands after which the edits before them are hard to get back: with
-/// [`Interval::Critical`] a backup is written just before each. Closing a project and quitting
-/// are critical too ([`Projects::close`], [`Projects::finish_backups`]).
-pub const CRITICAL_COMMANDS: &[&str] =
-    &["projects.close", "project.relinkFiles", "clip.addFiles", "device.addPlugin", "track.delete"];
 
 /// Backups of one project that clean-up keeps.
 pub const KEEP: usize = 20;
@@ -567,11 +562,11 @@ impl Projects {
     }
 
     /// Before command `id`: with [`Interval::Critical`], backs up the active project when `id`
-    /// is one of the [`CRITICAL_COMMANDS`]. The window calls it before the commands it runs
+    /// is critical ([`crate::Policy::critical`]). The window calls it before the commands it runs
     /// on the session directly; [`Projects::execute_in`] calls it for the rest.
     pub fn back_up_before(&mut self, id: &str) {
         if self.backups.interval == Interval::Critical
-            && CRITICAL_COMMANDS.contains(&id)
+            && crate::policy(id).is_some_and(|p| p.critical)
             && let Some(active) = self.active()
         {
             self.back_up_noting(active);
@@ -703,6 +698,7 @@ static BACKUP_COMMANDS: &[CommandSpec<Projects>] = &[CommandSpec {
     ],
     kind: CommandKind::Projects,
     run: autosave,
+    policy: Policy::DEFAULT,
 }];
 
 fn autosave(projects: &mut Projects, params: &Value) -> Result<Value, CommandError> {

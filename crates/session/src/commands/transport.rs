@@ -12,6 +12,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[param("bpm", ParamType::Number, "beats per minute, 20 to 999")],
         kind: CommandKind::Edit,
         run: set_tempo,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "transport.setLoop",
@@ -23,6 +24,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: set_loop,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "transport.setLoopEnabled",
@@ -30,6 +32,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[optional("enabled", ParamType::Bool, "true turns looping on, false off (default: the other way)")],
         kind: CommandKind::Edit,
         run: set_loop_enabled,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "transport.play",
@@ -54,6 +57,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Transport,
         run: play,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "transport.stop",
@@ -65,6 +69,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         )],
         kind: CommandKind::Transport,
         run: stop,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "transport.setPosition",
@@ -72,6 +77,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[param("beats", ParamType::Number, "beats from the beginning, 0 … 120000")],
         kind: CommandKind::Transport,
         run: set_position,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "transport.followTempoMap",
@@ -79,6 +85,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[],
         kind: CommandKind::Transport,
         run: follow_tempo_map,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "transport.setMetronome",
@@ -98,6 +105,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Transport,
         run: set_metronome,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "transport.record",
@@ -105,6 +113,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[param("on", ParamType::Bool, "true starts recording, false ends every take")],
         kind: CommandKind::Transport,
         run: crate::recording::record_arrangement,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "transport.setCountIn",
@@ -112,6 +121,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[param("bars", ParamType::Integer, "0, 1, 2 or 4")],
         kind: CommandKind::Transport,
         run: crate::recording::set_count_in,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "record.state",
@@ -119,6 +129,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[],
         kind: CommandKind::Transport,
         run: crate::recording::record_state,
+        policy: Policy::DEFAULT,
     },
 ];
 

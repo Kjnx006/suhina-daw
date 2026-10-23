@@ -15,7 +15,7 @@ use suhina_soundmap::kinds::Kind;
 use suhina_soundmap::{DEFAULT_MAX_SECONDS, MAX_SECONDS_RANGE, MAX_SIMILAR, Map, SoundMap, SourceFile};
 
 use crate::commands::{CommandKind, CommandSpec, ParamType, optional, param};
-use crate::{CommandError, Projects};
+use crate::{Agents, CommandError, PathKind, Policy, Projects};
 
 const PLACE: &str = "pinned, recent:all, recent:samples, or a folder (default: every folder)";
 
@@ -26,23 +26,25 @@ static SOUND_MAP_COMMANDS: &[CommandSpec<Projects>] = &[
         params: &[],
         kind: CommandKind::Library,
         run: status,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "soundmap.analyse",
         label: "Analyse a folder's samples, or every folder's, again for the sample map, ignoring what was kept",
         params: &[optional(
             "folder",
-            ParamType::Text,
+            ParamType::Path(PathKind::Folder),
             "a folder, as library.folders lists them (default: every folder)",
         )],
         kind: CommandKind::Library,
         run: analyse,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "soundmap.layout",
         label: "Lay out samples by how they sound and their kind: each analysed sample's position (0–1), kind (kick, snare, hat…, whether it was guessed from the sound and whether it was set by hand) and whether it matches the text and tags; and how many are not analysed yet, too long or unreadable",
         params: &[
-            optional("place", ParamType::Text, PLACE),
+            optional("place", ParamType::Path(PathKind::Place), PLACE),
             optional("text", ParamType::Text, "words a matching sample's name or path holds"),
             optional("tags", ParamType::Texts, "a matching sample carries any of these tags"),
             optional("grid", ParamType::Bool, "also give each sample's cell in a grid (column, row)"),
@@ -51,31 +53,38 @@ static SOUND_MAP_COMMANDS: &[CommandSpec<Projects>] = &[
         ],
         kind: CommandKind::Library,
         run: layout,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "soundmap.similar",
         label: "The samples that sound most like a sample, nearest first, with their distance",
         params: &[
-            param("item", ParamType::Text, "a sample's path"),
+            param("item", ParamType::Path(PathKind::File), "a sample's path"),
             optional("count", ParamType::Integer, "how many, 1 to 100 (default 16)"),
-            optional("place", ParamType::Text, PLACE),
+            optional("place", ParamType::Path(PathKind::Place), PLACE),
         ],
         kind: CommandKind::Library,
         run: similar,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "soundmap.info",
         label: "What the sample map knows of a sample: its kind and where it comes from (set by hand, its name, or a guess from its sound), its length and its features",
-        params: &[param("item", ParamType::Text, "a sample's path")],
+        params: &[param("item", ParamType::Path(PathKind::File), "a sample's path")],
         kind: CommandKind::Library,
         run: info,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "soundmap.setKind",
         label: "Set a sample's kind by hand, over its name and its sound, or give it back to them (auto); kept with the library and through new analyses and layouts",
-        params: &[param("item", ParamType::Text, "a sample's path"), param("kind", ParamType::Text, KIND_PARAM)],
+        params: &[
+            param("item", ParamType::Path(PathKind::File), "a sample's path"),
+            param("kind", ParamType::Text, KIND_PARAM),
+        ],
         kind: CommandKind::Library,
         run: set_kind,
+        policy: Policy { agents: Agents::NotWhenAttached(Agents::SETTINGS), ..Policy::DEFAULT },
     },
 ];
 

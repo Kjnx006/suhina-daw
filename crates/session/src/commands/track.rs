@@ -16,6 +16,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: set_volume,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "track.adjustVolume",
@@ -23,6 +24,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[TRACKS, param("db", ParamType::Number, "how far to move it, in dB; positive is louder")],
         kind: CommandKind::Edit,
         run: adjust_volume,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "track.setPan",
@@ -30,6 +32,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[TRACKS, param("pan", ParamType::Number, "-1 is full left, 0 centre, 1 full right"), CONTINUE],
         kind: CommandKind::Edit,
         run: set_pan,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "track.adjustPan",
@@ -37,6 +40,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[TRACKS, param("pan", ParamType::Number, "how far to move it, -1 … +1; positive is right")],
         kind: CommandKind::Edit,
         run: adjust_pan,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "track.setMute",
@@ -44,6 +48,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[TRACKS, param("mute", ParamType::Bool, "true mutes the tracks")],
         kind: CommandKind::Edit,
         run: set_mute,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "track.group",
@@ -54,6 +59,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: group_tracks,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "track.setGroup",
@@ -69,6 +75,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: set_group,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "track.ungroup",
@@ -76,6 +83,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[TRACK],
         kind: CommandKind::Edit,
         run: ungroup_track,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "track.move",
@@ -83,6 +91,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[TRACK, param("to", ParamType::Integer, "its new position, from 0, in project.tracks order")],
         kind: CommandKind::Edit,
         run: move_track,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "track.rename",
@@ -90,6 +99,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[TRACK, param("name", ParamType::Text, "the new name, not empty")],
         kind: CommandKind::Edit,
         run: rename_track,
+        policy: Policy::UNHEARD,
     },
     CommandSpec {
         id: "track.setColor",
@@ -97,6 +107,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[TRACK, param("color", ParamType::Text, "\"#rrggbb\", or \"none\" for the default")],
         kind: CommandKind::Edit,
         run: set_color,
+        policy: Policy::UNHEARD,
     },
     CommandSpec {
         id: "track.colorGroup",
@@ -116,6 +127,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: color_group,
+        policy: Policy::UNHEARD,
     },
     CommandSpec {
         id: "track.delete",
@@ -123,6 +135,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[TRACK],
         kind: CommandKind::Edit,
         run: delete_track,
+        policy: Policy::CRITICAL,
     },
     CommandSpec {
         id: "track.renameClips",
@@ -130,6 +143,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[TRACK],
         kind: CommandKind::Edit,
         run: crate::clip_color::rename_clips,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "track.setOutput",
@@ -137,6 +151,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[TRACK, param("to", ParamType::Track, "\"main\", or a group track (id or name) to play into")],
         kind: CommandKind::Edit,
         run: set_output,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "track.setSolo",
@@ -148,6 +163,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: set_solo,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "track.setCue",
@@ -155,6 +171,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[TRACK, param("cue", ParamType::Bool, "true cues the track")],
         kind: CommandKind::Edit,
         run: set_cue,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "track.setMidiInput",
@@ -171,6 +188,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: set_midi_input,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "track.setAudioInput",
@@ -186,6 +204,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: set_audio_input,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "track.setArm",
@@ -197,6 +216,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Transport,
         run: set_arm,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "track.stop",
@@ -204,6 +224,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[TRACK],
         kind: CommandKind::Transport,
         run: stop_track,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "track.devices",
@@ -211,6 +232,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[TRACK],
         kind: CommandKind::Read,
         run: devices::track_devices,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "track.add",
@@ -228,12 +250,21 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
                 ParamType::Text,
                 "the id of a built-in effect or instrument, from devices.list, or a plug-in from plugins.list",
             ),
-            optional("preset", ParamType::Text, "a preset file for the device (DX7 voice data for the FM synth)"),
-            optional("sd", ParamType::Text, "a data-only .sd AudioEffect graph to add to the new audio track"),
+            optional(
+                "preset",
+                ParamType::Path(PathKind::File),
+                "a preset file for the device (DX7 voice data for the FM synth)",
+            ),
+            optional(
+                "sd",
+                ParamType::Path(PathKind::File),
+                "a data-only .sd AudioEffect graph to add to the new audio track",
+            ),
             optional("voice", ParamType::Integer, "which voice of a preset bank, from 1"),
         ],
         kind: CommandKind::Edit,
         run: files::add_track,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "track.setSend",
@@ -246,6 +277,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: crate::sends::set_send,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "track.setSendMode",
@@ -253,6 +285,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[TRACK, RETURN, param("mode", ParamType::Text, "\"pre\" or \"post\"")],
         kind: CommandKind::Edit,
         run: crate::sends::set_send_mode,
+        policy: Policy::DEFAULT,
     },
 ];
 

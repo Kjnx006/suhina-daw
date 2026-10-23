@@ -10,13 +10,14 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         id: "preview.play",
         label: "Preview a sample or a MIDI file once, at its own speed, after the main channel; a MIDI file plays through a track's instrument or the FM synth",
         params: &[
-            param("path", ParamType::Text, "the sample or MIDI file"),
+            param("path", ParamType::Path(PathKind::File), "the sample or MIDI file"),
             optional("from", ParamType::Number, "seconds into the file to start at (default 0)"),
             optional("track", ParamType::Track, "a MIDI file plays through this track's instrument when it has one"),
             optional("gain", ParamType::Number, "level in dB (default -6)"),
         ],
         kind: CommandKind::Transport,
         run: crate::preview::play,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "preview.setGain",
@@ -24,6 +25,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[param("gain", ParamType::Number, "level in dB, at most 12")],
         kind: CommandKind::Transport,
         run: crate::preview::set_gain,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "preview.stop",
@@ -31,6 +33,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[],
         kind: CommandKind::Transport,
         run: crate::preview::stop,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "preview.noteOn",
@@ -43,6 +46,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Transport,
         run: crate::preview::note_on,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "preview.noteOff",
@@ -50,5 +54,6 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[TRACK, optional("key", ParamType::Integer, "the key to let go of; every held key when left out")],
         kind: CommandKind::Transport,
         run: crate::preview::note_off,
+        policy: Policy::DEFAULT,
     },
 ];

@@ -12,6 +12,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[optional("track", ParamType::Track, "only overlaps on this track (id or name)")],
         kind: CommandKind::Read,
         run: audio_overlaps,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "clip.delete",
@@ -19,6 +20,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[CLIP, DELETE_CLIPS, DELETE_TRACK, CLIP_INDEX, CLIP_SCENE],
         kind: CommandKind::Edit,
         run: delete_clips,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "clip.rename",
@@ -32,6 +34,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: rename_clip,
+        policy: Policy::UNHEARD,
     },
     CommandSpec {
         id: "clip.renameMany",
@@ -39,6 +42,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[CLIPS, param("name", ParamType::Text, "the new name (empty clears it)")],
         kind: CommandKind::Edit,
         run: rename_clips,
+        policy: Policy::UNHEARD,
     },
     CommandSpec {
         id: "clip.setColorMany",
@@ -46,6 +50,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[CLIPS, param("color", ParamType::Text, "\"#rrggbb\", or \"none\" for each track's colour")],
         kind: CommandKind::Edit,
         run: set_clips_color,
+        policy: Policy::UNHEARD,
     },
     CommandSpec {
         id: "clip.setGain",
@@ -62,6 +67,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: set_clip_gain,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "clip.setFades",
@@ -96,6 +102,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: set_clip_fades,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "clip.shiftFades",
@@ -107,6 +114,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: shift_fades,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "clip.copy",
@@ -131,6 +139,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Read,
         run: copy_clips,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "clip.cut",
@@ -138,12 +147,17 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[CLIPS],
         kind: CommandKind::Edit,
         run: cut_clips,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "clip.paste",
         label: "Place the copied clip on a track's arrangement at start, replacing what it covers unless stacked, or in its clip slot at scene, replacing the slot's clip",
         params: &[
-            TRACK,
+            optional(
+                "track",
+                ParamType::Track,
+                "track id or name, from project.tracks; a copied range pastes back on its own tracks without one",
+            ),
             optional(
                 "start",
                 ParamType::Number,
@@ -158,6 +172,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: paste_clip,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "clip.duplicate",
@@ -172,6 +187,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: duplicate_clips,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "clip.setEnabled",
@@ -179,6 +195,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[CLIPS, param("enabled", ParamType::Bool, "true plays the clips, false silences them")],
         kind: CommandKind::Edit,
         run: set_clip_enabled,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "clip.setColor",
@@ -195,6 +212,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: crate::clip_color::set_clip_color,
+        policy: Policy::UNHEARD,
     },
     CommandSpec {
         id: "clip.trim",
@@ -214,6 +232,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: crate::clip_edges::trim_clip,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "clip.stretch",
@@ -228,6 +247,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: crate::clip_edges::stretch_clip,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "clip.moveMany",
@@ -269,6 +289,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: crate::range::move_clips,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "clip.split",
@@ -285,6 +306,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: editing::split_clip,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "clip.consolidate",
@@ -301,6 +323,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: editing::consolidate,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "clip.move",
@@ -332,6 +355,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: move_clip,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "clip.moveSlot",
@@ -348,6 +372,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: move_slot,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "clip.record",
@@ -355,6 +380,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[TRACK, SCENE],
         kind: CommandKind::Transport,
         run: crate::recording::record_clip,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "clip.launch",
@@ -362,6 +388,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[TRACK, SCENE],
         kind: CommandKind::Transport,
         run: launch_clip,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "clip.setLoop",
@@ -381,6 +408,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: crate::clip_shape::set_loop,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "clip.setAudio",
@@ -400,6 +428,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: crate::clip_shape::set_audio,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "clip.setLength",
@@ -413,6 +442,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: crate::clip_shape::set_length,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "clip.setStart",
@@ -430,6 +460,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: crate::clip_shape::set_start,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "clip.setFollowAction",
@@ -455,6 +486,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: follow::set_follow_action,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "clip.release",
@@ -462,6 +494,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[TRACK, SCENE],
         kind: CommandKind::Transport,
         run: launch::release_clip,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "clip.setLaunchMode",
@@ -469,6 +502,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[TRACK, SCENE, param("mode", ParamType::Text, "trigger, gate, toggle or repeat")],
         kind: CommandKind::Edit,
         run: launch::set_launch_mode,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "clip.setLegato",
@@ -476,6 +510,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[TRACK, SCENE, param("on", ParamType::Bool, "true for legato")],
         kind: CommandKind::Edit,
         run: launch::set_legato,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "clip.setQuantization",
@@ -491,6 +526,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: launch::set_quantization,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "clip.addFiles",
@@ -498,7 +534,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[
             param(
                 "paths",
-                ParamType::Texts,
+                ParamType::Path(PathKind::Files),
                 "the files: samples (wav, aiff, flac, mp3, ogg) and MIDI files (.mid); at most 256",
             ),
             optional(
@@ -522,6 +558,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: files::add_files,
+        policy: Policy::CRITICAL,
     },
     CommandSpec {
         id: "clip.create",
@@ -535,6 +572,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: files::create_clip,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "clip.scale",
@@ -542,6 +580,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[CLIP_TRACK, CLIP, CLIP_INDEX, CLIP_SCENE],
         kind: CommandKind::Read,
         run: crate::scales::clip_scale,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "clip.setScale",
@@ -557,6 +596,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: crate::scales::set_scale,
+        policy: Policy::DEFAULT,
     },
 ];
 

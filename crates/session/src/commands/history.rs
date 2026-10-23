@@ -6,13 +6,21 @@
 use super::*;
 
 pub(super) static COMMANDS: &[CommandSpec] = &[
-    CommandSpec { id: "edit.undo", label: "Undo the last edit", params: &[], kind: CommandKind::History, run: undo },
+    CommandSpec {
+        id: "edit.undo",
+        label: "Undo the last edit",
+        params: &[],
+        kind: CommandKind::History,
+        run: undo,
+        policy: Policy::DEFAULT,
+    },
     CommandSpec {
         id: "edit.redo",
         label: "Redo the last undone edit",
         params: &[],
         kind: CommandKind::History,
         run: redo,
+        policy: Policy::DEFAULT,
     },
 ];
 

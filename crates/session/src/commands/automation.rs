@@ -23,6 +23,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: crate::automation::add_point,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "automation.movePoint",
@@ -38,6 +39,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: crate::automation::move_point,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "automation.deletePoint",
@@ -45,6 +47,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[TRACK, AUTOMATED_DEVICE, AUTOMATED, POINT],
         kind: CommandKind::Edit,
         run: crate::automation::delete_point,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "automation.movePoints",
@@ -72,6 +75,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: crate::automation::move_points,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "automation.deletePoints",
@@ -88,6 +92,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: crate::automation::delete_points,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "automation.clear",
@@ -99,6 +104,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: crate::automation::clear,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "automation.setEnabled",
@@ -111,6 +117,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: crate::automation::set_enabled,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "automation.list",
@@ -118,5 +125,6 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[TRACK],
         kind: CommandKind::Read,
         run: crate::automation::list,
+        policy: Policy::DEFAULT,
     },
 ];

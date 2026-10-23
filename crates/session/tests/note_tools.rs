@@ -471,7 +471,7 @@ fn malformed_tool_params_are_refused_and_change_nothing() {
         ("note.stretch", json!({ "track": 1, "index": 0, "factor": 0 }), "factor must be"),
         ("note.stretch", json!({ "track": 1, "index": 0, "factor": -1 }), "factor must be"),
         ("note.stretch", json!({ "track": 1, "index": 0, "factor": 200 }), "factor must be"),
-        ("note.stretch", json!({ "track": 1, "index": 0 }), "give factor"),
+        ("note.stretch", json!({ "track": 1, "index": 0 }), "factor must be given"),
         ("note.randomizeVelocity", json!({ "track": 1, "index": 0, "amount": 128 }), "amount must be"),
         ("note.randomizeVelocity", json!({ "track": 1, "index": 0, "amount": -1 }), "amount must be"),
         ("note.rampVelocity", json!({ "track": 1, "index": 0, "from": 0, "to": 127 }), "from must be"),

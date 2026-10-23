@@ -10,7 +10,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         id: "project.save",
         label: "Save the project as a Suhina project (.suhina) with its plug-ins' state as it is now; without a path, to the project file it was opened from or last saved to",
         params: &[
-            optional("path", ParamType::Text, "file to save to; .suhina is added when missing"),
+            optional("path", ParamType::Path(PathKind::WriteFile), "file to save to; .suhina is added when missing"),
             optional(
                 "copy",
                 ParamType::Bool,
@@ -19,6 +19,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Read,
         run: save,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "project.info",
@@ -26,6 +27,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[],
         kind: CommandKind::Read,
         run: info,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "project.tracks",
@@ -33,6 +35,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[],
         kind: CommandKind::Read,
         run: tracks,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "project.clips",
@@ -40,6 +43,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[optional("track", ParamType::Track, "only clips on this track (id or name)")],
         kind: CommandKind::Read,
         run: clips,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "project.markers",
@@ -47,6 +51,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[],
         kind: CommandKind::Read,
         run: markers,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "project.launcher",
@@ -54,6 +59,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[],
         kind: CommandKind::Read,
         run: launcher_grid,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "project.export",
@@ -61,10 +67,10 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[
             optional(
                 "path",
-                ParamType::Text,
+                ParamType::Path(PathKind::WriteFile),
                 "the file to write (output is an alias); its extension decides the format when format is left out",
             ),
-            optional("output", ParamType::Text, "the file to write; an alias of path"),
+            optional("output", ParamType::Path(PathKind::WriteFile), "the file to write; an alias of path"),
             optional("format", ParamType::Text, "wav (default), flac, ogg or mp3"),
             optional("sample_rate", ParamType::Integer, "hertz; 48000 by default; with mp3, 32, 44.1 or 48 kHz"),
             optional("bit_depth", ParamType::Text, "32f (the default for wav), 24 or 16; an error with ogg or mp3"),
@@ -94,6 +100,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Read,
         run: crate::export::export,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "project.missingFiles",
@@ -101,27 +108,34 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[],
         kind: CommandKind::Read,
         run: crate::relink::missing_files,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "project.relinkFiles",
         label: "Point every clip that plays a missing (or any) audio file at another file, as one undo step; library.findFiles finds candidates",
         params: &[
             param("files", ParamType::Texts, "the files as project.missingFiles names them"),
-            param("to", ParamType::Texts, "for each, the file to play instead (the same order); at most 4096"),
+            param(
+                "to",
+                ParamType::Path(PathKind::Files),
+                "for each, the file to play instead (the same order); at most 4096",
+            ),
         ],
         kind: CommandKind::Edit,
         run: crate::relink::relink_files,
+        policy: Policy::CRITICAL,
     },
     CommandSpec {
         id: "project.collect",
         label: "Copy the audio the project plays from outside its folder into Samples/Collected there and point the clips at the copies, as one undo step; save afterwards to keep it (Collect and save)",
         params: &[optional(
             "folder",
-            ParamType::Text,
+            ParamType::Path(PathKind::WriteFolder),
             "the folder to collect into: the project's own by default; needed before it is saved",
         )],
         kind: CommandKind::Edit,
         run: crate::relink::collect,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "project.setDefaultScale",
@@ -133,6 +147,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: crate::scales::set_default_scale,
+        policy: Policy::DEFAULT,
     },
 ];
 

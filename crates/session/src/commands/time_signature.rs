@@ -16,6 +16,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: crate::tempo::add_signature,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "timeSignature.move",
@@ -28,6 +29,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: crate::tempo::move_signature,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "timeSignature.delete",
@@ -35,5 +37,6 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[param("bar", ParamType::Integer, "the bar the change is at, from 2")],
         kind: CommandKind::Edit,
         run: crate::tempo::delete_signature,
+        policy: Policy::DEFAULT,
     },
 ];

@@ -70,8 +70,9 @@ With *Before critical operations*, a backup of the project is written just befor
    loads is the case backups are most for.
 6. **Deleting a track** (`track.delete`).
 
-The command list is `suhina_session::backup::CRITICAL_COMMANDS`; a new command that is hard to
-undo or risky is added there and to this list.
+A command is critical when its spec says so (`policy: Policy::CRITICAL`, or `critical: true`;
+`suhina_session::policy`); a new command that is hard to undo or risky sets it and is added to
+this list.
 
 ## Where backups go
 

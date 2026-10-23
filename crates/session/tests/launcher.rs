@@ -8,7 +8,7 @@
 use serde_json::{Value, json};
 use suhina_engine::{AudioPool, Quantization, Renderer};
 use suhina_model::*;
-use suhina_session::{CommandKind, Player, Session, commands, parse_quantization};
+use suhina_session::{CommandKind, ParamType, Player, Session, commands, parse_quantization};
 
 use crate::support::run;
 
@@ -135,14 +135,25 @@ fn transport_commands_need_a_player() {
     let without = ["launcher.setQuantization", "track.setArm", "transport.setCountIn", "record.state"];
     for spec in commands().iter().filter(|c| c.kind == CommandKind::Transport && !without.contains(&c.id)) {
         let params = json!({ "track": "Drums", "scene": 1, "value": "1 bar", "on": true, "beats": 4.0, "key": 60 });
-        let params: Value = params
+        let mut params = params
             .as_object()
             .unwrap()
             .iter()
             .filter(|(k, _)| spec.params.iter().any(|p| p.name == k.as_str()))
             .map(|(k, v)| (k.clone(), v.clone()))
-            .collect::<serde_json::Map<_, _>>()
-            .into();
+            .collect::<serde_json::Map<_, _>>();
+        // Any other parameter it needs, of its type, so that what refuses it is the missing engine.
+        let missing: Vec<_> = spec.params.iter().filter(|p| p.required && !params.contains_key(p.name)).collect();
+        for p in missing {
+            let value = match p.ty {
+                ParamType::Integer | ParamType::DevicePath => json!(0),
+                ParamType::Number | ParamType::Decibels => json!(1.0),
+                ParamType::Bool => json!(true),
+                _ => json!("x"),
+            };
+            params.insert(p.name.into(), value);
+        }
+        let params = Value::from(params);
         let err = run(&mut session, spec.id, params).unwrap_err();
         assert!(err.contains("no audio engine"), "{}: {err}", spec.id);
     }

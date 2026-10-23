@@ -12,6 +12,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[],
         kind: CommandKind::Read,
         run: devices::list,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "devices.sdNodes",
@@ -19,6 +20,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[],
         kind: CommandKind::Read,
         run: devices::sd_nodes,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "device.add",
@@ -35,18 +37,23 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
                 ParamType::DevicePath,
                 "where in the chain, from 0 (default: last; an instrument always goes right after the MIDI effects, a MIDI effect among them), or inside a group as a path such as \"2/1/3\"",
             ),
-            optional("preset", ParamType::Text, "a preset file to load: DX7 voice data (.syx) for the FM synth"),
+            optional(
+                "preset",
+                ParamType::Path(PathKind::File),
+                "a preset file to load: DX7 voice data (.syx) for the FM synth",
+            ),
             optional("voice", ParamType::Integer, "which voice of a preset bank, from 1 (default 1)"),
         ],
         kind: CommandKind::Edit,
         run: devices::add,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "device.addSd",
         label: "Load a data-only .sd AudioEffect and add it to a track",
         params: &[
             TRACK,
-            param("path", ParamType::Text, "path to a validated .sd AudioEffect graph"),
+            param("path", ParamType::Path(PathKind::File), "path to a validated .sd AudioEffect graph"),
             optional(
                 "position",
                 ParamType::DevicePath,
@@ -55,6 +62,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: devices::add_sd,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "device.updateSd",
@@ -64,12 +72,13 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
             DEVICE,
             param(
                 "path",
-                ParamType::Text,
+                ParamType::Path(PathKind::File),
                 "path to a newer .sd file with the same device id and a migration from the embedded revision",
             ),
         ],
         kind: CommandKind::Edit,
         run: devices::update_sd,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "device.remove",
@@ -77,6 +86,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[TRACK, DEVICE],
         kind: CommandKind::Edit,
         run: devices::remove,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "device.removeMany",
@@ -84,6 +94,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[TRACK, DEVICES],
         kind: CommandKind::Edit,
         run: devices::remove_many,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "device.copy",
@@ -91,6 +102,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[TRACK, DEVICES],
         kind: CommandKind::Read,
         run: devices::copy,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "device.paste",
@@ -98,6 +110,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[TRACK, POSITION],
         kind: CommandKind::Edit,
         run: devices::paste,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "device.group",
@@ -110,6 +123,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: device_groups::group,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "device.ungroup",
@@ -117,6 +131,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[TRACK, GROUP],
         kind: CommandKind::Edit,
         run: device_groups::ungroup,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "device.addGroup",
@@ -124,6 +139,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[TRACK, POSITION, optional("name", ParamType::Text, "the group's name (default Group)")],
         kind: CommandKind::Edit,
         run: device_groups::add_group,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "device.move",
@@ -139,6 +155,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: device_groups::move_device,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "device.duplicate",
@@ -146,6 +163,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[TRACK, DEVICE],
         kind: CommandKind::Edit,
         run: device_groups::duplicate,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "device.moveToTrack",
@@ -158,6 +176,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: devices::move_to_track,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "device.duplicateMany",
@@ -165,6 +184,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[TRACK, DEVICES],
         kind: CommandKind::Edit,
         run: devices::duplicate_many,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "device.setEnabled",
@@ -172,6 +192,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[TRACK, DEVICE, param("enabled", ParamType::Bool, "false switches the device off")],
         kind: CommandKind::Edit,
         run: devices::set_enabled,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "device.setNamFile",
@@ -179,10 +200,15 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[
             TRACK,
             DEVICE,
-            param("path", ParamType::Text, "path to a .nam model file, or a .wav impulse response for the Cab Loader"),
+            param(
+                "path",
+                ParamType::Path(PathKind::File),
+                "path to a .nam model file, or a .wav impulse response for the Cab Loader",
+            ),
         ],
         kind: CommandKind::Edit,
         run: devices::set_file,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "device.file",
@@ -190,13 +216,15 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[TRACK, DEVICE],
         kind: CommandKind::Read,
         run: devices::device_file,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "device.loadSample",
         label: "Load an audio file into a Sampler instrument",
-        params: &[TRACK, DEVICE, param("path", ParamType::Text, "sample audio file")],
+        params: &[TRACK, DEVICE, param("path", ParamType::Path(PathKind::File), "sample audio file")],
         kind: CommandKind::Edit,
         run: devices::load_sample,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "device.setSampleSlices",
@@ -209,6 +237,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: devices::set_sample_slices,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "device.recordSample",
@@ -216,6 +245,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[TRACK, DEVICE, param("on", ParamType::Bool, "start or stop sample recording")],
         kind: CommandKind::Transport,
         run: crate::recording::record_sample,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "device.setParam",
@@ -246,6 +276,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: devices::set_param,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "device.setAutomation",
@@ -266,6 +297,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: devices::set_automation,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "device.pluginParams",
@@ -273,6 +305,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[TRACK, DEVICE],
         kind: CommandKind::Plugin,
         run: devices::plugin_params,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "device.addPlugin",
@@ -288,6 +321,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: devices::add_plugin,
+        policy: Policy::CRITICAL,
     },
     CommandSpec {
         id: "device.plugin",
@@ -295,6 +329,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[TRACK, DEVICE],
         kind: CommandKind::Read,
         run: devices::plugin_status,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "device.openEditor",
@@ -302,6 +337,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[TRACK, DEVICE],
         kind: CommandKind::Plugin,
         run: devices::open_editor,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "device.closeEditor",
@@ -309,6 +345,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[TRACK, DEVICE],
         kind: CommandKind::Plugin,
         run: devices::close_editor,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "device.restart",
@@ -316,5 +353,6 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[TRACK, DEVICE],
         kind: CommandKind::Plugin,
         run: devices::restart,
+        policy: Policy::DEFAULT,
     },
 ];

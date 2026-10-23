@@ -12,6 +12,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[optional("name", ParamType::Text, "its name (default: A Return, B Return and so on)")],
         kind: CommandKind::Edit,
         run: crate::sends::add_return,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "return.remove",
@@ -19,6 +20,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[RETURN],
         kind: CommandKind::Edit,
         run: crate::sends::remove_return,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "return.rename",
@@ -26,5 +28,6 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[RETURN, param("name", ParamType::Text, "the new name, not empty")],
         kind: CommandKind::Edit,
         run: crate::sends::rename_return,
+        policy: Policy::DEFAULT,
     },
 ];

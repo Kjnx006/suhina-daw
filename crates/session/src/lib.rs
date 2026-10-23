@@ -52,7 +52,9 @@ use suhina_model::Project;
 pub use ara::ClipNotes;
 pub use audio::{AudioSystem, InputChoice, LiveOutput, OutputChoice, OutputInfo, audio_commands};
 pub use blank::blank_project;
-pub use commands::{CommandKind, CommandSpec, Param, ParamType, Run, commands, parse_quantization};
+pub use commands::{
+    Agents, CommandKind, CommandSpec, Param, ParamType, PathKind, Policy, Run, commands, parse_quantization,
+};
 pub use export::{ExportData, ExportGather, export_from};
 pub use files::{MAX_FILES, file_tempo};
 pub use library::{Category, Found, file_info, library_commands, search_items};
@@ -60,7 +62,9 @@ pub use mapping::{MAX_MAPPINGS, mapped_command, target_exists};
 pub use midi::{LiveInput, MidiSystem, midi_commands};
 pub use notes::{MAX_NOTES_PER_CLIP, MAX_NOTES_PER_COMMAND, midi_velocity};
 pub use plugins::{device_plugin, plugin_commands};
-pub use projects::{MAX_OPEN_PROJECTS, ProjectId, Projects, all_commands, commands_markdown, project_commands};
+pub use projects::{
+    MAX_OPEN_PROJECTS, ProjectId, Projects, all_commands, commands_markdown, params_of, policy, project_commands,
+};
 pub use rack::{
     BlockCounts, Hosted, OfflinePlugins, PluginEnv, PluginProgress, PluginReport, PluginStatus, ProcessGroup,
     is_instrument, plugin_group, start_offline,
@@ -283,23 +287,6 @@ pub struct ParamEdit {
     pub value: f64,
 }
 
-/// The edits that change nothing the engine plays, so a playing engine keeps its graph: colours,
-/// names and markers.
-const UNHEARD_EDITS: &[&str] = &[
-    "clip.setColor",
-    "clip.setColorMany",
-    "clip.rename",
-    "clip.renameMany",
-    "track.setColor",
-    "track.colorGroup",
-    "track.rename",
-    "scene.rename",
-    "marker.add",
-    "marker.move",
-    "marker.rename",
-    "marker.delete",
-];
-
 pub struct Session {
     project: Project,
     source: Option<PathBuf>,
@@ -336,7 +323,7 @@ pub struct Session {
     /// Unlike `param_edits`, they leave undo as the command's own steps make it.
     pub(crate) mixer_edits: Vec<ParamEdit>,
     /// Set by a command whose edit changes nothing the engine plays (a send of a muted track):
-    /// the playing graph is kept, as for [`UNHEARD_EDITS`].
+    /// the playing graph is kept, as for a command whose [`Policy::heard`] is false.
     pub(crate) unheard_edit: bool,
     /// Parameter whose live drag has already recorded its single undo snapshot.
     param_gesture: Option<(suhina_model::TrackId, usize, String)>,
@@ -1234,15 +1221,7 @@ impl Session {
         {
             self.param_gesture = None;
         }
-        if !(params.is_object() || params.is_null()) {
-            return Err(format!("{id}: parameters must be a JSON object").into());
-        }
-        if let Some(object) = params.as_object()
-            && let Some(unknown) = object.keys().find(|key| !spec.params.iter().any(|p| p.name == key.as_str()))
-        {
-            let known: Vec<&str> = spec.params.iter().map(|p| p.name).collect();
-            return Err(format!("{id}: unknown parameter {unknown:?}; expected {known:?}").into());
-        }
+        commands::check_params(id, spec.params, params)?;
         // A clip named by its id is found where it is now and handed to the command by position.
         let resolved = commands::resolve_clip_ids(&self.project, spec, params)?;
         let params = resolved.as_ref().unwrap_or(params);
@@ -1340,7 +1319,7 @@ impl Session {
                             // An edit that changes nothing the engine plays (a colour, a name, a
                             // marker) keeps the playing graph: colouring every clip of a large
                             // project built a graph for each of them, six seconds in all.
-                            let unheard = UNHEARD_EDITS.contains(&id) || std::mem::take(&mut self.unheard_edit);
+                            let unheard = !spec.policy.heard || std::mem::take(&mut self.unheard_edit);
                             let sent = unheard
                                 || match (changes.is_empty(), mixer.is_empty(), self.player.as_mut()) {
                                     (false, _, Some(player)) => {

@@ -12,6 +12,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[],
         kind: CommandKind::Read,
         run: crate::tempo::points,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "tempo.addPoint",
@@ -27,6 +28,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: crate::tempo::add_point,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "tempo.movePoint",
@@ -39,6 +41,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: crate::tempo::move_point,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "tempo.deletePoint",
@@ -46,5 +49,6 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[param("point", ParamType::Integer, "tempo point number, from 1, as in tempo.points")],
         kind: CommandKind::Edit,
         run: crate::tempo::delete_point,
+        policy: Policy::DEFAULT,
     },
 ];

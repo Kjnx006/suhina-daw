@@ -181,7 +181,7 @@ fn bad_input_is_refused_and_changes_nothing() {
         (json!({ "track": 1, "index": 0, "root": 12 }), "0 to 11"),
         (json!({ "track": 1, "index": 0, "root": -1 }), "0 to 11"),
         (json!({ "track": 1, "index": 0, "root": "" }), "key name"),
-        (json!({ "track": 1, "index": 0, "root": true }), "0 to 11"),
+        (json!({ "track": 1, "index": 0, "root": true }), "root must be a name or a number"),
         (json!({ "track": 1, "index": 0, "mode": "Major" }), "unknown mode"),
         (json!({ "track": 1, "index": 0, "mode": 3 }), "mode must be a text"),
         (json!({ "track": 1, "index": 0, "off": "yes" }), "off must be true or false"),

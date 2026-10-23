@@ -12,6 +12,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[SCENE],
         kind: CommandKind::Transport,
         run: launch_scene,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "scene.stop",
@@ -19,6 +20,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[SCENE],
         kind: CommandKind::Transport,
         run: stop_scene,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "scene.insert",
@@ -33,6 +35,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: insert_scene,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "scene.duplicate",
@@ -40,6 +43,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[SCENE],
         kind: CommandKind::Edit,
         run: duplicate_scene,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "scene.delete",
@@ -47,6 +51,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[SCENE],
         kind: CommandKind::Edit,
         run: delete_scene,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "scene.rename",
@@ -54,6 +59,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[SCENE, param("name", ParamType::Text, "the new name; empty clears it")],
         kind: CommandKind::Edit,
         run: rename_scene,
+        policy: Policy::UNHEARD,
     },
     CommandSpec {
         id: "scene.setTempo",
@@ -64,6 +70,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: set_scene_tempo,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "scene.setTimeSignature",
@@ -79,6 +86,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: set_scene_time_signature,
+        policy: Policy::DEFAULT,
     },
 ];
 
@@ -199,16 +207,12 @@ fn rename_scene(session: &mut Session, params: &Value) -> Result<Value, CommandE
 
 fn set_scene_tempo(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let scene = scene_index(&session.project, params)?;
-    let bpm = match params.get("bpm") {
-        None | Some(Value::Null) => None,
-        Some(_) => {
-            let bpm = number(params, "bpm")?;
-            if !(20.0..=999.0).contains(&bpm) {
-                return Err(format!("bpm must be between 20 and 999, got {bpm}").into());
-            }
-            Some(bpm)
-        }
-    };
+    let bpm = Args::new(params).opt_f64("bpm")?;
+    if let Some(bpm) = bpm
+        && !(20.0..=999.0).contains(&bpm)
+    {
+        return Err(format!("bpm must be between 20 and 999, got {bpm}").into());
+    }
     if let Some(s) = session.project.launcher.scenes.get_mut(scene) {
         s.tempo_bpm = bpm;
     }

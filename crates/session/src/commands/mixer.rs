@@ -20,6 +20,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: set_main_volume,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "mixer.levels",
@@ -27,6 +28,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[],
         kind: CommandKind::Transport,
         run: meters::levels,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "mixer.resetClip",
@@ -37,6 +39,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Transport,
         run: meters::reset_clip,
+        policy: Policy::DEFAULT,
     },
 ];
 

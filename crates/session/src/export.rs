@@ -59,7 +59,7 @@ pub fn export_from(data: &ExportData, params: &Value) -> Result<Value, CommandEr
     // Worker callers bypass Session::execute, but keep the command's parameter contract.
     let spec =
         crate::commands().iter().find(|spec| spec.id == "project.export").ok_or("export command is unavailable")?;
-    crate::projects::check_params(spec.id, spec.params, params)?;
+    crate::commands::check_params(spec.id, spec.params, params)?;
     // The file: `path` or `output`, the same thing.
     let path_text = params
         .get("path")

@@ -12,6 +12,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[CLIP_TRACK, CLIP, CLIP_INDEX, CLIP_SCENE],
         kind: CommandKind::Read,
         run: notes::list,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "note.add",
@@ -25,6 +26,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: notes::add,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "note.delete",
@@ -32,6 +34,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[CLIP_TRACK, CLIP, CLIP_INDEX, CLIP_SCENE, NOTES],
         kind: CommandKind::Edit,
         run: notes::delete,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "note.move",
@@ -53,6 +56,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: notes::move_notes,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "note.resize",
@@ -73,6 +77,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: notes::resize,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "note.setVelocity",
@@ -93,6 +98,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: notes::set_velocity,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "note.quantize",
@@ -109,6 +115,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: notes::quantize,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "note.copy",
@@ -116,6 +123,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[CLIP_TRACK, CLIP, CLIP_INDEX, CLIP_SCENE, NOTES],
         kind: CommandKind::Read,
         run: notes::copy,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "note.cut",
@@ -123,6 +131,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[CLIP_TRACK, CLIP, CLIP_INDEX, CLIP_SCENE, NOTES],
         kind: CommandKind::Edit,
         run: notes::cut,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "note.paste",
@@ -140,6 +149,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: notes::paste,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "note.duplicate",
@@ -155,6 +165,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: notes::duplicate,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "note.split",
@@ -169,6 +180,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: notes::split,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "note.setMuted",
@@ -183,6 +195,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: note_tools::set_muted,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "note.humanize",
@@ -203,6 +216,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: note_tools::humanize,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "note.fitToScale",
@@ -215,7 +229,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
             NOTE_SELECTION,
             optional(
                 "root",
-                ParamType::Text,
+                ParamType::NameOrNumber,
                 "the key the scale starts on: a name such as C, F# or Bb, or 0 to 11 (default C; with neither root nor scale, the clip's own scale when it has one)",
             ),
             optional(
@@ -226,6 +240,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: note_tools::fit_to_scale,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "note.invert",
@@ -233,6 +248,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[CLIP_TRACK, CLIP, CLIP_INDEX, CLIP_SCENE, NOTE_SELECTION],
         kind: CommandKind::Edit,
         run: note_tools::invert,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "note.reverse",
@@ -240,6 +256,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[CLIP_TRACK, CLIP, CLIP_INDEX, CLIP_SCENE, NOTE_SELECTION],
         kind: CommandKind::Edit,
         run: note_tools::reverse,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "note.legato",
@@ -247,6 +264,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[CLIP_TRACK, CLIP, CLIP_INDEX, CLIP_SCENE, NOTE_SELECTION],
         kind: CommandKind::Edit,
         run: note_tools::legato,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "note.stretch",
@@ -261,6 +279,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: note_tools::stretch,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "note.randomizeVelocity",
@@ -280,6 +299,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: note_tools::randomize_velocity,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "note.rampVelocity",
@@ -295,5 +315,6 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: note_tools::ramp_velocity,
+        policy: Policy::DEFAULT,
     },
 ];

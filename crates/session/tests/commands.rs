@@ -1299,7 +1299,7 @@ fn an_empty_midi_clip_is_refused_where_it_cannot_go_and_changes_nothing() {
         (json!({ "track": "Bass", "scene": 3 }), "from 1 to 2"),
         (json!({ "track": "Bass", "scene": 0 }), "from 1"),
         (json!({ "track": "Bass", "scene": -1 }), "from 1"),
-        (json!({ "track": "Bass", "scene": "one" }), "from 1"),
+        (json!({ "track": "Bass", "scene": "one" }), "scene must be a whole number"),
         (json!({ "track": "Bass" }), "either start"),
         (json!({ "track": "Bass", "scene": 1, "start": 0 }), "either start"),
         (json!({ "track": "Bass", "start": -1 }), "start must be"),

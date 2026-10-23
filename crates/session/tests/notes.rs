@@ -650,7 +650,7 @@ fn malformed_splits_are_refused_and_change_nothing() {
     let mut session = Session::new(project());
     let before = session.project().clone();
     let cases = [
-        ("note.split", json!({ "track": 1, "index": 0, "notes": [0] }), "give at"),
+        ("note.split", json!({ "track": 1, "index": 0, "notes": [0] }), "at must be given"),
         ("note.split", json!({ "track": 1, "index": 0, "notes": [0], "at": -1.0 }), "at must be"),
         ("note.split", json!({ "track": 1, "index": 0, "notes": [0], "at": 1e12 }), "at must be"),
         ("note.split", json!({ "track": 1, "index": 0, "notes": [0], "at": "halfway" }), "at must be"),

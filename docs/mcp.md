@@ -528,7 +528,11 @@ empty list clears the map. Optional `continue` groups consecutive drag edits.
 read-root confinement. `project.collect` writes below the write root: its `folder` (made if it
 is new, inside an existing folder of the root) or, without one, the folder of the project's own
 file; a blank `folder` is refused, and so is a `Samples` or `Samples/Collected` in it that leads
-outside. A test lists
-every command parameter named like a file or a folder (`path`, `paths`, `folder`, `file`, `to`,
-`item`, `preset`, `sd`, `output`, `place`) and fails for one that neither `confine()` handles nor the agents are
-refused, so a new command cannot take a path unchecked.
+outside. Which parameters are places on disk is their type (`ParamType::Path`, with what the command
+does with it: reads a file, files or a folder, writes one, a library item or place), and
+`confine()` checks every one by that type; the files commands write have each their own rule. A
+test gives every `Path` parameter a path outside the roots and fails when `confine()` lets it
+through, and fails for a text parameter named like a file or a folder (`path`, `paths`, `folder`,
+`file`, `to`, `item`, `preset`, `sd`, `output`, `place`) that is not a `Path`, so a new command
+cannot take a path unchecked. Which commands an agent may not run is on each command's spec
+(`Policy::agents`: denied, or not to an agent attached to the app).

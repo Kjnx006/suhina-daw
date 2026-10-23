@@ -15,9 +15,9 @@ use suhina_plugins::scan::{Catalog, FolderFormat, NO_PLUGINS, Report};
 
 use crate::commands::{CommandKind, CommandSpec, Param, ParamType, optional, param};
 use crate::projects::project_param;
-use crate::{CommandError, Projects};
+use crate::{Agents, CommandError, PathKind, Policy, Projects};
 
-const FOLDER: Param = param("folder", ParamType::Text, "a folder that holds plug-ins");
+const FOLDER: Param = param("folder", ParamType::Path(PathKind::Folder), "a folder that holds plug-ins");
 const PLUGIN: Param = param("plugin", ParamType::Text, "plug-in name, id or spec, from plugins.list");
 const ENABLED: Param = param("enabled", ParamType::Bool, "true for on, false for off");
 
@@ -32,6 +32,7 @@ static PLUGIN_COMMANDS: &[CommandSpec<Projects>] = &[
         )],
         kind: CommandKind::Plugins,
         run: list,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "plugins.scan",
@@ -39,6 +40,7 @@ static PLUGIN_COMMANDS: &[CommandSpec<Projects>] = &[
         params: &[optional("all", ParamType::Bool, "read every file again, failed ones too (default false)")],
         kind: CommandKind::Plugins,
         run: scan,
+        policy: Policy { agents: Agents::NotWhenAttached(Agents::SETTINGS), ..Policy::DEFAULT },
     },
     CommandSpec {
         id: "plugins.folders",
@@ -46,6 +48,7 @@ static PLUGIN_COMMANDS: &[CommandSpec<Projects>] = &[
         params: &[],
         kind: CommandKind::Plugins,
         run: folders,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "plugins.addFolder",
@@ -53,13 +56,18 @@ static PLUGIN_COMMANDS: &[CommandSpec<Projects>] = &[
         params: &[FOLDER, optional("format", ParamType::Text, "any (default: CLAP and VST3), vst3 or clap")],
         kind: CommandKind::Plugins,
         run: add_folder,
+        policy: Policy {
+            agents: Agents::Denied("the user chooses plug-in folders (suhina-cli plugins add-folder)"),
+            ..Policy::DEFAULT
+        },
     },
     CommandSpec {
         id: "plugins.setFolderEnabled",
         label: "Switch a plug-in folder (standard or added) on or off for scans; the plug-ins of a folder switched off leave the list with the next scan",
-        params: &[FOLDER, ENABLED],
+        params: &[param("folder", ParamType::Text, "a folder the user added, as plugins.folders lists them"), ENABLED],
         kind: CommandKind::Plugins,
         run: set_folder_enabled,
+        policy: Policy { agents: Agents::NotWhenAttached(Agents::SETTINGS), ..Policy::DEFAULT },
     },
     CommandSpec {
         id: "plugins.setEnabled",
@@ -67,6 +75,7 @@ static PLUGIN_COMMANDS: &[CommandSpec<Projects>] = &[
         params: &[PLUGIN, ENABLED],
         kind: CommandKind::Plugins,
         run: set_enabled,
+        policy: Policy { agents: Agents::NotWhenAttached(Agents::SETTINGS), ..Policy::DEFAULT },
     },
     CommandSpec {
         id: "plugins.scanFile",
@@ -74,6 +83,7 @@ static PLUGIN_COMMANDS: &[CommandSpec<Projects>] = &[
         params: &[param("file", ParamType::Text, "the plug-in file, as plugins.list gives it")],
         kind: CommandKind::Plugins,
         run: scan_file,
+        policy: Policy { agents: Agents::NotWhenAttached(Agents::SETTINGS), ..Policy::DEFAULT },
     },
     CommandSpec {
         id: "plugins.removeFolder",
@@ -81,6 +91,10 @@ static PLUGIN_COMMANDS: &[CommandSpec<Projects>] = &[
         params: &[FOLDER],
         kind: CommandKind::Plugins,
         run: remove_folder,
+        policy: Policy {
+            agents: Agents::Denied("the user chooses plug-in folders (suhina-cli plugins add-folder)"),
+            ..Policy::DEFAULT
+        },
     },
     CommandSpec {
         id: "plugins.setHosting",
@@ -91,6 +105,7 @@ static PLUGIN_COMMANDS: &[CommandSpec<Projects>] = &[
         ],
         kind: CommandKind::Plugins,
         run: set_hosting,
+        policy: Policy { agents: Agents::NotWhenAttached(Agents::SETTINGS), ..Policy::DEFAULT },
     },
     CommandSpec {
         id: "plugins.check",
@@ -98,6 +113,7 @@ static PLUGIN_COMMANDS: &[CommandSpec<Projects>] = &[
         params: &[optional("project", ParamType::Integer, "project id, from projects.list (default the active one)")],
         kind: CommandKind::Plugins,
         run: check,
+        policy: Policy::DEFAULT,
     },
 ];
 

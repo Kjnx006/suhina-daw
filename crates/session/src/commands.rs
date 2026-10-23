@@ -16,6 +16,7 @@ use crate::{
     CommandError, Session, device_groups, devices, editing, files, follow, launch, mapping, meters, note_tools, notes,
 };
 
+mod args;
 mod automation;
 mod branch;
 mod clip;
@@ -35,6 +36,8 @@ mod tempo;
 mod time_signature;
 mod track;
 mod transport;
+
+pub(crate) use args::Args;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandKind {
@@ -83,6 +86,59 @@ impl ParamType {
             Self::Range => "range",
             Self::Clip => "clip",
             Self::DevicePath => "device path",
+            Self::NameOrNumber => "name or number",
+            Self::Path(PathKind::File) => "file",
+            Self::Path(PathKind::Files) => "files",
+            Self::Path(PathKind::Folder) => "folder",
+            Self::Path(PathKind::WriteFile) => "file to write",
+            Self::Path(PathKind::WriteFolder) => "folder to write",
+            Self::Path(PathKind::LibraryItem) => "library item",
+            Self::Path(PathKind::Place) => "place",
+        }
+    }
+}
+
+impl ParamType {
+    /// The type as an error message says what a value must be: "a whole number".
+    pub fn phrase(self) -> &'static str {
+        match self {
+            Self::Number => "a number",
+            Self::Integer => "a whole number",
+            Self::Bool => "true or false",
+            Self::Track => "a track id or name",
+            Self::Decibels => "a number of decibels or \"-inf\"",
+            Self::Text => "a text",
+            Self::Tracks => "a list of track ids or names",
+            Self::Texts | Self::Path(PathKind::Files) => "a list of texts",
+            Self::Integers => "a list of whole numbers",
+            Self::Notes => "a list of notes",
+            Self::Numbers => "a list of numbers",
+            Self::Clips => "a list of clips",
+            Self::Range => "a range, {start, end}",
+            Self::Clip => "a clip id or name",
+            Self::DevicePath => "a device index or path",
+            Self::NameOrNumber => "a name or a number",
+            Self::Path(_) => "a path",
+        }
+    }
+
+    /// Whether `value` has this type's JSON shape: a number for a number, a list for a list. A
+    /// `Clips` item may be an object or a bare clip id.
+    pub fn accepts(self, value: &Value) -> bool {
+        let id_or_name = |v: &Value| v.is_u64() || v.is_i64() || v.is_string();
+        match self {
+            Self::Number => value.is_number(),
+            Self::Integer => value.is_i64() || value.is_u64() || value.as_f64().is_some_and(|n| n.fract() == 0.0),
+            Self::Bool => value.is_boolean(),
+            Self::Track | Self::Clip | Self::DevicePath => id_or_name(value),
+            Self::NameOrNumber => value.is_number() || value.is_string(),
+            Self::Decibels => value.is_number() || value.is_string(),
+            Self::Text
+            | Self::Path(PathKind::File | PathKind::Folder | PathKind::WriteFile)
+            | Self::Path(PathKind::WriteFolder | PathKind::LibraryItem | PathKind::Place) => value.is_string(),
+            Self::Tracks | Self::Texts | Self::Integers | Self::Notes | Self::Numbers | Self::Clips => value.is_array(),
+            Self::Path(PathKind::Files) => value.is_array(),
+            Self::Range => value.is_object(),
         }
     }
 }
@@ -136,6 +192,32 @@ pub enum ParamType {
     /// A device on a track: its index (an integer), or a path through device groups as text,
     /// `"2/1/0"` (docs/spec/device-groups.md).
     DevicePath,
+    /// A name, or a number standing for it: a scale's root, "C#" or 1.
+    NameOrNumber,
+    /// A place on disk the command reads or writes, as text (a list of them for
+    /// [`PathKind::Files`]). An agent's is checked against its roots before the command runs
+    /// (`suhina-automation`'s `confine`), by this kind.
+    Path(PathKind),
+}
+
+/// What a [`ParamType::Path`] parameter names on disk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PathKind {
+    /// A file the command reads.
+    File,
+    /// A list of files the command reads.
+    Files,
+    /// A folder the command reads.
+    Folder,
+    /// A file the command writes.
+    WriteFile,
+    /// A folder the command writes into.
+    WriteFolder,
+    /// A library item: a file (`<bank>.syx#<voice>` for a voice in a bank), or `device:<id>` or
+    /// `plugin:<spec>`, which are not on disk.
+    LibraryItem,
+    /// A place in the library: a folder, `pinned` or `recent:<group>`.
+    Place,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -205,7 +287,7 @@ const CLIP_SCENE: Param =
 /// A scale's root and mode, for `clip.setScale` and `project.setDefaultScale`.
 const SCALE_ROOT: Param = optional(
     "root",
-    ParamType::Text,
+    ParamType::NameOrNumber,
     "the key the scale starts on: a name such as C, F# or Bb, or 0 to 11 (default: the scale's root now, else C)",
 );
 const SCALE_MODE: Param = optional(
@@ -259,6 +341,48 @@ pub struct CommandSpec<T: 'static = Session> {
     pub params: &'static [Param],
     pub kind: CommandKind,
     pub run: Run<T>,
+    /// What else follows from running it, and who may (#764 › 1): kept here, with the command,
+    /// rather than in lists of ids elsewhere.
+    pub policy: Policy,
+}
+
+/// The rules a command carries beside what it does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Policy {
+    /// An edit the player hears, so the playing graph is rebuilt after it. `false` for an edit
+    /// that changes only what is shown (a name, a colour, a marker): the graph is kept.
+    pub heard: bool,
+    /// Hard to undo or slow to redo, so a backup is written just before it when backups are set
+    /// to critical operations (`docs/spec/backups.md`).
+    pub critical: bool,
+    /// Whether an agent may run it over MCP (ADR 0028).
+    pub agents: Agents,
+}
+
+impl Policy {
+    /// Heard, not critical, open to agents.
+    pub const DEFAULT: Self = Self { heard: true, critical: false, agents: Agents::Allowed };
+    /// An edit only seen: a name, a colour, a marker.
+    pub const UNHEARD: Self = Self { heard: false, ..Self::DEFAULT };
+    /// Backed up before it runs.
+    pub const CRITICAL: Self = Self { critical: true, ..Self::DEFAULT };
+}
+
+/// Who may run a command over MCP.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Agents {
+    Allowed,
+    /// Never: what it changes is the person's choice, said in the reason.
+    Denied(&'static str),
+    /// Not by an agent attached to the app's open tabs, which works on projects; the reason
+    /// says why, usually [`Agents::SETTINGS`].
+    NotWhenAttached(&'static str),
+}
+
+impl Agents {
+    /// Why most commands an attached agent may not run are closed to it.
+    pub const SETTINGS: &'static str =
+        "changes the app's settings or the person's library; agents attached to the app work on projects";
 }
 
 // By hand: a derive would ask `T: Copy` of the session the command runs on.
@@ -283,6 +407,7 @@ impl<T> CommandSpec<T> {
                     | ParamType::Notes
                     | ParamType::Numbers
                     | ParamType::Clips
+                    | ParamType::Path(PathKind::Files)
             ) {
                 let items = match p.ty {
                     ParamType::Tracks => json!({ "type": ["integer", "string"] }),
@@ -319,14 +444,15 @@ impl<T> CommandSpec<T> {
                 | ParamType::Integers
                 | ParamType::Notes
                 | ParamType::Numbers
-                | ParamType::Clips => json!("array"),
+                | ParamType::Clips
+                | ParamType::Path(PathKind::Files) => json!("array"),
                 ParamType::Number => json!("number"),
                 ParamType::Integer => json!("integer"),
                 ParamType::Bool => json!("boolean"),
                 ParamType::Track | ParamType::Clip | ParamType::DevicePath => json!(["integer", "string"]),
-                ParamType::Decibels => json!(["number", "string"]),
+                ParamType::Decibels | ParamType::NameOrNumber => json!(["number", "string"]),
                 ParamType::Range => json!("object"),
-                ParamType::Text => json!("string"),
+                ParamType::Text | ParamType::Path(_) => json!("string"),
             };
             properties.insert(p.name.to_string(), json!({ "type": ty, "description": p.doc }));
         }
@@ -353,6 +479,35 @@ impl<T> CommandSpec<T> {
     pub fn describe(&self) -> Value {
         json!({ "id": self.id, "label": self.label, "kind": self.kind.name(), "params": self.input_schema() })
     }
+}
+
+/// The one check every command's parameters pass before it runs, on a session or on the open
+/// projects: an object (or nothing), no key the command does not take, every required one there,
+/// and each of the type its [`Param`] says. A `null` stands for an optional parameter left out.
+/// What a value means (a track that exists, a range in order) is the command's to check.
+pub(crate) fn check_params(id: &str, expected: &[Param], params: &Value) -> Result<(), CommandError> {
+    if !(params.is_object() || params.is_null()) {
+        return Err(format!("{id}: parameters must be a JSON object").into());
+    }
+    let empty = serde_json::Map::new();
+    let object = params.as_object().unwrap_or(&empty);
+    if let Some(unknown) = object.keys().find(|key| !expected.iter().any(|p| p.name == key.as_str())) {
+        let known: Vec<&str> = expected.iter().map(|p| p.name).collect();
+        return Err(format!("{id}: unknown parameter {unknown:?}; expected {known:?}").into());
+    }
+    for param in expected {
+        match object.get(param.name) {
+            None | Some(Value::Null) if param.required => {
+                return Err(format!("{id}: {} must be given: {}", param.name, param.doc).into());
+            }
+            None | Some(Value::Null) => {}
+            Some(value) if !param.ty.accepts(value) => {
+                return Err(format!("{id}: {} must be {}, not {value}", param.name, param.ty.phrase()).into());
+            }
+            Some(_) => {}
+        }
+    }
+    Ok(())
 }
 
 /// Every command, in the order `commands.list` shows them.

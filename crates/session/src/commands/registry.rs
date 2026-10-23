@@ -11,4 +11,5 @@ pub(super) static COMMANDS: &[CommandSpec] = &[CommandSpec {
     params: &[],
     kind: CommandKind::Read,
     run: list,
+    policy: Policy::DEFAULT,
 }];

@@ -22,7 +22,7 @@ tests look like. Find the documents for a task through [`docs/INDEX.md`](../../.
 The crate map and layers are in [AGENTS.md › Workspace map](../../../AGENTS.md#2-workspace-map)
 and [`docs/architecture.md`](../../../docs/architecture.md). The usual decisions:
 
-- Something a user does to a project: a command in `crates/session/src/commands.rs` (id, params,
+- Something a user does to a project: a command in `crates/session/src/commands/<namespace>.rs` (id, params, policy,
   tests in `crates/session/tests/`). The view turns the gesture into
   `Action::new("command.id", json!({...}))` and never changes the project itself.
 - A selection, a hover, a draft in a field: view state in `crates/ui`, not a command.

@@ -118,7 +118,7 @@ fn malformed_parameters_change_nothing() {
         (json!({ "track": "Drums", "scene": 1, "time": 1e9 }), "at most 100000 beats"),
         (json!({ "track": "Drums", "scene": 1, "time": "4 bars" }), "time must be a number"),
         (json!({ "track": "Drums", "scene": 1, "actionA": "sideways" }), "actionA must be nothing, stop"),
-        (json!({ "track": "Drums", "scene": 1, "actionB": 3 }), "actionB must be an action name"),
+        (json!({ "track": "Drums", "scene": 1, "actionB": 3 }), "actionB must be a text"),
         (json!({ "track": "Drums", "scene": 1, "actionA": "jump 4" }), "scene 4 does not exist"),
         (json!({ "track": "Drums", "scene": 1, "actionA": "jump 0" }), "actionA must be"),
         (json!({ "track": "Drums", "scene": 1, "actionA": "jump x" }), "actionA must be"),

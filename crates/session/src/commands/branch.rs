@@ -17,6 +17,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: device_groups::branch_add,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "branch.remove",
@@ -24,6 +25,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[TRACK, GROUP, BRANCH],
         kind: CommandKind::Edit,
         run: device_groups::branch_remove,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "branch.duplicate",
@@ -31,6 +33,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[TRACK, GROUP, BRANCH],
         kind: CommandKind::Edit,
         run: device_groups::branch_duplicate,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "branch.rename",
@@ -38,6 +41,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[TRACK, GROUP, BRANCH, param("name", ParamType::Text, "the new name")],
         kind: CommandKind::Edit,
         run: device_groups::branch_rename,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "branch.setVolume",
@@ -50,6 +54,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: device_groups::branch_set_volume,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "branch.setPan",
@@ -57,6 +62,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[TRACK, GROUP, BRANCH, param("pan", ParamType::Number, "-1 hard left, 0 centre, 1 hard right")],
         kind: CommandKind::Edit,
         run: device_groups::branch_set_pan,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "branch.setMute",
@@ -64,6 +70,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[TRACK, GROUP, BRANCH, param("mute", ParamType::Bool, "true mutes the branch")],
         kind: CommandKind::Edit,
         run: device_groups::branch_set_mute,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "branch.setSolo",
@@ -71,5 +78,6 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[TRACK, GROUP, BRANCH, param("solo", ParamType::Bool, "true solos the branch")],
         kind: CommandKind::Edit,
         run: device_groups::branch_set_solo,
+        policy: Policy::DEFAULT,
     },
 ];

@@ -6,6 +6,7 @@ status: current
 last_verified: 2026-10-15
 covers:
   - crates/session/src/commands.rs
+  - crates/session/src/commands
   - crates/session/src/lib.rs
   - crates/session/src/projects.rs
   - crates/session/src/plugins.rs
@@ -160,6 +161,20 @@ them (the queue holds 16, and graphs with stretched audio wait 0.15 s before the
 continued call whose graph does not fit is therefore not an error. The project keeps the
 value and `Session::catch_up_player`, which the window calls every frame through
 `Projects::poll_plugins`, sends the project again until the engine has it.
+
+## Amendment: a command's rules on its spec (2026-10-24)
+
+What follows from a command beside its work is on its `CommandSpec`, in `policy`
+([#764](https://github.com/suhina-daw/suhina-daw/issues/764) › 1), not in lists of ids in other
+crates: whether the player hears an edit (`heard`), whether a backup comes first (`critical`), and
+whether an agent may run it (`agents`). A parameter that names a place on disk has the type
+`Path`, which says what the command does there, and the MCP server confines it by that type.
+Every command's parameters pass one check before it runs, on a session or on the open projects:
+no unknown key, every required one there, each of its declared type, with one form of error
+(`clip.move: start must be a number, not "x"`). Commands read their parameters through `Args`,
+namespace by namespace. Each namespace's commands are in a module of their own,
+`crates/session/src/commands/<namespace>.rs`, with what runs them
+([#764](https://github.com/suhina-daw/suhina-daw/issues/764) › 14).
 
 ## Consequences
 

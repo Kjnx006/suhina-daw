@@ -12,6 +12,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[],
         kind: CommandKind::Transport,
         run: launcher_state,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "launcher.stopAll",
@@ -19,6 +20,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[],
         kind: CommandKind::Transport,
         run: stop_all,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "launcher.setQuantization",
@@ -30,6 +32,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         )],
         kind: CommandKind::Transport,
         run: set_quantization,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "launcher.backToArrangement",
@@ -37,6 +40,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[],
         kind: CommandKind::Transport,
         run: back_to_arrangement,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "launcher.addMapping",
@@ -53,6 +57,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: mapping::add_mapping,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "launcher.removeMapping",
@@ -65,6 +70,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: mapping::remove_mapping,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "launcher.mappings",
@@ -72,6 +78,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[],
         kind: CommandKind::Read,
         run: mapping::list_mappings,
+        policy: Policy::DEFAULT,
     },
 ];
 

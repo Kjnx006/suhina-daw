@@ -12,7 +12,7 @@ use suhina_plugins::library::Library;
 
 use crate::commands::{CommandKind, CommandSpec, Param, ParamType, commands, param};
 use crate::plugins::plugin_commands;
-use crate::{CommandError, Session};
+use crate::{Agents, CommandError, Policy, Session};
 
 /// Projects that may be open at once; opening more is refused. Each holds its own undo history.
 pub const MAX_OPEN_PROJECTS: usize = 32;
@@ -92,6 +92,7 @@ static PROJECT_COMMANDS: &[CommandSpec<Projects>] = &[
         params: &[],
         kind: CommandKind::Projects,
         run: list,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "projects.switch",
@@ -99,6 +100,7 @@ static PROJECT_COMMANDS: &[CommandSpec<Projects>] = &[
         params: &[PROJECT],
         kind: CommandKind::Projects,
         run: switch,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "projects.next",
@@ -106,6 +108,7 @@ static PROJECT_COMMANDS: &[CommandSpec<Projects>] = &[
         params: &[],
         kind: CommandKind::Projects,
         run: next,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "projects.previous",
@@ -113,6 +116,7 @@ static PROJECT_COMMANDS: &[CommandSpec<Projects>] = &[
         params: &[],
         kind: CommandKind::Projects,
         run: previous,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "projects.close",
@@ -120,6 +124,13 @@ static PROJECT_COMMANDS: &[CommandSpec<Projects>] = &[
         params: &[PROJECT],
         kind: CommandKind::Projects,
         run: close,
+        policy: Policy {
+            critical: true,
+            agents: Agents::NotWhenAttached(
+                "agents never close a tab: closing loses its unsaved changes and its undo history; the person closes tabs",
+            ),
+            ..Policy::DEFAULT
+        },
     },
 ];
 
@@ -616,14 +627,14 @@ impl Projects {
     /// one. Transport commands only work on the active project, the one that plays.
     pub fn execute_in(&mut self, project: Option<ProjectId>, id: &str, params: &Value) -> Result<Value, CommandError> {
         if id == "commands.list" {
-            check_params(id, &[], params)?;
+            crate::commands::check_params(id, &[], params)?;
             return Ok(all_commands());
         }
         if let Some(spec) = projects_commands().find(|c| c.id == id) {
             if project.is_some() {
                 return Err(format!("{id} does not run on one project; it takes no target project").into());
             }
-            check_params(id, spec.params, params)?;
+            crate::commands::check_params(id, spec.params, params)?;
             return (spec.run)(self, params);
         }
         // With no project open, previews play in the previews' own session.
@@ -638,7 +649,7 @@ impl Projects {
         self.poll_plugins();
         let target = project.or(self.active);
         if let Some(target) = target
-            && crate::backup::CRITICAL_COMMANDS.contains(&id)
+            && policy(id).is_some_and(|p| p.critical)
         {
             self.back_up_critical(target);
         }
@@ -711,6 +722,22 @@ pub fn all_commands() -> Value {
 
 /// The commands that run on [`Projects`] rather than on one project's session: the ones
 /// [`Projects::execute_in`] runs, in the order [`all_commands`] and [`commands_markdown`] list them.
+/// The [`Policy`] of command `id`, whichever registry holds it; `None` for an unknown id.
+pub fn policy(id: &str) -> Option<Policy> {
+    projects_commands()
+        .find(|c| c.id == id)
+        .map(|c| c.policy)
+        .or_else(|| crate::commands().iter().find(|c| c.id == id).map(|c| c.policy))
+}
+
+/// The parameters of command `id`, whichever registry holds it; `None` for an unknown id.
+pub fn params_of(id: &str) -> Option<&'static [Param]> {
+    projects_commands()
+        .find(|c| c.id == id)
+        .map(|c| c.params)
+        .or_else(|| crate::commands().iter().find(|c| c.id == id).map(|c| c.params))
+}
+
 fn projects_commands() -> impl Iterator<Item = &'static CommandSpec<Projects>> {
     PROJECT_COMMANDS
         .iter()
@@ -741,19 +768,6 @@ pub fn commands_markdown() -> String {
         out.push('\n');
     }
     out
-}
-
-pub(crate) fn check_params(id: &str, expected: &[Param], params: &Value) -> Result<(), CommandError> {
-    if !(params.is_object() || params.is_null()) {
-        return Err(format!("{id}: parameters must be a JSON object").into());
-    }
-    if let Some(object) = params.as_object()
-        && let Some(unknown) = object.keys().find(|key| !expected.iter().any(|p| p.name == key.as_str()))
-    {
-        let known: Vec<&str> = expected.iter().map(|p| p.name).collect();
-        return Err(format!("{id}: unknown parameter {unknown:?}; expected {known:?}").into());
-    }
-    Ok(())
 }
 
 /// The commands that run with no project open, in the previews' own session.

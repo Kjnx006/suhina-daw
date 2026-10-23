@@ -12,6 +12,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[TRACKS, RANGE_START, RANGE_END],
         kind: CommandKind::Edit,
         run: crate::range::split_range,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "range.insertTime",
@@ -19,6 +20,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[RANGE_START, RANGE_END],
         kind: CommandKind::Edit,
         run: crate::range::insert_time,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "range.delete",
@@ -26,6 +28,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[TRACKS, RANGE_START, RANGE_END],
         kind: CommandKind::Edit,
         run: crate::range::delete_range,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "range.copy",
@@ -33,6 +36,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[TRACKS, RANGE_START, RANGE_END],
         kind: CommandKind::Read,
         run: crate::range::copy_range,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "range.cut",
@@ -40,6 +44,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[TRACKS, RANGE_START, RANGE_END],
         kind: CommandKind::Edit,
         run: crate::range::cut_range,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "range.duplicate",
@@ -56,5 +61,6 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         ],
         kind: CommandKind::Edit,
         run: crate::range::duplicate_range,
+        policy: Policy::DEFAULT,
     },
 ];

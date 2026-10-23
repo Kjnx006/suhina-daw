@@ -19,7 +19,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use suhina_engine::model::{LaneData, Project};
 use suhina_session::{
-    AudioSystem, CommandKind, MidiSystem, Player, ProjectId, Projects, Session, all_commands, project_commands,
+    Agents, AudioSystem, CommandKind, MidiSystem, Player, ProjectId, Projects, Session, all_commands, project_commands,
 };
 
 use crate::attach::AppHost;
@@ -678,59 +678,19 @@ fn save_source(projects: &mut Projects, target: Option<ProjectId>, id: &str) -> 
     projects.session_mut(target).ok()?.source().map(Path::to_path_buf)
 }
 
-/// Commands agents may not run. They choose the folders whose plug-ins a scan loads and runs,
-/// so an agent could otherwise add its write root and run code it wrote there. The user chooses
-/// plug-in folders (`suhina-cli plugins add-folder`, later the UI); agents may still scan them.
-const NOT_FOR_AGENTS: [&str; 4] =
-    ["plugins.addFolder", "plugins.removeFolder", "library.addFolder", "library.removeFolder"];
-
-/// Commands an agent attached to the app may not run (ADR 0028): closing a tab loses its unsaved
-/// changes and its undo history, and the rest change the app's settings or the person's library
-/// rather than a project. A scan would also run on the window's thread for as long as plug-ins
-/// take to load; the person scans from the plug-in manager.
-const NOT_FOR_ATTACHED: [&str; 17] = [
-    "projects.close",
-    "audio.setOutput",
-    "output.setCuePair",
-    "output.setCueVolume",
-    "midi.setInput",
-    "plugins.setHosting",
-    "plugins.setEnabled",
-    "plugins.setFolderEnabled",
-    "plugins.scan",
-    "plugins.scanFile",
-    "library.setPluginsView",
-    "library.pin",
-    "library.unpin",
-    "library.tag",
-    "library.setTag",
-    "library.removeTag",
-    "soundmap.setKind",
-];
-
 /// Why an agent may not run command `id` with `params`, if it may not; `attached` when it works
 /// on the app's open tabs.
 fn refused(id: &str, params: Option<&Value>, attached: bool) -> Option<String> {
-    if NOT_FOR_AGENTS.contains(&id) {
-        return Some(if id.starts_with("library.") {
-            format!("{id} is not available to agents: the user chooses the browser's folders")
-        } else {
-            format!("{id} is not available to agents: the user chooses plug-in folders (suhina-cli plugins add-folder)")
-        });
+    match suhina_session::policy(id).map(|p| p.agents) {
+        Some(Agents::Denied(why)) => return Some(format!("{id} is not available to agents: {why}")),
+        Some(Agents::NotWhenAttached(why)) if attached => {
+            // A reason that is a whole sentence of its own is given as it is.
+            return Some(if why == Agents::SETTINGS { format!("{id} {why}") } else { why.to_string() });
+        }
+        _ => {}
     }
     if !attached {
         return None;
-    }
-    if id == "projects.close" {
-        return Some(
-            "agents never close a tab: closing loses its unsaved changes and its undo history; the person closes tabs"
-                .into(),
-        );
-    }
-    if NOT_FOR_ATTACHED.contains(&id) {
-        return Some(format!(
-            "{id} changes the app's settings or the person's library; agents attached to the app work on projects"
-        ));
     }
     let sets_backups = params.is_some_and(|p| p.get("interval").is_some() || p.get("clean_up").is_some());
     if id == "project.autosave" && sets_backups {
@@ -954,14 +914,16 @@ mod refused_tests {
         }
     }
 
-    /// Which parameters are file paths is a hand-kept list in [`confine`]. Every command with a
-    /// parameter that is named like a file or a folder is therefore either handled there or
-    /// refused to agents, or is listed here with why it needs neither.
+    /// Which parameters are places on disk is their type, [`ParamType::Path`], and [`confine`]
+    /// checks every one: given a path outside the agent's roots, each must be refused, unless the
+    /// whole command is refused to agents. A text parameter named like a file or a folder must be
+    /// a `Path` too, or be listed here with why it is not one.
     #[test]
-    fn every_command_with_a_file_or_folder_parameter_is_confined_or_refused() {
+    fn every_path_parameter_is_confined_and_every_file_or_folder_parameter_is_a_path() {
         use crate::confine::confine;
         use crate::workspace::Workspace;
         use serde_json::Value;
+        use suhina_session::{ParamType, PathKind};
 
         // Parameters of these commands name something other than a place on disk to read or write.
         const NOT_A_PLACE: [(&str, &str); 3] = [
@@ -975,34 +937,57 @@ mod refused_tests {
         std::fs::create_dir_all(dir.join("outside")).unwrap();
         let workspace = Workspace::new(Some(&dir.join("inside")), None).unwrap();
         let outside = dir.join("outside").join("secret.wav").display().to_string();
-        let mut unconfined = Vec::new();
+        let (mut unconfined, mut untyped) = (Vec::new(), Vec::new());
         for command in suhina_session::all_commands().as_array().unwrap() {
             let id = command["id"].as_str().unwrap();
-            let properties = command["params"]["properties"].as_object().unwrap();
-            for (name, schema) in properties {
-                let is_text = |t: &str| t == "string";
-                let kind = &schema["type"];
-                let is_path = ["path", "paths", "folder", "file", "to", "item", "preset", "sd", "output", "place"]
-                    .contains(&name.as_str())
-                    && (kind.as_str().is_some_and(is_text)
-                        || (kind == "array" && schema["items"]["type"].as_str().is_some_and(is_text)));
-                if !is_path || NOT_A_PLACE.iter().any(|(c, _)| *c == id) || refused(id, None, false).is_some() {
+            if refused(id, None, false).is_some() {
+                continue;
+            }
+            for param in suhina_session::params_of(id).unwrap() {
+                let named_like_a_path =
+                    ["path", "paths", "folder", "file", "to", "item", "preset", "sd", "output", "place"]
+                        .contains(&param.name);
+                let ParamType::Path(kind) = param.ty else {
+                    let text = matches!(param.ty, ParamType::Text | ParamType::Texts);
+                    if named_like_a_path && text && !NOT_A_PLACE.iter().any(|(c, _)| *c == id) {
+                        untyped.push(format!("{id} {}", param.name));
+                    }
                     continue;
-                }
-                let value = if kind == "array" { json!([outside]) } else { json!(outside) };
+                };
+                let value = if kind == PathKind::Files { json!([outside]) } else { json!(outside) };
                 let mut params = serde_json::Map::new();
-                params.insert(name.clone(), value);
+                params.insert(param.name.to_string(), value);
                 // Other required parameters are not looked at by confine, only this one.
                 if confine(&workspace, id, Value::Object(params), None).is_ok() {
-                    unconfined.push(format!("{id} {name}"));
+                    unconfined.push(format!("{id} {}", param.name));
                 }
             }
         }
         let _ = std::fs::remove_dir_all(&dir);
+        assert!(unconfined.is_empty(), "these path parameters pass `confine` an outside path: {unconfined:?}");
         assert!(
-            unconfined.is_empty(),
-            "these file or folder parameters pass `confine` an outside path; handle them there or refuse the command: {unconfined:?}"
+            untyped.is_empty(),
+            "these parameters are named like a file or a folder but are text: make them ParamType::Path, or say \
+             here why they are not a place: {untyped:?}"
         );
+    }
+
+    /// Every command a policy names exists: a policy is on the command's spec, so this holds by
+    /// construction, and the refusals an agent gets come from it.
+    #[test]
+    fn denied_and_attached_refusals_come_from_the_commands_policy() {
+        for command in suhina_session::all_commands().as_array().unwrap() {
+            let id = command["id"].as_str().unwrap();
+            let policy = suhina_session::policy(id).unwrap();
+            assert_eq!(
+                refused(id, None, false).is_some(),
+                matches!(policy.agents, suhina_session::Agents::Denied(_)),
+                "{id}"
+            );
+            if matches!(policy.agents, suhina_session::Agents::NotWhenAttached(_)) {
+                assert!(refused(id, None, true).is_some(), "{id}");
+            }
+        }
     }
 }
 

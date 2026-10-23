@@ -14,7 +14,7 @@ use suhina_engine::{AudioPool, DeviceAssets};
 use suhina_model::Project;
 
 use crate::commands::{CommandKind, CommandSpec, ParamType, optional, param};
-use crate::{CommandError, Player, Projects};
+use crate::{Agents, CommandError, Player, Policy, Projects};
 
 /// Smallest and largest buffer size, in frames, a choice may ask for; the engine renders in
 /// blocks of the chosen size (`docs/architecture.md` › Threads). The output layer fits the
@@ -441,6 +441,7 @@ static AUDIO_COMMANDS: &[CommandSpec<Projects>] = &[
         params: &[],
         kind: CommandKind::Audio,
         run: devices,
+        policy: Policy::DEFAULT,
     },
     CommandSpec {
         id: "audio.setOutput",
@@ -463,6 +464,7 @@ static AUDIO_COMMANDS: &[CommandSpec<Projects>] = &[
         ],
         kind: CommandKind::Audio,
         run: set_output,
+        policy: Policy { agents: Agents::NotWhenAttached(Agents::SETTINGS), ..Policy::DEFAULT },
     },
     CommandSpec {
         id: "output.setCuePair",
@@ -470,13 +472,15 @@ static AUDIO_COMMANDS: &[CommandSpec<Projects>] = &[
         params: &[param("pair", ParamType::Integer, "1 for channels 3/4, 2 for 5/6 … up to 31; 0 for the main output")],
         kind: CommandKind::Audio,
         run: set_cue_pair,
+        policy: Policy { agents: Agents::NotWhenAttached(Agents::SETTINGS), ..Policy::DEFAULT },
     },
     CommandSpec {
         id: "output.setCueVolume",
         label: "Set the cue volume: the level of previews and cued tracks on the cue, from silence to +12 dB. The main output does not change, except for previews while the cue plays with it",
-        params: &[param("db", ParamType::Number, "dB, -inf (or below -150) for silence, at most +12; 0 is unity")],
+        params: &[param("db", ParamType::Decibels, "dB, -inf (or below -150) for silence, at most +12; 0 is unity")],
         kind: CommandKind::Audio,
         run: set_cue_volume,
+        policy: Policy { agents: Agents::NotWhenAttached(Agents::SETTINGS), ..Policy::DEFAULT },
     },
     CommandSpec {
         id: "audio.info",
@@ -484,6 +488,7 @@ static AUDIO_COMMANDS: &[CommandSpec<Projects>] = &[
         params: &[],
         kind: CommandKind::Audio,
         run: info,
+        policy: Policy::DEFAULT,
     },
 ];
 
