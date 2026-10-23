@@ -270,7 +270,7 @@ fn a_note_from_a_port_plays_the_armed_tracks_instrument_also_on_a_new_output() {
     input.send(LiveEvent::NoteOff { key: 64 });
 
     // A new output is a new engine: the notes follow it, and it knows the armed track.
-    run(&mut projects, "audio.setOutput", json!({ "buffer_frames": 256 })).unwrap();
+    run(&mut projects, "audio.setOutput", json!({ "bufferFrames": 256 })).unwrap();
     projects.poll_plugins();
     assert!(input.is_connected());
     stand.run_latest();

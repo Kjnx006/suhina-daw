@@ -274,7 +274,7 @@ fn parse_args(args: &[String], command: Command) -> Result<Args, String> {
                 let value = it.next().ok_or("--buffer needs a number of frames")?;
                 let frames: u32 = value.parse().map_err(|_| format!("invalid buffer size: {value}"))?;
                 audio_output =
-                    audio_output.with_params(&serde_json::json!({ "buffer_frames": frames })).map_err(|e| e.0)?;
+                    audio_output.with_params(&serde_json::json!({ "bufferFrames": frames })).map_err(|e| e.0)?;
                 None
             }
             "--exclusive" => {
@@ -481,7 +481,7 @@ fn render(args: &Args) -> Result<(), String> {
         let params = serde_json::json!({
             "path": path.display().to_string(),
             "source": node,
-            "sample_rate": args.sample_rate,
+            "sampleRate": args.sample_rate,
             // An explicit -o is replaced like the mix render's is (its WriteMode::Replace):
             // the same caller's render of the same command writes over what it wrote before.
             "overwrite": true,
@@ -693,7 +693,7 @@ fn plugin(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-/// `plugins …`: runs the matching `plugins.*` command and prints its result.
+/// `plugins …`: runs the matching `plugin.*` command and prints its result.
 /// `audio devices`: runs `audio.devices` on the system's devices.
 fn audio_devices(args: &[String]) -> Result<(), String> {
     if args.iter().map(String::as_str).ne(["devices"]) {
@@ -716,27 +716,27 @@ fn plugins(args: &[String]) -> Result<(), String> {
                 eprintln!("warning: {warning}");
             }
             projects.add(session, None).map_err(|e| e.0)?;
-            ("plugins.check", serde_json::json!({}))
+            ("plugin.check", serde_json::json!({}))
         }
-        ["scan"] => ("plugins.scan", serde_json::json!({})),
-        ["scan", "--all"] => ("plugins.scan", serde_json::json!({ "all": true })),
-        ["list"] => ("plugins.list", serde_json::json!({})),
-        ["list", "--ignored"] => ("plugins.list", serde_json::json!({ "ignored": true })),
-        ["folders"] => ("plugins.folders", serde_json::json!({})),
-        ["add-folder", folder] => ("plugins.addFolder", serde_json::json!({ "folder": folder })),
+        ["scan"] => ("plugin.scan", serde_json::json!({})),
+        ["scan", "--all"] => ("plugin.scan", serde_json::json!({ "all": true })),
+        ["list"] => ("plugin.list", serde_json::json!({})),
+        ["list", "--ignored"] => ("plugin.list", serde_json::json!({ "ignored": true })),
+        ["folders"] => ("plugin.folders", serde_json::json!({})),
+        ["add-folder", folder] => ("plugin.addFolder", serde_json::json!({ "folder": folder })),
         ["add-folder", folder, "--format", format] => {
-            ("plugins.addFolder", serde_json::json!({ "folder": folder, "format": format }))
+            ("plugin.addFolder", serde_json::json!({ "folder": folder, "format": format }))
         }
-        ["folder-on", folder] => ("plugins.setFolderEnabled", serde_json::json!({ "folder": folder, "enabled": true })),
+        ["folder-on", folder] => ("plugin.setFolderEnabled", serde_json::json!({ "folder": folder, "enabled": true })),
         ["folder-off", folder] => {
-            ("plugins.setFolderEnabled", serde_json::json!({ "folder": folder, "enabled": false }))
+            ("plugin.setFolderEnabled", serde_json::json!({ "folder": folder, "enabled": false }))
         }
-        ["enable", plugin] => ("plugins.setEnabled", serde_json::json!({ "plugin": plugin, "enabled": true })),
-        ["disable", plugin] => ("plugins.setEnabled", serde_json::json!({ "plugin": plugin, "enabled": false })),
-        ["scan-file", file] => ("plugins.scanFile", serde_json::json!({ "file": file })),
-        ["remove-folder", folder] => ("plugins.removeFolder", serde_json::json!({ "folder": folder })),
+        ["enable", plugin] => ("plugin.setEnabled", serde_json::json!({ "plugin": plugin, "enabled": true })),
+        ["disable", plugin] => ("plugin.setEnabled", serde_json::json!({ "plugin": plugin, "enabled": false })),
+        ["scan-file", file] => ("plugin.scanFile", serde_json::json!({ "file": file })),
+        ["remove-folder", folder] => ("plugin.removeFolder", serde_json::json!({ "folder": folder })),
         ["set-hosting", plugin, hosting] => {
-            ("plugins.setHosting", serde_json::json!({ "plugin": plugin, "hosting": hosting }))
+            ("plugin.setHosting", serde_json::json!({ "plugin": plugin, "hosting": hosting }))
         }
         _ => {
             return Err(format!(
@@ -746,7 +746,7 @@ fn plugins(args: &[String]) -> Result<(), String> {
             ));
         }
     };
-    if id == "plugins.scan" || id == "plugins.scanFile" {
+    if id == "plugin.scan" || id == "plugin.scanFile" {
         eprintln!("scanning for plug-ins; each new or changed file is loaded in a process of its own");
     }
     let result = projects.execute(id, &params).map_err(|e| e.0)?;

@@ -985,7 +985,7 @@
       "docs/spec/arrangement-editing.md"
     ]
   },
-  "projects.next": {
+  "project.next": {
     "description": "Moves forward in the open-project switcher while the modifier stays held. Releasing Ctrl on Windows/Linux or Cmd on macOS activates the chosen project.",
     "context": "Requires at least two open projects; with fewer projects this action does nothing.",
     "whenToUse": "Switch to the next idea without closing the current project.",
@@ -998,7 +998,7 @@
       "crates/session/src/projects.rs"
     ]
   },
-  "projects.previous": {
+  "project.previous": {
     "description": "Moves backward in the open-project switcher while the modifier stays held. Releasing Ctrl on Windows/Linux or Cmd on macOS activates the chosen project.",
     "context": "Requires at least two open projects; with fewer projects this action does nothing.",
     "whenToUse": "Return to the previous open project.",

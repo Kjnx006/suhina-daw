@@ -210,7 +210,7 @@ fn library_commands_are_listed_and_need_no_project() {
     let mut p = Projects::default();
     p.set_file_library(Library::new(Some(settings.clone())));
     assert!(run(&mut p, "library.folders", json!({})).is_ok(), "no project is open");
-    let all = run(&mut p, "commands.list", json!({})).unwrap();
+    let all = run(&mut p, "command.list", json!({})).unwrap();
     let ids: Vec<&str> = all.as_array().unwrap().iter().filter_map(|c| c["id"].as_str()).collect();
     for id in ["library.search", "library.addFolder", "track.add", "clip.addFiles", "preview.play"] {
         assert!(ids.contains(&id), "{id}");

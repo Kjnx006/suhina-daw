@@ -5732,7 +5732,7 @@
       "helpStatus": "reviewed"
     },
     {
-      "id": "projects.next",
+      "id": "project.next",
       "name": "Make the next open project active, wrapping around after the last",
       "category": "Commands",
       "bindings": {
@@ -5811,7 +5811,7 @@
       "helpStatus": "reviewed"
     },
     {
-      "id": "projects.previous",
+      "id": "project.previous",
       "name": "Make the previous open project active, wrapping around before the first",
       "category": "Commands",
       "bindings": {

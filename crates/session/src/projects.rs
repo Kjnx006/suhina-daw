@@ -83,11 +83,11 @@ const OUTPUT_RETRY: std::time::Duration = std::time::Duration::from_secs(2);
 /// How often an output playing in place of the chosen device looks whether it is back.
 const OUTPUT_WATCH: std::time::Duration = std::time::Duration::from_secs(3);
 
-const PROJECT: Param = param("project", ParamType::Integer, "project id, from projects.list");
+const PROJECT: Param = param("project", ParamType::Integer, "project id, from project.list");
 
 static PROJECT_COMMANDS: &[CommandSpec<Projects>] = &[
     CommandSpec {
-        id: "projects.list",
+        id: "project.list",
         label: "List the open projects in tab order with id, name, source and whether each is active",
         params: &[],
         kind: CommandKind::Projects,
@@ -95,7 +95,7 @@ static PROJECT_COMMANDS: &[CommandSpec<Projects>] = &[
         policy: Policy::DEFAULT,
     },
     CommandSpec {
-        id: "projects.switch",
+        id: "project.switch",
         label: "Make an open project the active one; the previous one stops playing",
         params: &[PROJECT],
         kind: CommandKind::Projects,
@@ -103,7 +103,7 @@ static PROJECT_COMMANDS: &[CommandSpec<Projects>] = &[
         policy: Policy::DEFAULT,
     },
     CommandSpec {
-        id: "projects.next",
+        id: "project.next",
         label: "Make the next open project active, wrapping around after the last",
         params: &[],
         kind: CommandKind::Projects,
@@ -111,7 +111,7 @@ static PROJECT_COMMANDS: &[CommandSpec<Projects>] = &[
         policy: Policy::DEFAULT,
     },
     CommandSpec {
-        id: "projects.previous",
+        id: "project.previous",
         label: "Make the previous open project active, wrapping around before the first",
         params: &[],
         kind: CommandKind::Projects,
@@ -119,7 +119,7 @@ static PROJECT_COMMANDS: &[CommandSpec<Projects>] = &[
         policy: Policy::DEFAULT,
     },
     CommandSpec {
-        id: "projects.close",
+        id: "project.close",
         label: "Close an open project and its undo history; a neighbour becomes active if it was",
         params: &[PROJECT],
         kind: CommandKind::Projects,
@@ -448,7 +448,7 @@ impl Projects {
         true
     }
 
-    /// Uses `library` for the `plugins.*` commands instead of the one in Suhina's settings
+    /// Uses `library` for the `plugin.*` commands instead of the one in Suhina's settings
     /// folder (for tests, or a portable setup).
     pub fn with_library(library: Library) -> Self {
         Self { library, ..Self::default() }
@@ -617,8 +617,8 @@ impl Projects {
         notices
     }
 
-    /// Runs command `id`: a `projects.*` or `plugins.*` command on the open projects (and the
-    /// plug-in library), anything else on the active project. `commands.list` lists every kind.
+    /// Runs command `id`: a `project.*` (on the open projects) or `plugin.*` command on the open projects (and the
+    /// plug-in library), anything else on the active project. `command.list` lists every kind.
     pub fn execute(&mut self, id: &str, params: &Value) -> Result<Value, CommandError> {
         self.execute_in(None, id, params)
     }
@@ -626,7 +626,7 @@ impl Projects {
     /// Like [`Projects::execute`], but a project command runs on `project` instead of the active
     /// one. Transport commands only work on the active project, the one that plays.
     pub fn execute_in(&mut self, project: Option<ProjectId>, id: &str, params: &Value) -> Result<Value, CommandError> {
-        if id == "commands.list" {
+        if id == "command.list" {
             crate::commands::check_params(id, &[], params)?;
             return Ok(all_commands());
         }
@@ -714,7 +714,7 @@ impl Projects {
     }
 }
 
-/// Every command, project commands first, as `commands.list` shows them.
+/// Every command, project commands first, as `command.list` shows them.
 pub fn all_commands() -> Value {
     let projects = projects_commands().map(CommandSpec::describe);
     Value::Array(projects.chain(commands().iter().map(CommandSpec::describe)).collect())
@@ -778,7 +778,7 @@ fn no_project() -> CommandError {
 }
 
 fn unknown_project(id: ProjectId) -> CommandError {
-    CommandError(format!("no open project has id {}; projects.list shows them", id.0))
+    CommandError(format!("no open project has id {}; project.list shows them", id.0))
 }
 
 pub(crate) fn project_param(params: &Value) -> Result<ProjectId, CommandError> {
@@ -787,7 +787,7 @@ pub(crate) fn project_param(params: &Value) -> Result<ProjectId, CommandError> {
         .and_then(Value::as_u64)
         .and_then(|n| u32::try_from(n).ok())
         .map(ProjectId)
-        .ok_or_else(|| "project must be a project id from projects.list".into())
+        .ok_or_else(|| "project must be a project id from project.list".into())
 }
 
 fn list(projects: &mut Projects, _: &Value) -> Result<Value, CommandError> {

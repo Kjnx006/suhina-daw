@@ -144,7 +144,7 @@ fn the_seven_clip_commands_take_an_id() {
 
     run(&mut session, "clip.delete", json!({ "clips": [{ "clip": first.0 }, { "clip": third.0 }] })).unwrap();
     assert_eq!(bass(&session), [second]);
-    run(&mut session, "clip.move", json!({ "clip": second.0, "start": 2, "to_track": "Lead" })).unwrap();
+    run(&mut session, "clip.move", json!({ "clip": second.0, "start": 2, "toTrack": "Lead" })).unwrap();
     assert_eq!(
         session.project().clip_place(second),
         Some(ClipPlace::Lane { lane: 1, index: 1 }),

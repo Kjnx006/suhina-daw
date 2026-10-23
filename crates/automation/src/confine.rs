@@ -393,7 +393,7 @@ mod from_the_tool_lists {
         let out = dir.join("out").join("song.suhina");
         // Reporting is always fine.
         assert!(autosave(&read_only, json!({}), Some(&inside)).is_ok());
-        assert!(autosave(&workspace, json!({ "interval": "5m", "clean_up": false }), None).is_ok());
+        assert!(autosave(&workspace, json!({ "interval": "5m", "cleanUp": false }), None).is_ok());
         // Backups before critical operations would write beside the project unasked.
         assert!(autosave(&workspace, json!({ "interval": "critical" }), Some(&out)).is_err());
         // Now writes beside the project's file, which must be below the write root.

@@ -70,7 +70,7 @@ impl PluginEnv {
     }
 
     /// What `library` gives: its catalog without the plug-ins switched off, its host, and how
-    /// each plug-in is hosted (its `plugins.setHosting` choice, else one process per plug-in
+    /// each plug-in is hosted (its `plugin.setHosting` choice, else one process per plug-in
     /// file).
     pub fn from_library(library: &mut suhina_plugins::library::Library) -> Self {
         let host = library.host().to_path_buf();

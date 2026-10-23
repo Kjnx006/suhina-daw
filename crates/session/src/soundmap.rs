@@ -90,7 +90,7 @@ static SOUND_MAP_COMMANDS: &[CommandSpec<Projects>] = &[
 
 const KIND_PARAM: &str = "kick, snare, clap, closedHat, openHat, hat, rim, tom, crash, ride, cymbal, percussion, bass, tonal, vocal, effect or other; auto to let the name and the sound decide again";
 
-/// The sample map commands, as `commands.list` shows them.
+/// The sample map commands, as `command.list` shows them.
 pub fn sound_map_commands() -> &'static [CommandSpec<Projects>] {
     SOUND_MAP_COMMANDS
 }

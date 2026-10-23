@@ -690,7 +690,7 @@ impl App {
         }
     }
 
-    /// A window whose `plugins.*` commands use `library` instead of the one in Suhina's
+    /// A window whose `plugin.*` commands use `library` instead of the one in Suhina's
     /// settings folder (tests, portable setups).
     pub fn with_library(library: suhina_plugins::library::Library) -> Self {
         let mut projects = Projects::with_library(library);
@@ -971,7 +971,7 @@ impl App {
     /// of its own yet.
     fn save_and_leave(&mut self, leaving: Leaving) {
         if self.projects.active() != Some(leaving.project) {
-            self.run(&Action::new("projects.switch", json!({ "project": leaving.project.0 })));
+            self.run(&Action::new("project.switch", json!({ "project": leaving.project.0 })));
         }
         match self.own_file(leaving.project) {
             Some(path) => {
@@ -989,7 +989,7 @@ impl App {
     /// Does what leaving the project was for, once its changes were saved or let go.
     fn leave(&mut self, leaving: Leaving) {
         match leaving.then {
-            AfterLeaving::Close => self.run(&Action::new("projects.close", json!({ "project": leaving.project.0 }))),
+            AfterLeaving::Close => self.run(&Action::new("project.close", json!({ "project": leaving.project.0 }))),
             AfterLeaving::Replace(path) => self.open_request = Some((path, OpenAs::Replace)),
             AfterLeaving::Quit(mut answered) => {
                 answered.push(leaving.project);
@@ -1997,13 +1997,12 @@ impl App {
     /// (ADR 0028 step 6), so Keep edits or Copy as new is asked first; `None` otherwise, and for
     /// a move that already says (`ara_edits`).
     fn ara_clips_leaving(&self, action: &Action) -> Option<String> {
-        if !matches!(action.id, "clip.move" | "clip.moveMany") || !action.params["ara_edits"].is_null() {
+        if !matches!(action.id, "clip.move" | "clip.moveMany") || !action.params["araEdits"].is_null() {
             return None;
         }
         let p = &action.params;
-        let to = p["to_track"].as_u64().and_then(|t| u32::try_from(t).ok()).map(TrackId);
-        let other_track =
-            to.is_some() || p["tracks_by"].as_i64().is_some_and(|by| by != 0) || p["to_new_track"] == true;
+        let to = p["toTrack"].as_u64().and_then(|t| u32::try_from(t).ok()).map(TrackId);
+        let other_track = to.is_some() || p["tracksBy"].as_i64().is_some_and(|by| by != 0) || p["toNewTrack"] == true;
         if !other_track {
             return None;
         }
@@ -2056,7 +2055,7 @@ impl App {
             params["clips"] = json!([{ "clip": id }]);
             params["beats"] = json!(beats);
         }
-        params["ara_edits"] = json!(edits);
+        params["araEdits"] = json!(edits);
         Action::new("clip.moveMany", params)
     }
 
@@ -2249,7 +2248,7 @@ impl App {
             if let Some(id) = ids.get(place)
                 && self.projects.active() != Some(*id)
             {
-                self.run(&Action::new("projects.switch", json!({ "project": id.0 })));
+                self.run(&Action::new("project.switch", json!({ "project": id.0 })));
             }
         }
     }
@@ -2327,7 +2326,8 @@ impl App {
             self.rename = Some((target, name, false));
             return;
         }
-        if action.id.starts_with("projects.") {
+        // The open projects' own commands (project.list, project.switch ...) run on all of them.
+        if suhina_session::project_commands().iter().any(|c| c.id == action.id) {
             // Traced like every other command, so a trace shows tabs switched and closed (#821).
             suhina_plugins::trace!("action {} {}", action.id, action.params);
             if let Err(e) = self.projects.execute(action.id, &action.params) {
@@ -3042,7 +3042,7 @@ impl App {
                 break;
             }
             // Closing a project with unsaved changes asks first (Save, Don't save, Cancel).
-            let closing = (action.id == "projects.close")
+            let closing = (action.id == "project.close")
                 .then(|| action.params["project"].as_u64().and_then(|n| u32::try_from(n).ok()).map(ProjectId))
                 .flatten();
             if let Some(project) = closing {
@@ -3960,9 +3960,9 @@ impl App {
             let response = widgets::button_area(ui, tab, Id::new(("tab", id.0)), format!("Tab {name}"));
             let close_response = widgets::button_area(ui, close, Id::new(("close-tab", id.0)), format!("Close {name}"));
             if close_response.clicked() || response.middle_clicked() {
-                actions.push(Action::new("projects.close", json!({ "project": id.0 })));
+                actions.push(Action::new("project.close", json!({ "project": id.0 })));
             } else if response.clicked() && Some(id) != active {
-                actions.push(Action::new("projects.switch", json!({ "project": id.0 })));
+                actions.push(Action::new("project.switch", json!({ "project": id.0 })));
             }
             let lit = motion::toward(ui.ctx(), response.id.with("active"), Some(id) == active, motion::VALUE);
             let idle = motion::mix(theme::window_background(), theme::panel_hover(), widgets::hover(ui, &response));
@@ -4028,7 +4028,7 @@ impl App {
         self.plugins_read = true;
         let text = |v: &serde_json::Value| v.as_str().unwrap_or_default().to_string();
         let empty = Vec::new();
-        match self.projects.execute("plugins.folders", &json!({})) {
+        match self.projects.execute("plugin.folders", &json!({})) {
             Ok(folders) => {
                 self.plugins.folders = folders["folders"]
                     .as_array()
@@ -4044,7 +4044,7 @@ impl App {
             }
             Err(e) => self.status = Status::Error(e.0),
         }
-        match self.projects.execute("plugins.list", &json!({})) {
+        match self.projects.execute("plugin.list", &json!({})) {
             Ok(found) => {
                 self.plugins.found = found["plugins"]
                     .as_array()
@@ -4077,7 +4077,7 @@ impl App {
     }
 
     /// Does what the Settings page asked of the plug-in library. Folders change through their
-    /// commands; a scan runs `Library::scan` (what `plugins.scan` runs) on a copy of the library
+    /// commands; a scan runs `Library::scan` (what `plugin.scan` runs) on a copy of the library
     /// on another thread, so the window keeps drawing, and the result replaces the library.
     fn plugin_request(&mut self, request: PluginRequest) {
         // A scan's result replaces the library, so a folder or switch changed meanwhile would be lost.
@@ -4098,7 +4098,7 @@ impl App {
         match request {
             PluginRequest::AddFolder(folder, format) => {
                 let params = json!({ "folder": folder, "format": format.name() });
-                match self.projects.execute("plugins.addFolder", &params) {
+                match self.projects.execute("plugin.addFolder", &params) {
                     Ok(_) => self.plugins.new_folder.clear(),
                     Err(e) => self.status = Status::Error(e.0),
                 }
@@ -4106,7 +4106,7 @@ impl App {
             }
             PluginRequest::SetFolderEnabled(folder, enabled) => {
                 let params = json!({ "folder": folder, "enabled": enabled });
-                if let Err(e) = self.projects.execute("plugins.setFolderEnabled", &params) {
+                if let Err(e) = self.projects.execute("plugin.setFolderEnabled", &params) {
                     self.status = Status::Error(e.0);
                 } else {
                     self.status = Status::Hint(format!(
@@ -4118,7 +4118,7 @@ impl App {
                 self.plugins_read = false;
             }
             PluginRequest::SetEnabled(spec, enabled) => {
-                match self.projects.execute("plugins.setEnabled", &json!({ "plugin": spec, "enabled": enabled })) {
+                match self.projects.execute("plugin.setEnabled", &json!({ "plugin": spec, "enabled": enabled })) {
                     Ok(result) => {
                         let name = result["plugin"].as_str().unwrap_or_default().to_string();
                         self.status = Status::Done(if enabled {
@@ -4136,7 +4136,7 @@ impl App {
             PluginRequest::SetEnabledMany(specs, enabled) => {
                 let mut done = 0;
                 for spec in &specs {
-                    match self.projects.execute("plugins.setEnabled", &json!({ "plugin": spec, "enabled": enabled })) {
+                    match self.projects.execute("plugin.setEnabled", &json!({ "plugin": spec, "enabled": enabled })) {
                         Ok(_) => done += 1,
                         Err(e) => {
                             self.status = Status::Error(e.0);
@@ -4168,7 +4168,7 @@ impl App {
                 }
             }
             PluginRequest::RemoveFolder(folder) => {
-                if let Err(e) = self.projects.execute("plugins.removeFolder", &json!({ "folder": folder })) {
+                if let Err(e) = self.projects.execute("plugin.removeFolder", &json!({ "folder": folder })) {
                     self.status = Status::Error(e.0);
                 }
                 self.plugins_read = false;
@@ -4299,8 +4299,8 @@ impl App {
         let params = json!({
             "host": params["host"].as_str().unwrap_or(""),
             "device": params["device"].as_str().unwrap_or(""),
-            "sample_rate": choice.sample_rate.unwrap_or(0),
-            "buffer_frames": choice.buffer_frames.unwrap_or(0),
+            "sampleRate": choice.sample_rate.unwrap_or(0),
+            "bufferFrames": choice.buffer_frames.unwrap_or(0),
             "exclusive": choice.exclusive,
             "input": choice.input.as_text(),
         });
@@ -4582,24 +4582,21 @@ impl App {
             });
             bar_menu(ui, "Projects", |ui| {
                 if ui
-                    .add_enabled(several, egui::Button::new("Next project").shortcut_text(keys("projects.next")))
+                    .add_enabled(several, egui::Button::new("Next project").shortcut_text(keys("project.next")))
                     .clicked()
                 {
-                    actions.push(Action::new("projects.next", json!({})));
+                    actions.push(Action::new("project.next", json!({})));
                 }
                 if ui
-                    .add_enabled(
-                        several,
-                        egui::Button::new("Previous project").shortcut_text(keys("projects.previous")),
-                    )
+                    .add_enabled(several, egui::Button::new("Previous project").shortcut_text(keys("project.previous")))
                     .clicked()
                 {
-                    actions.push(Action::new("projects.previous", json!({})));
+                    actions.push(Action::new("project.previous", json!({})));
                 }
                 if let Some(active) = self.projects.active()
                     && ui.button("Close project").clicked()
                 {
-                    actions.push(Action::new("projects.close", json!({ "project": active.0 })));
+                    actions.push(Action::new("project.close", json!({ "project": active.0 })));
                 }
             });
             bar_menu(ui, "Options", |ui| {
@@ -5377,17 +5374,17 @@ impl App {
                     self.view.select_slot(track, scene);
                 }
             }
-            "projects.next" | "projects.previous" if self.projects.len() < 2 => {}
+            "project.next" | "project.previous" if self.projects.len() < 2 => {}
             // Ctrl+Tab opens the switcher, or moves on in it while Ctrl stays down; letting go
             // of Ctrl switches (`tab_switcher_ui`).
-            "projects.next" | "projects.previous" => {
+            "project.next" | "project.previous" => {
                 let ids = self.projects.ids();
                 let count = ids.len();
                 let from = self
                     .tab_switcher
                     .or_else(|| self.projects.active().and_then(|a| ids.iter().position(|i| *i == a)))
                     .unwrap_or(0);
-                let step = if action == "projects.next" { 1 } else { count - 1 };
+                let step = if action == "project.next" { 1 } else { count - 1 };
                 self.tab_switcher = Some((from + step) % count);
             }
             command => actions.push(Action::new_owned(command, json!({}))),
@@ -5987,7 +5984,7 @@ impl App {
             }
             self.run(&Action::new(
                 "device.moveToTrack",
-                json!({ "track": from.0, "device": index, "to_track": to.0, "copy": copy }),
+                json!({ "track": from.0, "device": index, "toTrack": to.0, "copy": copy }),
             ));
         }
     }
@@ -6236,8 +6233,8 @@ impl App {
                     &json!({
                         "track": track.0,
                         "scene": scene + 1,
-                        "to_track": to_track.0,
-                        "to_scene": to_scene + 1,
+                        "toTrack": to_track.0,
+                        "toScene": to_scene + 1,
                     }),
                 ) {
                     Ok(out) => {

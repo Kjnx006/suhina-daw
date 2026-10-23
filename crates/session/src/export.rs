@@ -90,14 +90,14 @@ pub fn export_from(data: &ExportData, params: &Value) -> Result<Value, CommandEr
         }
     };
 
-    let sample_rate = match params.get("sample_rate") {
+    let sample_rate = match params.get("sampleRate") {
         None | Some(Value::Null) => 48_000u64,
         Some(n) => {
             n.as_u64().filter(|rate| (8_000..=384_000).contains(rate)).ok_or("sample_rate must be 8000 to 384000")?
         }
     } as u32;
 
-    let depth = match params.get("bit_depth").filter(|value| !value.is_null()).and_then(Value::as_str) {
+    let depth = match params.get("bitDepth").filter(|value| !value.is_null()).and_then(Value::as_str) {
         Some(name) => BitDepth::from_name(name).ok_or_else(|| format!("{name} is not a bit depth; 32f, 24 or 16"))?,
         None => match format {
             AudioFormat::Wav => BitDepth::Float32,
@@ -105,7 +105,7 @@ pub fn export_from(data: &ExportData, params: &Value) -> Result<Value, CommandEr
             AudioFormat::Ogg | AudioFormat::Mp3 => BitDepth::Float32,
         },
     };
-    if !format.has_depth() && params.get("bit_depth").filter(|value| !value.is_null()).is_some() {
+    if !format.has_depth() && params.get("bitDepth").filter(|value| !value.is_null()).is_some() {
         return Err(format!("bit_depth does not apply to {}", format.name()).into());
     }
     if format == AudioFormat::Flac && depth == BitDepth::Float32 {
@@ -113,7 +113,7 @@ pub fn export_from(data: &ExportData, params: &Value) -> Result<Value, CommandEr
     }
 
     // The MP3 rate, the constant kbps or the variable quality; asked for only with mp3.
-    let mp3_rate = match params.get("mp3_rate").filter(|value| !value.is_null()).and_then(Value::as_str) {
+    let mp3_rate = match params.get("mp3Rate").filter(|value| !value.is_null()).and_then(Value::as_str) {
         Some(name) => {
             if format != AudioFormat::Mp3 {
                 return Err("mp3_rate goes with mp3".into());

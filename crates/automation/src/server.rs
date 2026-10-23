@@ -31,7 +31,7 @@ const INSTRUCTIONS: &str = "Suhina, an open-source clip-launching DAW. Open a Su
 (paths are relative to the read root granted at launch), look at it with project_inspect, discover command ids \
 and parameters with command_list, and change it with command_run or command_batch (each editing command is one \
 undo step; edit.undo reverts it). Several projects can be open, like tabs: each project_open adds one and makes it \
-active; projects.list, projects.switch, projects.next and projects.close manage them, and the `project` argument \
+active; project.list, project.switch, project.next and project.close manage them, and the `project` argument \
 of a tool targets another open project without switching. project_render writes a WAV file below the write root; with `launches` it \
 renders clip launches offline. project.save writes a .suhina file only below the write root, and replaces an existing \
 file (the project's own included) only with overwrite: true in its params. Transport commands (clip.launch, scene.launch, track.stop, transport.play, \
@@ -69,8 +69,8 @@ enum Host {
 const INSTRUCTIONS_ATTACHED: &str = "Suhina, an open-source clip-launching DAW. You are attached to the Suhina app the person is using: \
 you work on the projects open in its window, they see every change as you make it, and each editing command is one step \
 in the undo history of its tab (edit.undo reverts the last step, theirs or yours). Look with project_inspect, discover \
-command ids and parameters with command_list, and change projects with command_run or command_batch; projects.list, \
-projects.switch and the `project` argument act on the window's tabs. Tool calls wait until the person allows the \
+command ids and parameters with command_list, and change projects with command_run or command_batch; project.list, \
+project.switch and the `project` argument act on the window's tabs. Tool calls wait until the person allows the \
 connection. You cannot open projects from disk or close tabs, and you cannot change the app's settings. You may write \
 inside folders allowed by the person in Settings > Export (by default the project's folder), and read the project's folder and the \
 browser's library folders. Transport commands play on the window's audio output.";
@@ -85,7 +85,7 @@ pub struct OpenParams {
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct InspectParams {
-    /// Open project id from projects.list; the active project when left out.
+    /// Open project id from project.list; the active project when left out.
     #[serde(default)]
     pub project: Option<u32>,
 }
@@ -106,7 +106,7 @@ pub struct RunParams {
     /// Command parameters as a JSON object, e.g. `{"track": "Bass", "pan": -1}`.
     #[serde(default)]
     pub params: Option<Value>,
-    /// Open project id from projects.list to run on; the active project when left out.
+    /// Open project id from project.list to run on; the active project when left out.
     #[serde(default)]
     pub project: Option<u32>,
 }
@@ -130,7 +130,7 @@ pub struct BatchParams {
     /// Stop at the first failing step (default true).
     #[serde(default)]
     pub stop_on_error: Option<bool>,
-    /// Open project id from projects.list to run on; the active project when left out.
+    /// Open project id from project.list to run on; the active project when left out.
     #[serde(default)]
     pub project: Option<u32>,
 }
@@ -156,7 +156,7 @@ pub struct RenderParams {
     /// Replace the file if it exists (default false).
     #[serde(default)]
     pub overwrite: Option<bool>,
-    /// Open project id from projects.list to render; the active project when left out.
+    /// Open project id from project.list to render; the active project when left out.
     #[serde(default)]
     pub project: Option<u32>,
 }
@@ -271,7 +271,7 @@ impl SuhinaMcp {
     }
 
     /// Takes in the plug-ins that started since the last look, every [`PLUGIN_TICK`], as the
-    /// desktop app does every frame: between an agent's commands (or with only `projects.*`
+    /// desktop app does every frame: between an agent's commands (or with only `project.*` (on the open projects)
     /// ones, which do not look) they stayed loading, and the project played without them.
     /// Skips a tick while a command holds the projects. `None` when attached to the app, whose
     /// window does it.
@@ -332,7 +332,7 @@ impl SuhinaMcp {
     async fn project_open(&self, Parameters(p): Parameters<OpenParams>) -> Result<CallToolResult, McpError> {
         if self.is_attached() {
             return Ok(fail(
-                "attached to the app, agents work on the projects open in its window; the person opens projects (projects.list shows them)",
+                "attached to the app, agents work on the projects open in its window; the person opens projects (project.list shows them)",
             ));
         }
         let path = match self.workspace.readable(&p.path) {
@@ -692,7 +692,7 @@ fn refused(id: &str, params: Option<&Value>, attached: bool) -> Option<String> {
     if !attached {
         return None;
     }
-    let sets_backups = params.is_some_and(|p| p.get("interval").is_some() || p.get("clean_up").is_some());
+    let sets_backups = params.is_some_and(|p| p.get("interval").is_some() || p.get("cleanUp").is_some());
     if id == "project.autosave" && sets_backups {
         return Some(
             "the backup settings are the person's; agents attached to the app may only back up now (now: true)".into(),
@@ -867,13 +867,13 @@ mod refused_tests {
     #[test]
     fn agents_may_scan_but_not_choose_plugin_folders() {
         for attached in [false, true] {
-            assert!(refused("plugins.addFolder", None, attached).is_some());
-            assert!(refused("plugins.removeFolder", None, attached).is_some());
-            for id in ["plugins.list", "plugins.folders", "plugins.check", "track.setPan"] {
+            assert!(refused("plugin.addFolder", None, attached).is_some());
+            assert!(refused("plugin.removeFolder", None, attached).is_some());
+            for id in ["plugin.list", "plugin.folders", "plugin.check", "track.setPan"] {
                 assert!(refused(id, None, attached).is_none(), "{id}");
             }
         }
-        for id in ["plugins.scan", "plugins.scanFile"] {
+        for id in ["plugin.scan", "plugin.scanFile"] {
             assert!(refused(id, None, false).is_none(), "{id}");
         }
     }
@@ -881,26 +881,25 @@ mod refused_tests {
     #[test]
     fn attached_agents_never_close_a_tab_nor_change_the_apps_settings() {
         for id in [
-            "projects.close",
+            "project.close",
             "audio.setOutput",
             "midi.setInput",
-            "plugins.setHosting",
-            "plugins.setEnabled",
-            "plugins.setFolderEnabled",
-            "plugins.scan",
-            "plugins.scanFile",
+            "plugin.setHosting",
+            "plugin.setEnabled",
+            "plugin.setFolderEnabled",
+            "plugin.scan",
+            "plugin.scanFile",
             "library.pin",
         ] {
             assert!(refused(id, None, true).is_some(), "{id}");
             assert!(refused(id, None, false).is_none(), "{id} stays open to suhina-cli mcp");
         }
-        for id in ["projects.list", "projects.switch", "transport.play", "transport.stop", "edit.undo", "project.save"]
-        {
+        for id in ["project.list", "project.switch", "transport.play", "transport.stop", "edit.undo", "project.save"] {
             assert!(refused(id, None, true).is_none(), "{id}");
         }
         assert!(refused("project.autosave", Some(&json!({ "now": true })), true).is_none());
         assert!(refused("project.autosave", Some(&json!({ "interval": "5m" })), true).is_some());
-        assert!(refused("project.autosave", Some(&json!({ "clean_up": true })), true).is_some());
+        assert!(refused("project.autosave", Some(&json!({ "cleanUp": true })), true).is_some());
     }
 
     #[test]
@@ -927,8 +926,8 @@ mod refused_tests {
 
         // Parameters of these commands name something other than a place on disk to read or write.
         const NOT_A_PLACE: [(&str, &str); 3] = [
-            ("plugins.setFolderEnabled", "toggles a folder the user added; touches no files"),
-            ("plugins.scanFile", "reads again a file in the plug-in catalog; any other is refused"),
+            ("plugin.setFolderEnabled", "toggles a folder the user added; touches no files"),
+            ("plugin.scanFile", "reads again a file in the plug-in catalog; any other is refused"),
             ("library.refresh", "reads again a folder the user added; any other is refused"),
         ];
         let dir = std::env::temp_dir().join(format!("suhina-confine-sweep-{}", std::process::id()));

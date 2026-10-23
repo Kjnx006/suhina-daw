@@ -87,7 +87,7 @@ authoring fields are accepted.
 
 - SDK authors compose effects, MIDI effects and monophonic instruments from supported primitives and distribute one self-contained
   `.sd` file, with generated parameter UI and a read-only node list.
-- Node contracts are available in the SDK's JSON catalog and the read command `devices.sdNodes`
+- Node contracts are available in the SDK's JSON catalog and the read command `device.sdNodes`
   through MCP command dispatch. The same catalog generates the node reference table;
   tests reject stale documentation. [The authoring guide](../device-sdk.md) includes AI workflows.
 - The graph runs in offline and real-time chains without loading community Rust code.

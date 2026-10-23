@@ -302,7 +302,7 @@ const NOTE_SELECTION: Param =
 const AUTOMATED: Param = param(
     "param",
     ParamType::Text,
-    "the parameter: volume, pan or mute of the track's mixer (no device), or a device's parameter id, from devices.list (a plug-in's from device.pluginParams)",
+    "the parameter: volume, pan or mute of the track's mixer (no device), or a device's parameter id, from device.list (a plug-in's from device.pluginParams)",
 );
 const AUTOMATED_DEVICE: Param = optional(
     "device",
@@ -475,7 +475,7 @@ impl<T> CommandSpec<T> {
         format!("| `{}` | {} | {} | {params} |", self.id, self.kind.name(), cell(self.label))
     }
 
-    /// The command as `commands.list` and the MCP server's `command_list` show it.
+    /// The command as `command.list` and the MCP server's `command_list` show it.
     pub fn describe(&self) -> Value {
         json!({ "id": self.id, "label": self.label, "kind": self.kind.name(), "params": self.input_schema() })
     }
@@ -510,7 +510,7 @@ pub(crate) fn check_params(id: &str, expected: &[Param], params: &Value) -> Resu
     Ok(())
 }
 
-/// Every command, in the order `commands.list` shows them.
+/// Every command, in the order `command.list` shows them.
 pub fn commands() -> &'static [CommandSpec] {
     static ALL: std::sync::OnceLock<Vec<CommandSpec>> = std::sync::OnceLock::new();
     ALL.get_or_init(|| NAMESPACES.iter().flat_map(|commands| commands.iter().copied()).collect())

@@ -689,7 +689,7 @@ fn fader_column(
     paint_fader(ui, painter, readout, fader, db, &response);
 }
 
-/// The main output's fader in the main column: as a track's, running `main.setVolume`.
+/// The main output's fader in the main column: as a track's, running `mixer.setMainVolume`.
 pub fn main_fader(
     ui: &Ui,
     painter: &egui::Painter,
@@ -711,7 +711,7 @@ pub fn main_fader(
     let continued = preview.is_some();
     let send = |v: f64, continued: bool| {
         let db = if v <= VOLUME_RANGE.0 { json!("-inf") } else { json!((v * 10.0).round() / 10.0) };
-        Action::new("main.setVolume", json!({ "db": db, "continue": continued }))
+        Action::new("mixer.setMainVolume", json!({ "db": db, "continue": continued }))
     };
     let mut db = volume_db;
     match widgets::drag_value(ui, &response, &mut preview, volume_db, 0.25, 1.0, VOLUME_RANGE, 0.0) {

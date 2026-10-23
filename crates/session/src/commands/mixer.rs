@@ -7,7 +7,7 @@ use super::*;
 
 pub(super) static COMMANDS: &[CommandSpec] = &[
     CommandSpec {
-        id: "main.setVolume",
+        id: "mixer.setMainVolume",
         label: "Set the main output's volume, which every track, group and return plays through",
         params: &[
             param("db", ParamType::Decibels, "level in dB, at most +6; \"-inf\" or below -150 is silence"),

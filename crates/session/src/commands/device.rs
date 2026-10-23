@@ -1,13 +1,13 @@
 // Copyright (C) 2026 The Suhina contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The `device.*`, `devices.*` commands; what runs them is in the modules they name.
+//! The `device.*`, `device.*` commands; what runs them is in the modules they name.
 
 use super::*;
 
 pub(super) static COMMANDS: &[CommandSpec] = &[
     CommandSpec {
-        id: "devices.list",
+        id: "device.list",
         label: "List the built-in effects, instruments and MIDI effects (id, name, role) with their parameters (id, range, default, unit, options)",
         params: &[],
         kind: CommandKind::Read,
@@ -15,7 +15,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         policy: Policy::DEFAULT,
     },
     CommandSpec {
-        id: "devices.sdNodes",
+        id: "device.sdNodes",
         label: "Describe every .sd SDK node: ports, units, defaults, configuration examples and processing rules",
         params: &[],
         kind: CommandKind::Read,
@@ -30,7 +30,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
             optional(
                 "id",
                 ParamType::Text,
-                "id of a built-in effect, instrument or MIDI effect, from devices.list (not needed with a preset)",
+                "id of a built-in effect, instrument or MIDI effect, from device.list (not needed with a preset)",
             ),
             optional(
                 "position",
@@ -171,7 +171,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[
             TRACK,
             DEVICE,
-            param("to_track", ParamType::Track, "the track to move or copy it to, by id or name"),
+            param("toTrack", ParamType::Track, "the track to move or copy it to, by id or name"),
             optional("copy", ParamType::Bool, "true copies it and leaves it where it is (default false)"),
         ],
         kind: CommandKind::Edit,
@@ -256,7 +256,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
             param(
                 "param",
                 ParamType::Text,
-                "parameter id: a built-in effect or instrument's from devices.list, an .sd device's stable id, or a plug-in's number from device.pluginParams",
+                "parameter id: a built-in effect or instrument's from device.list, an .sd device's stable id, or a plug-in's number from device.pluginParams",
             ),
             param(
                 "value",
@@ -287,7 +287,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
             param(
                 "param",
                 ParamType::Text,
-                "parameter id: a built-in effect or instrument's from devices.list, an .sd device's stable id, or a plug-in's number from device.pluginParams",
+                "parameter id: a built-in effect or instrument's from device.list, an .sd device's stable id, or a plug-in's number from device.pluginParams",
             ),
             param(
                 "points",
@@ -312,7 +312,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         label: "Add an installed plug-in to a track; an instrument goes right after the MIDI effects and plays the track's notes, an effect goes last unless a position is given. It starts while the project plays",
         params: &[
             TRACK,
-            param("plugin", ParamType::Text, "plug-in name, id or file, from plugins.list"),
+            param("plugin", ParamType::Text, "plug-in name, id or file, from plugin.list"),
             optional(
                 "position",
                 ParamType::DevicePath,

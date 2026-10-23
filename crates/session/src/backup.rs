@@ -694,7 +694,7 @@ static BACKUP_COMMANDS: &[CommandSpec<Projects>] = &[CommandSpec {
             ParamType::Text,
             "when backups are written: critical, 1m, 5m, 10m, 15m, 30m, 60m, 4h or never",
         ),
-        optional("clean_up", ParamType::Bool, "true keeps only the newest 20 backups of each project"),
+        optional("cleanUp", ParamType::Bool, "true keeps only the newest 20 backups of each project"),
     ],
     kind: CommandKind::Projects,
     run: autosave,
@@ -715,7 +715,7 @@ fn autosave(projects: &mut Projects, params: &Value) -> Result<Value, CommandErr
         })?),
         Some(_) => return Err("interval must be text".into()),
     };
-    let (now, clean_up) = (flag("now")?, flag("clean_up")?);
+    let (now, clean_up) = (flag("now")?, flag("cleanUp")?);
     if let Some(interval) = interval {
         projects.backups.interval = interval;
     }

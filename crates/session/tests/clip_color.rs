@@ -38,7 +38,7 @@ fn a_new_clip_shows_its_tracks_colour_and_a_moved_one_keeps_what_it_showed() {
     let mut session = Session::new(project());
     assert!(clips(&session, 1).iter().all(|c| c.color.is_none()), "a new clip follows its track");
     // Moved to track 2, it keeps the colour it showed on track 1.
-    run(&mut session, "clip.move", json!({ "track": 1, "index": 0, "start": 0.0, "to_track": 2, "color": "#3366CC" }))
+    run(&mut session, "clip.move", json!({ "track": 1, "index": 0, "start": 0.0, "toTrack": 2, "color": "#3366CC" }))
         .unwrap();
     assert_eq!(clips(&session, 2)[0].color, Some(Rgb(0x33, 0x66, 0xCC)));
     // Moved along its own track, the colour is not taken.

@@ -25,7 +25,7 @@ fn project_built() -> Project {
 #[test]
 fn every_command_is_listed_with_a_unique_id() {
     let mut session = Session::new(project());
-    let listed = run(&mut session, "commands.list", json!({})).unwrap();
+    let listed = run(&mut session, "command.list", json!({})).unwrap();
     let ids: Vec<&str> = listed.as_array().unwrap().iter().map(|c| c["id"].as_str().unwrap()).collect();
     assert_eq!(ids.len(), commands().len());
     let mut unique = ids.clone();
@@ -229,7 +229,7 @@ fn unknown_commands_and_non_object_params_are_errors() {
 fn a_clip_moves_to_another_track_that_takes_its_kind() {
     let mut session = Session::new(project());
     let moved =
-        run(&mut session, "clip.move", json!({ "track": "Bass", "index": 1, "start": 2, "to_track": "Lead" })).unwrap();
+        run(&mut session, "clip.move", json!({ "track": "Bass", "index": 1, "start": 2, "toTrack": "Lead" })).unwrap();
     assert_eq!(moved["track"], 2);
     let p = session.project();
     assert_eq!(p.arrangement.lanes[0].clips.len(), 1);
@@ -241,10 +241,10 @@ fn a_clip_moves_to_another_track_that_takes_its_kind() {
     // Undo takes the edit back; the id counter stays where it got to (ADR 0025).
     assert_eq!(session.project(), &Project { next_id: session.project().next_id, ..project() });
     assert!(
-        run(&mut session, "clip.move", json!({ "track": "Bass", "index": 0, "start": 0, "to_track": "Nobody" }))
+        run(&mut session, "clip.move", json!({ "track": "Bass", "index": 0, "start": 0, "toTrack": "Nobody" }))
             .is_err()
     );
-    assert!(run(&mut session, "clip.move", json!({ "track": "Bass", "index": 9, "start": 0, "to_track": 2 })).is_err());
+    assert!(run(&mut session, "clip.move", json!({ "track": "Bass", "index": 9, "start": 0, "toTrack": 2 })).is_err());
 }
 
 #[test]
@@ -1416,4 +1416,25 @@ fn audio_overlaps_follow_stacking_and_undo() {
     assert_eq!(run(&mut session, "arrangement.audioOverlaps", json!({})).unwrap()["overlaps"], json!([]));
     run(&mut session, "clip.move", json!({ "track": "Bass", "index": 0, "start": 6 })).unwrap();
     assert_eq!(run(&mut session, "arrangement.audioOverlaps", json!({})).unwrap()["overlaps"], json!([]));
+}
+
+/// Command ids and parameters follow one convention (#764 › 13): a namespace per kind of object,
+/// singular, and parameters in camelCase like the ids.
+#[test]
+fn command_ids_and_parameters_follow_one_convention() {
+    let all = suhina_session::all_commands();
+    let mut wrong = Vec::new();
+    for command in all.as_array().unwrap() {
+        let id = command["id"].as_str().unwrap();
+        let namespace = id.split('.').next().unwrap();
+        if namespace.ends_with('s') {
+            wrong.push(format!("{id}: the namespace is plural"));
+        }
+        for name in command["params"]["properties"].as_object().unwrap().keys() {
+            if name.contains('_') || name.starts_with(|c: char| c.is_uppercase()) {
+                wrong.push(format!("{id}: {name} is not camelCase"));
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
 }

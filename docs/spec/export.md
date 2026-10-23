@@ -67,9 +67,9 @@ line, which is also how the golden renders of the tests run.
 |---|---|
 | `path` | The file to write, required when `output` is not given; aliases, same value. Absolute path from the desktop app; below the write root from the MCP server, like `project.render`'s `output` today |
 | `format` | `wav` (default), `flac`, `ogg` or `mp3`, in any case; left out, the file name's extension decides it. Another name is refused, `"aiff is not a format; wav, flac, ogg or mp3"` |
-| `sample_rate` | Hertz; default 48 000, the render default today. The dialog prefills the project's rate; with `mp3` the dialog offers 32 000, 44 100 and 48 000, the rates the encoder writes — an export at another rate is refused, `"sample rate 96000 is not one the encoder writes; 32, 44.1 and 48 kHz and their MPEG 2 halves are"` |
-| `bit_depth` | `32f` (default for WAV), `24` or `16`; applies to PCM only, an error with `ogg` or `mp3` |
-| `mp3_rate` | The MP3's rate: `320` (default), `256`, `192` or `128` kbps, or the variable qualities `v0` and `v2`; asked for only with `mp3` |
+| `sampleRate` | Hertz; default 48 000, the render default today. The dialog prefills the project's rate; with `mp3` the dialog offers 32 000, 44 100 and 48 000, the rates the encoder writes — an export at another rate is refused, `"sample rate 96000 is not one the encoder writes; 32, 44.1 and 48 kHz and their MPEG 2 halves are"` |
+| `bitDepth` | `32f` (default for WAV), `24` or `16`; applies to PCM only, an error with `ogg` or `mp3` |
+| `mp3Rate` | The MP3's rate: `320` (default), `256`, `192` or `128` kbps, or the variable qualities `v0` and `v2`; asked for only with `mp3` |
 | `overwrite` | `false` by default: an existing file is never replaced (the text below) |
 | `source` | A track id, or a track or group name; left out, the whole mix. Renders one node of the track tree — [Sources](#sources-rendering-one-node-of-the-track-tree) |
 | `range` | `{start, end}` in beats from the arrangement's start; default the whole arrangement |

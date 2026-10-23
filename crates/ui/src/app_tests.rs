@@ -350,7 +350,7 @@ fn a_ctrl_drag_copy_to_another_track_selects_the_copy() {
         .find(|t| *t != track && notes(*t) == notes(track))
         .expect("another track of the same kind");
     app.arrangement.select_clip(track, clip);
-    let params = json!({ "clips": [{ "clip": clip.0 }], "beats": 64.0, "copy": true, "to_track": to.0 });
+    let params = json!({ "clips": [{ "clip": clip.0 }], "beats": 64.0, "copy": true, "toTrack": to.0 });
     app.run(&Action::new("clip.moveMany", params));
     let picked = app.arrangement.selected_clips();
     assert_eq!(picked.len(), 1, "{picked:?}");
@@ -550,7 +550,7 @@ fn a_project_closed_during_the_gather_stops_the_export_with_its_name() {
     assert!(app.export_dialog.as_ref().is_some_and(|d| d.busy && d.gathering), "the dialog shows the gather");
 
     // The project's tab closes (nothing unsaved here, so it closes without asking).
-    app.run(&Action::new("projects.close", json!({ "project": id.0 })));
+    app.run(&Action::new("project.close", json!({ "project": id.0 })));
     assert!(app.projects.get(id).is_none(), "the project is gone");
 
     // The next frame's gather finds no project: the export is said with its name, no

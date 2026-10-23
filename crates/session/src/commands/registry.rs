@@ -6,7 +6,7 @@
 use super::*;
 
 pub(super) static COMMANDS: &[CommandSpec] = &[CommandSpec {
-    id: "commands.list",
+    id: "command.list",
     label: "List every command with its parameters",
     params: &[],
     kind: CommandKind::Read,

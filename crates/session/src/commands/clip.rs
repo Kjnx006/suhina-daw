@@ -255,19 +255,19 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
         params: &[
             param("clips", ParamType::Clips, "the clips to move, each {track, index} from project.clips"),
             param("beats", ParamType::Number, "how far to move them, in beats; negative is earlier"),
-            optional("to_track", ParamType::Track, "track to move them to, when they are all on one track"),
+            optional("toTrack", ParamType::Track, "track to move them to, when they are all on one track"),
             optional(
-                "tracks_by",
+                "tracksBy",
                 ParamType::Integer,
                 "instead of to_track: move each that many tracks down (negative: up) from its own, among the tracks that hold clips",
             ),
             optional(
-                "to_new_track",
+                "toNewTrack",
                 ParamType::Bool,
                 "instead of to_track: true makes a track of the clips' kind after the last and moves them there, in the same undo step",
             ),
             optional(
-                "ara_edits",
+                "araEdits",
                 ParamType::Text,
                 "for clips a plug-in edits (Melodyne) going to another track: keep takes their edits along and puts the plug-in on that track when it has none; new (default) starts them there without",
             ),
@@ -338,7 +338,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
             ),
             param("start", ParamType::Number, "new start in beats from the beginning, at least 0"),
             optional(
-                "to_track",
+                "toTrack",
                 ParamType::Track,
                 "track to move the clip to (id or name); it must take the clip's kind: notes or audio",
             ),
@@ -364,11 +364,11 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
             TRACK,
             SCENE,
             optional(
-                "to_track",
+                "toTrack",
                 ParamType::Track,
                 "track to move the clip to (id or name); it must take the clip's kind: notes or audio (default: the same track)",
             ),
-            optional("to_scene", ParamType::Integer, "the scene to move it to, from 1 (default: the same scene)"),
+            optional("toScene", ParamType::Integer, "the scene to move it to, from 1 (default: the same scene)"),
         ],
         kind: CommandKind::Edit,
         run: move_slot,
@@ -1147,8 +1147,8 @@ fn move_clip(session: &mut Session, params: &Value) -> Result<Value, CommandErro
         None => false,
         Some(v) => v.as_bool().ok_or("stack must be true or false")?,
     };
-    let to = match params.get("to_track") {
-        Some(_) => track_at(&session.project, params, "to_track")?,
+    let to = match params.get("toTrack") {
+        Some(_) => track_at(&session.project, params, "toTrack")?,
         None => track,
     };
     // The colour the clip shows on its track, kept when it goes to another (`color`).
@@ -1211,11 +1211,11 @@ fn move_clip(session: &mut Session, params: &Value) -> Result<Value, CommandErro
 fn move_slot(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let from_column = column_index(session.project(), params)?;
     let from_scene = scene_index(session.project(), params)?;
-    let to_track = match params.get("to_track") {
+    let to_track = match params.get("toTrack") {
         None | Some(Value::Null) => None,
-        Some(_) => Some(track_at(&session.project, params, "to_track")?),
+        Some(_) => Some(track_at(&session.project, params, "toTrack")?),
     };
-    let to_scene: Option<usize> = match params.get("to_scene") {
+    let to_scene: Option<usize> = match params.get("toScene") {
         None | Some(Value::Null) => None,
         Some(v) => Some(
             v.as_u64()

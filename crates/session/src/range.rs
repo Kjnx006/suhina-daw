@@ -325,14 +325,14 @@ pub(crate) fn move_clips(session: &mut Session, params: &Value) -> Result<Value,
     let beats = number(params, "beats")?;
     let stack = params.get("stack").and_then(Value::as_bool).unwrap_or(false);
     let copy = params.get("copy").and_then(Value::as_bool).unwrap_or(false);
-    let by = match params.get("tracks_by") {
+    let by = match params.get("tracksBy") {
         None | Some(Value::Null) => None,
         Some(v) => Some(v.as_i64().ok_or("tracks_by must be a whole number of tracks")?),
     };
-    let new_track = params.get("to_new_track").and_then(Value::as_bool).unwrap_or(false);
+    let new_track = params.get("toNewTrack").and_then(Value::as_bool).unwrap_or(false);
     // A clip a plug-in edits (ADR 0028), going to another track: its edits go along, the
     // plug-in added there when it has none (`keep`), or it starts there without them (`new`).
-    let keep_edits = match params.get("ara_edits") {
+    let keep_edits = match params.get("araEdits") {
         None | Some(Value::Null) => false,
         Some(v) => match v.as_str() {
             Some("keep") => true,
@@ -360,8 +360,7 @@ pub(crate) fn move_clips(session: &mut Session, params: &Value) -> Result<Value,
             Some((key, device, clip.content, source))
         })
         .collect();
-    if [params.get("to_track").is_some_and(|v| !v.is_null()), by.is_some(), new_track].iter().filter(|b| **b).count()
-        > 1
+    if [params.get("toTrack").is_some_and(|v| !v.is_null()), by.is_some(), new_track].iter().filter(|b| **b).count() > 1
     {
         return Err("give one of to_track, tracks_by and to_new_track".into());
     }
@@ -399,8 +398,8 @@ pub(crate) fn move_clips(session: &mut Session, params: &Value) -> Result<Value,
         let id = added["track"].as_u64().and_then(|n| u32::try_from(n).ok()).ok_or("the new track has no id")?;
         Some(TrackId(id))
     } else {
-        match params.get("to_track") {
-            Some(v) if !v.is_null() => Some(track_at(&session.project, params, "to_track")?),
+        match params.get("toTrack") {
+            Some(v) if !v.is_null() => Some(track_at(&session.project, params, "toTrack")?),
             _ => None,
         }
     };

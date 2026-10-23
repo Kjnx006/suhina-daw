@@ -1539,7 +1539,7 @@ fn unknown_command(id: &str) -> CommandError {
     let area = id.split('.').next().unwrap_or_default();
     let similar: Vec<&str> = commands().iter().map(|c| c.id).filter(|c| c.starts_with(area)).collect();
     if similar.is_empty() {
-        CommandError(format!("unknown command {id}; commands.list shows them all"))
+        CommandError(format!("unknown command {id}; command.list shows them all"))
     } else {
         CommandError(format!("unknown command {id}; did you mean one of: {}", similar.join(", ")))
     }

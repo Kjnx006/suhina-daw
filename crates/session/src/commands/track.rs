@@ -248,7 +248,7 @@ pub(super) static COMMANDS: &[CommandSpec] = &[
             optional(
                 "device",
                 ParamType::Text,
-                "the id of a built-in effect or instrument, from devices.list, or a plug-in from plugins.list",
+                "the id of a built-in effect or instrument, from device.list, or a plug-in from plugin.list",
             ),
             optional(
                 "preset",

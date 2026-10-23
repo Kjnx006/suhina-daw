@@ -147,7 +147,7 @@ fn without_an_audio_system_the_commands_say_so() {
     assert!(err.contains("no audio output"), "{err}");
     // Info and choosing still work: the choice waits for an output.
     assert_eq!(run(&mut projects, "audio.info", json!({})).unwrap()["playing"], json!(false));
-    let set = run(&mut projects, "audio.setOutput", json!({ "buffer_frames": 256 })).unwrap();
+    let set = run(&mut projects, "audio.setOutput", json!({ "bufferFrames": 256 })).unwrap();
     assert_eq!(set["chosen"]["buffer_frames"], json!(256));
     assert_eq!(projects.output_choice().buffer_frames, Some(256));
 }
@@ -181,7 +181,7 @@ fn a_new_choice_reopens_the_playing_project_where_it_was() {
     let before = projects.session_mut(None).unwrap().player().unwrap().monitor().beat();
     assert!(before >= 4.0, "{before}");
 
-    let result = run(&mut projects, "audio.setOutput", json!({ "buffer_frames": 256, "sample_rate": 44_100 })).unwrap();
+    let result = run(&mut projects, "audio.setOutput", json!({ "bufferFrames": 256, "sampleRate": 44_100 })).unwrap();
     assert_eq!(result["playing"], json!(true));
     assert_eq!(result["engine_block"], json!(256));
     assert_eq!(result["sample_rate"], json!(44_100));
@@ -212,7 +212,7 @@ fn a_stopped_project_keeps_its_marker_on_the_new_output() {
     projects.open_output(None).unwrap();
     projects.session_mut(None).unwrap().execute("transport.setPosition", &json!({ "beats": 8.0 })).unwrap();
     stand.run_latest();
-    run(&mut projects, "audio.setOutput", json!({ "buffer_frames": 512 })).unwrap();
+    run(&mut projects, "audio.setOutput", json!({ "bufferFrames": 512 })).unwrap();
     stand.run_latest();
     let monitor = projects.session_mut(None).unwrap().player().unwrap().monitor();
     assert!(!monitor.running());
@@ -238,7 +238,7 @@ fn nothing_reopens_while_no_project_plays() {
     projects.add(Session::new(project()), None).unwrap();
     run(&mut projects, "audio.setOutput", json!({ "exclusive": true })).unwrap();
     assert!(stand.opened.lock().unwrap().is_empty());
-    assert!(run(&mut projects, "audio.setOutput", json!({ "buffer_frames": 10 })).is_err());
+    assert!(run(&mut projects, "audio.setOutput", json!({ "bufferFrames": 10 })).is_err());
     assert!(projects.output_choice().exclusive);
     // The next output opens as chosen.
     projects.open_output(None).unwrap();
@@ -388,7 +388,7 @@ fn a_reopen_keeps_the_marker_the_launched_clips_and_the_quantization() {
     };
     assert!(elapsed > 0.0);
 
-    run(&mut projects, "audio.setOutput", json!({ "buffer_frames": 256 })).unwrap();
+    run(&mut projects, "audio.setOutput", json!({ "bufferFrames": 256 })).unwrap();
     stand.run_latest();
     let monitor = projects.session_mut(None).unwrap().player().unwrap().monitor();
     assert!(monitor.running());
@@ -471,7 +471,7 @@ fn the_preview_output_closes_before_a_project_or_another_output_opens() {
     assert!(projects.preview_session().is_none(), "closed before a project's output opens");
 
     run(&mut projects, "preview.play", json!({ "path": wav(&dir) })).unwrap();
-    run(&mut projects, "audio.setOutput", json!({ "buffer_frames": 256 })).unwrap();
+    run(&mut projects, "audio.setOutput", json!({ "bufferFrames": 256 })).unwrap();
     assert!(projects.preview_session().is_none(), "another output: it opens there when next needed");
     run(&mut projects, "preview.play", json!({ "path": wav(&dir) })).unwrap();
     let last = stand.opened.lock().unwrap().last().cloned().unwrap();

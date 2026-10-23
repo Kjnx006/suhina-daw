@@ -285,7 +285,7 @@ automation layer applies its existing canonical-path validation to every allowed
 Every user-visible action is a command in `session` with an id, typed parameters and a kind
 ([ADR 0002](decisions/0002-commands.md)). The CLI, the MCP server and the UI all call
 `Session::execute(id, params)`, or `Projects::execute` when several projects are open (it runs
-`projects.*`, `plugins.*`, `library.*`, `soundmap.*`, `audio.*` and `midi.*` itself, on what belongs to
+`project.*` (on the open projects), `plugin.*`, `library.*`, `soundmap.*`, `audio.*` and `midi.*` itself, on what belongs to
 Suhina rather than one project, and passes everything else to the active project); none of them changes a
 project directly.
 
@@ -297,7 +297,7 @@ project directly.
 | Transport | Sends a `LaunchCommand` (or a preview, `preview.*`) to the attached `Player`; fails if no engine is playing, except `track.setArm`, which the session keeps and tells every new player. | none |
 | Projects | Lists, switches and closes open projects (`Projects`); only the active one keeps its `Player`. | none |
 | Library | The browser's folders, search, pins, recent items and colour tags (`library.*`, on the `Library` that `Projects` holds; ADR 0012), and the sample map (`soundmap.*`). A successful `clip.addFiles`, `track.add` or `device.add*` puts what it added among the recent items. | none |
-| Plugins | Scans for installed plug-ins, lists them, chooses the folders scans look in and how a plug-in shares host processes, and finds the installed plug-in for each of a project's devices (`plugins.*`, on the `Library` that `Projects` holds; ADR 0006). | none |
+| Plugins | Scans for installed plug-ins, lists them, chooses the folders scans look in and how a plug-in shares host processes, and finds the installed plug-in for each of a project's devices (`plugin.*`, on the `Library` that `Projects` holds; ADR 0006). | none |
 | Plugin | Acts on one of the project's running plug-ins: opens or closes its editor, restarts it (`device.openEditor`, `device.closeEditor`, `device.restart`). | none |
 | Audio | Lists or chooses the audio output (host, device, sample rate, buffer size) and reports on it (`audio.*`, on `Projects`); reopens the active project's output. Lists the MIDI inputs and turns them on or off (`midi.*`). | none |
 

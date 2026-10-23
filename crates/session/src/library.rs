@@ -4,7 +4,7 @@
 //! Commands for the browser's library (`docs/spec/browser.md` › Commands, ADR 0012): the
 //! folders, searching them with the built-in effects and instruments, and installed plug-ins, what a file is,
 //! pins, recent items and colour tags. They belong to Suhina, not to one project, so they run
-//! on [`Projects`] like the `plugins.*` commands, and never change a project.
+//! on [`Projects`] like the `plugin.*` commands, and never change a project.
 
 use std::path::{Path, PathBuf};
 
@@ -192,7 +192,7 @@ static LIBRARY_COMMANDS: &[CommandSpec<Projects>] = &[
     },
 ];
 
-/// The library commands, as `commands.list` shows them.
+/// The library commands, as `command.list` shows them.
 pub fn library_commands() -> &'static [CommandSpec<Projects>] {
     LIBRARY_COMMANDS
 }

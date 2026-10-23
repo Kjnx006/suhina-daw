@@ -1882,11 +1882,11 @@ fn show_lanes(ui: &mut Ui, timeline: &Timeline, state: &mut ArrangementViewState
             Drag::Moving(v) => {
                 let first = state.main_drag.is_none();
                 state.main_drag = Some(v);
-                actions.push(Action::new("main.setVolume", json!({ "db": v, "continue": !first })));
+                actions.push(Action::new("mixer.setMainVolume", json!({ "db": v, "continue": !first })));
             }
             Drag::Done(v) => {
                 state.main_drag = None;
-                actions.push(Action::new("main.setVolume", json!({ "db": v, "continue": true })));
+                actions.push(Action::new("mixer.setMainVolume", json!({ "db": v, "continue": true })));
             }
             Drag::None => {}
         }
@@ -2492,13 +2492,13 @@ fn clip_box<'a>(
             let clips: Vec<Value> = chosen.iter().map(|(_, id)| json!({ "clip": id.0 })).collect();
             let mut params = json!({ "clips": clips, "beats": start - clip.start, "copy": true });
             if drag.new_track {
-                params["to_new_track"] = json!(true);
+                params["toNewTrack"] = json!(true);
                 params["color"] = json!(hex(clip.color));
             } else if drag.target != lane.track && chosen.iter().all(|(track, _)| *track == lane.track) {
-                params["to_track"] = json!(drag.target.0);
+                params["toTrack"] = json!(drag.target.0);
                 params["color"] = json!(hex(clip.color));
             } else if tracks_by != 0 {
-                params["tracks_by"] = json!(tracks_by);
+                params["tracksBy"] = json!(tracks_by);
             }
             if stack {
                 params["stack"] = json!(true);
@@ -2512,13 +2512,13 @@ fn clip_box<'a>(
             let clips: Vec<Value> = state.selected.iter().map(|(_, id)| json!({ "clip": id.0 })).collect();
             let mut params = json!({ "clips": clips, "beats": start - clip.start });
             if drag.new_track {
-                params["to_new_track"] = json!(true);
+                params["toNewTrack"] = json!(true);
                 params["color"] = json!(hex(lane.color));
             } else if drag.target != lane.track && state.selected.iter().all(|(track, _)| *track == lane.track) {
-                params["to_track"] = json!(drag.target.0);
+                params["toTrack"] = json!(drag.target.0);
                 params["color"] = json!(hex(lane.color));
             } else if tracks_by != 0 {
-                params["tracks_by"] = json!(tracks_by);
+                params["tracksBy"] = json!(tracks_by);
             }
             if stack {
                 params["stack"] = json!(true);
@@ -2530,7 +2530,7 @@ fn clip_box<'a>(
             let mut params = json!({
                 "clips": [{ "clip": clip.id.0 }],
                 "beats": start - clip.start,
-                "to_new_track": true,
+                "toNewTrack": true,
                 "color": hex(clip.color),
             });
             if stack {
@@ -2540,7 +2540,7 @@ fn clip_box<'a>(
         } else {
             let mut params = json!({ "clip": clip.id.0, "start": start });
             if drag.target != lane.track {
-                params["to_track"] = json!(drag.target.0);
+                params["toTrack"] = json!(drag.target.0);
                 params["color"] = json!(hex(clip.color));
             }
             if stack {

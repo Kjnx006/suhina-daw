@@ -47,7 +47,7 @@ its undo history. All changes to a session go through **commands**.
   changing the command interface.
 - Reading commands (`project.info`, `project.tracks`) are commands too, so agents discover the
   project the same way they change it.
-- `commands.list` returns every command with its parameters; front ends build their help and the
+- `command.list` returns every command with its parameters; front ends build their help and the
   MCP tool list from it.
 
 Layers: `model` (L0) ← `als`, `engine` (L1) ← `session` (L2) ← CLI, MCP, UI.
@@ -70,15 +70,15 @@ an engine; an engine attached later is sent the session's value
 ## Amendment: project commands (2026-10-11)
 
 With several projects open ([ADR 0007](0007-several-open-projects.md)), a fifth kind,
-**projects**, lists, switches and closes the open projects (`projects.*`). These run on
+**projects**, lists, switches and closes the open projects (`project.*` (on the open projects)). These run on
 `Projects`, not on one session, never change a project and record no undo step. `CommandSpec`
 is generic over what a command runs on, so both kinds share one shape, one parameter schema and
-one `commands.list`.
+one `command.list`.
 
 ## Amendment: plug-in commands (2026-10-12)
 
 A sixth kind, **plugins**, scans for installed plug-ins and chooses the folders scans look in
-(`plugins.*`, [ADR 0006](0006-plug-in-hosting.md)). The plug-in library belongs to Suhina,
+(`plugin.*`, [ADR 0006](0006-plug-in-hosting.md)). The plug-in library belongs to Suhina,
 not to a project, so these also run on `Projects`, never change a project and record no undo
 step. Agents over MCP may scan and list but not add or remove folders: a folder decides whose
 code a scan runs.
@@ -90,7 +90,7 @@ A seventh kind, **plugin**, acts on one of the project's running plug-ins:
 the plug-in for its parameters ([ADR 0006](0006-plug-in-hosting.md)).
 They run on the session, never change the project and record no undo step. Adding a plug-in
 (`device.addPlugin`) is an edit like `device.add`; `device.plugin` reads where a plug-in device
-stands. `plugins.setHosting` (kind plugins) chooses how a plug-in shares host processes.
+stands. `plugin.setHosting` (kind plugins) chooses how a plug-in shares host processes.
 
 An eighth kind, **library**, runs on `Projects` like the plugins kind: the browser's folders,
 search, pins, recent items and colour tags (`library.*`, [ADR 0012](0012-file-library.md)). It
@@ -131,7 +131,7 @@ a clip, its index keeps the front ends alike: the window, the CLI and MCP pass t
 ## Amendment: device commands (2026-10-12)
 
 Devices on tracks are edited with ordinary **edit** commands, one undo step each:
-`device.add`, `device.addSd`, `device.remove`, `device.setEnabled`, `device.setParam`; `devices.list` and
+`device.add`, `device.addSd`, `device.remove`, `device.setEnabled`, `device.setParam`; `device.list` and
 `track.devices` read. A device is addressed by its track and its index in the track's chain
 (`device`, from 0, as `track.devices` lists them), and a parameter by its stable id
 ([ADR 0004](0004-built-in-devices.md)), or a plug-in's by its parameter id. `device.setAutomation`

@@ -176,11 +176,11 @@ this never removes their processing. The examples expose only their main process
 ## Workflow for AI agents
 
 1. Read the format and node reference. Obtain the current catalog with the read command
-   `devices.sdNodes {}` via MCP `command_run`.
+   `device.sdNodes {}` via MCP `command_run`.
    Offline, `cargo run -p suhina-device-sdk --example catalog` prints the same node records as JSON.
    Each record gives its kind, Rust variant, ports, units, optional defaults, processing rules
    and a minimal JSON node-kind example. Waveform/filter choices and graph limits are returned
-   by `devices.sdNodes` alongside the records. Do not invent unsupported node kinds or ports.
+   by `device.sdNodes` alongside the records. Do not invent unsupported node kinds or ports.
 2. Assemble an effect graph. Give every node and parameter a unique stable id. Declare a
    parameter for each user control. Prefer an existing example with similar signal flow.
    Every node must reach the output, including the audio input. For an unconnected optional
@@ -234,7 +234,7 @@ use the existing control behaviour, including keyboard edits and default reset. 
 local to a parameter and do not modify the global theme. The `ui_controls` example generates
 a single-column canvas with styled controls sized for a narrow device panel. Existing project devices embed their graph; import
 the new file as a new device to use its changed layout. Agents can obtain defaults and enum
-choices from `devices.sdNodes`.
+choices from `device.sdNodes`.
 
 `background` colours widget bodies; `panel_color` colours the entire cell independently.
 
@@ -291,7 +291,7 @@ normal parameter command, smoothing and undo; a two-axis gesture has one undo en
 ### Information for agents
 
 Read [the complete custom UI contract](spec/sdk-custom-ui.md), then the example source and public
-Rust types in `crates/device-sdk/src/ui.rs`. `devices.sdNodes` includes primitive/gesture names,
+Rust types in `crates/device-sdk/src/ui.rs`. `device.sdNodes` includes primitive/gesture names,
 default canvas values and image budgets. Create artwork yourself or use user-supplied licensed assets.
 Do not attach external paths or executable code to the device. Keep parameter ids stable, validate
 with the `validate` example, and rebuild the `.sd` after editing the Rust authoring source.
