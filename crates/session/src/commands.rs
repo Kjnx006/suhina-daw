@@ -1616,7 +1616,7 @@ static COMMANDS: &[CommandSpec] = &[
     },
     CommandSpec {
         id: "project.export",
-        label: "Render the mix, or the named node of the track tree, to an audio file: wav (32-bit float or 16/24-bit PCM), flac or ogg, with sample rate, depth, range, tail, normalise and dither",
+        label: "Render the mix, or the named node of the track tree, to an audio file: wav (32-bit float or 16/24-bit PCM), flac, ogg or mp3, with sample rate, depth, mp3 rate, range, tail, normalise and dither",
         params: &[
             optional(
                 "path",
@@ -1624,9 +1624,14 @@ static COMMANDS: &[CommandSpec] = &[
                 "the file to write (output is an alias); its extension decides the format when format is left out",
             ),
             optional("output", ParamType::Text, "the file to write; an alias of path"),
-            optional("format", ParamType::Text, "wav (default), flac or ogg"),
-            optional("sample_rate", ParamType::Integer, "hertz; 48000 by default"),
-            optional("bit_depth", ParamType::Text, "32f (the default for wav), 24 or 16"),
+            optional("format", ParamType::Text, "wav (default), flac, ogg or mp3"),
+            optional("sample_rate", ParamType::Integer, "hertz; 48000 by default; with mp3, 32, 44.1 or 48 kHz"),
+            optional("bit_depth", ParamType::Text, "32f (the default for wav), 24 or 16; an error with ogg or mp3"),
+            optional(
+                "mp3_rate",
+                ParamType::Text,
+                "the mp3's rate: 320 (default), 256, 192 or 128 kbps, or the variable qualities v0 and v2",
+            ),
             optional("overwrite", ParamType::Bool, "true replaces an existing file; it is never replaced without this"),
             optional(
                 "range",

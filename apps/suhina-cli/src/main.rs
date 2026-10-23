@@ -35,7 +35,7 @@ usage: suhina-cli render (<project.als> | --demo) -o <out.wav> [--cue <cue.wav>]
 commands:
   render    render a project offline to a 32-bit float stereo WAV file; --source renders one
             track or group (its id or name) through project.export instead — the sum at that
-            node, with the file's extension choosing the format there (wav, flac or ogg)
+            node, with the file's extension choosing the format there (wav, flac, ogg or mp3)
   play      play a project once on the default audio output, or with --launcher launch its
             clips and scenes by typing commands
   commands  list every command the MCP server and the UI run, with what it does; --markdown
@@ -462,7 +462,12 @@ fn render(args: &Args) -> Result<(), String> {
     let env = suhina_session::PluginEnv::from_library(&mut library);
     if let Some(node) = &args.node {
         // The node render `project.export` runs: the export's own writer and rules, the file
-        // name's extension choosing the format (wav, flac or ogg).
+        // name's extension choosing the format (wav, flac, ogg or mp3). An mp3's title is the
+        // project file's stem, as the app writes it.
+        let title = match &args.source {
+            Source::Als(path) => path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default(),
+            Source::Demo => String::new(),
+        };
         let data = suhina_session::ExportData {
             warnings: Vec::new(),
             project,
@@ -471,6 +476,7 @@ fn render(args: &Args) -> Result<(), String> {
             plugins: Some(std::sync::Arc::new(env)),
             folder: None,
             trusted: suhina_media::Trusted::default(),
+            title,
         };
         let params = serde_json::json!({
             "path": path.display().to_string(),

@@ -61,14 +61,15 @@ CHAPTERS = [
     (5, "Managing Files and Sets", 43, 0.40, "partial",
      ".suhina save/open, File > Open recent, .als import, templates, several projects in tabs, missing-file locate and "
      "relink, backups on an interval or before critical operations with the offer after a crash. "
-     "Export renders the mix to wav (32f, 24 or 16 with dither), flac or ogg, at a sample rate, with normalise and overwrite "
-     "refused until asked: File > Export… (format, rate, depth, normalise, dither, overwrite) and the shared project.export "
+     "Export renders the mix to wav (32f, 24 or 16 with dither), flac, ogg or mp3 (through the vendored LAME 3.100 "
+     "encoder, at 128/192/256/320 kbps or VBR V0/V2, at 32/44.1/48 kHz), at a sample rate, with normalise and overwrite "
+     "refused until asked: File > Export… (format, rate, depth, mp3 rate, normalise, dither, overwrite) and the shared project.export "
      "(a range and tail, a source, or the whole mix), one export at a time, the state the running plug-ins have now "
      "(what their editors changed), and the write rules held again where the bytes land. "
      "Settings > Export grants and revokes MCP write folders, including the project-folder default; "
      "attached MCP exports prepare over frames and render off the window thread. "
      "Missing project folders/collect, unused files, packing, .asd, decoding cache, set "
-     "merging, file-reference view, the export dialog's source and range rows, mp3."),
+     "merging, file-reference view, the export dialog's source and range rows."),
     (6, "Arrangement View", 22, 0.60, "partial",
      "Layout, zoom, transport, track headers with a band of the track colour that opens the colour palette, ruler/play start, play from the selected clip, clip drag+move, "
      "overlap replace/stack, fades and fade shapes, the control bar's grid value (bars to "
