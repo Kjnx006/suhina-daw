@@ -423,19 +423,7 @@ impl SuhinaMcp {
         let output = self.audio_output;
         let files = self.files();
         let target = p.project.map(ProjectId);
-        self.with_projects(move |projects| {
-            let workspace = files.workspace(projects, target);
-            let source = save_source(projects, target, &p.id);
-            let params = confine(&workspace, &p.id, p.params.unwrap_or_else(|| json!({})), source.as_deref())?;
-            let mut value = projects.execute_in(target, &p.id, &params).map_err(String::from)?;
-            if let Some(audio_output) = play_active(projects, &p.id, output)
-                && let Some(object) = value.as_object_mut()
-            {
-                object.insert("audio_output".into(), audio_output);
-            }
-            Ok(value)
-        })
-        .await
+        self.with_projects(move |projects| run_step(projects, &files, target, output, &p.id, p.params)).await
     }
 
     #[tool(
@@ -477,24 +465,15 @@ impl SuhinaMcp {
                 let mut results = Vec::new();
                 let mut failed = false;
                 for step in p.steps {
-                    let workspace = files.workspace(projects, target);
-                    let source = save_source(projects, target, &step.id);
-                    let why = refused(&step.id, step.params.as_ref(), attached);
-                    let params =
-                        confine(&workspace, &step.id, step.params.unwrap_or_else(|| json!({})), source.as_deref());
-                    let outcome = match (why, params) {
-                        (Some(why), _) => Err(why.into()),
-                        (None, Err(e)) => Err(suhina_session::CommandError::from(e)),
-                        (None, Ok(params)) => projects.execute_in(target, &step.id, &params),
+                    let outcome = match refused(&step.id, step.params.as_ref(), attached) {
+                        Some(why) => Err(why),
+                        None => run_step(projects, &files, target, output, &step.id, step.params),
                     };
-                    if outcome.is_ok() {
-                        play_active(projects, &step.id, output);
-                    }
                     match outcome {
                         Ok(value) => results.push(json!({ "id": step.id, "ok": true, "result": value })),
                         Err(e) => {
                             failed = true;
-                            results.push(json!({ "id": step.id, "ok": false, "error": e.message().to_owned() }));
+                            results.push(json!({ "id": step.id, "ok": false, "error": e }));
                             if stop_on_error {
                                 break;
                             }
@@ -792,6 +771,29 @@ impl Files {
             }
         }
     }
+}
+
+/// One step of `command_run` or `command_batch`, on the projects, once the agent may run it:
+/// its paths confined to the agent's roots, the command run, and a project it switched to started
+/// playing, which the result names as `audio_output`.
+fn run_step(
+    projects: &mut Projects,
+    files: &Files,
+    target: Option<ProjectId>,
+    output: bool,
+    id: &str,
+    params: Option<Value>,
+) -> Result<Value, String> {
+    let workspace = files.workspace(projects, target);
+    let source = save_source(projects, target, id);
+    let params = confine(&workspace, id, params.unwrap_or_else(|| json!({})), source.as_deref())?;
+    let mut value = projects.execute_in(target, id, &params).map_err(String::from)?;
+    if let Some(audio_output) = play_active(projects, id, output)
+        && let Some(object) = value.as_object_mut()
+    {
+        object.insert("audio_output".into(), audio_output);
+    }
+    Ok(value)
 }
 
 /// After a project command, starts the newly active project playing when the server has audio
