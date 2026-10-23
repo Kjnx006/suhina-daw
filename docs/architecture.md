@@ -150,7 +150,8 @@ crates/ui/src/
                  record_controls
   detail/        the detail area: detail_view (device chain; its model, parameters, expanded panel,
                  clip properties and group panel in detail_view/), device_canvas,
-                 follow_view, the piano roll (piano_roll and its parts) and midi_tools
+                 follow_view, the piano roll (piano_roll, its parts in piano_roll/, and the piano_roll_*
+                 files) and midi_tools
   browser.rs, browser/   the browser's state (browser.rs) and its views: browser_view,
                  sample_map, sample_map_panel
   settings.rs, settings/ the stored settings (settings.rs, view_settings, keymap, workflow) and
