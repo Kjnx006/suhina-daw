@@ -32,6 +32,12 @@ class InlineTests(unittest.TestCase):
         self.assertIn('#[cfg(test)]\n#[allow(dead_code)]\n#[path = "foo_tests.rs"]\nmod tests;\n', result[0])
         self.assertEqual(inline_tests.test_modules(source(400).replace("#[cfg(test)]\n", "#[cfg(test)]\nfn x() {}\n")), [])
 
+    def test_a_cfg_test_attribute_over_several_lines_still_starts_a_module(self):
+        text = "#[cfg(\n    test\n)]\nmod tests {\n" + "    fn t() {}\n" * 5 + "}\n"
+        modules = inline_tests.test_modules(text)
+        self.assertEqual([(m.start, m.opening, m.name) for m in modules], [(0, 3, "tests")])
+        self.assertEqual(inline_tests.test_modules("#[cfg(\n    not(test)\n)]\nmod tests {\n}\n"), [])
+
     def test_a_public_module_stays_public(self):
         result = inline_tests.moved(source(200).replace("mod tests {", "pub(crate) mod tests {"), "foo_tests.rs")
         assert result is not None

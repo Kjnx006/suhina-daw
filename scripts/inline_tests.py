@@ -162,8 +162,21 @@ def closing_line(lexed: Lexed, opening: int) -> int | None:
     return None
 
 
+def cfg_test_end(lines: list[str], i: int) -> int | None:
+    """The index of the line where the `#[cfg(test)]` attribute starting on line `i` ends, which
+    is `i` unless its whitespace puts it over several lines; `None` when it is not that attribute."""
+    if not lines[i].lstrip().startswith("#[cfg("):
+        return None
+    joined = ""
+    for end in range(i, len(lines)):
+        joined += lines[end].strip()
+        if joined.endswith("]"):
+            return end if "".join(joined.split()) == "#[cfg(test)]" else None
+    return None
+
+
 def test_modules(text: str) -> list[Module]:
-    """Each inline test module in `text`: a `#[cfg(test)]` line, then any more attributes, each
+    """Each inline test module in `text`: a `#[cfg(test)]` attribute (it may run over several lines), then any more attributes, each
     on a line of its own, then `mod name {`, which closes at its matching brace. Only lines that
     start in code count, so text in a block comment or a raw string that looks like a module is
     left alone."""
@@ -171,9 +184,10 @@ def test_modules(text: str) -> list[Module]:
     lexed = lex(text)
     found = []
     for i, line in enumerate(lines):
-        if line.strip() != "#[cfg(test)]" or i not in lexed.code_lines:
+        attribute_end = cfg_test_end(lines, i)
+        if attribute_end is None or i not in lexed.code_lines:
             continue
-        opening = i + 1
+        opening = attribute_end + 1
         while opening < len(lines) and ATTRIBUTE.match(lines[opening]) and not OPENING.match(lines[opening]):
             opening += 1
         matched = OPENING.match(lines[opening]) if opening < len(lines) else None
