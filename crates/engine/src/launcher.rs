@@ -1463,6 +1463,8 @@ impl Renderer {
             return;
         }
         self.jump_to(self.start_beat);
+        // A click on the ruler is a jump like `Locate`: the notes sounding there play.
+        self.chase = true;
     }
 
     /// The loop region as arrangement frames, while playback repeats it: the region is on and

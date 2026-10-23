@@ -412,8 +412,9 @@ impl Chain {
     }
 
     /// A chain without devices for a track that plays into a bus, so its sound reaches the bus
-    /// at its gains and with its share of latency compensation. Allocates.
-    pub(crate) fn passthrough(track: TrackId, column: u32) -> Self {
+    /// at its gains and with its share of latency compensation, at `sample_rate` (which its
+    /// fader's smoothing follows). Allocates.
+    pub(crate) fn passthrough(track: TrackId, column: u32, sample_rate: u32) -> Self {
         Self {
             track,
             column,
@@ -439,8 +440,8 @@ impl Chain {
             midi_scratch: Vec::new(),
             deadline: None,
             context: ProcessContext::default(),
-            // It runs no devices, so nothing reads it.
-            sample_rate: 48_000.0,
+            // No devices read it; the live volume's smoothing does.
+            sample_rate: f64::from(sample_rate),
             done: 0,
             stage: 0,
             waiting: None,
@@ -1575,7 +1576,7 @@ mod live_volume_tests {
     /// The left output of a passthrough chain fed ones, after a fader move to `volume` has
     /// settled, with a pan lane at the centre when `pan_lane`.
     fn settled(volume: f64, pan_lane: bool) -> f32 {
-        let mut chain = Chain::passthrough(TrackId(1), 0);
+        let mut chain = Chain::passthrough(TrackId(1), 0, 48_000);
         if pan_lane {
             let mut channel = Channel::new(ChannelId(1), "C1");
             channel.automation.push(AutomationLane {
@@ -1596,6 +1597,34 @@ mod live_volume_tests {
             chain.mix(&mut out, &mut [], 256);
         }
         out.get(255 * 2).copied().unwrap_or_default()
+    }
+
+    /// The left output of a passthrough chain at `sample_rate`, fed ones, 2 ms after a fader
+    /// move from 1 to 0: the first frame of the block after a 2 ms one.
+    fn after_2_ms(sample_rate: u32) -> f32 {
+        let mut chain = Chain::passthrough(TrackId(1), 0, sample_rate);
+        chain.built_volume = Some(1.0);
+        chain.set_live_volume(0.0);
+        let frames = sample_rate as usize / 500;
+        let mut out = vec![0.0; frames * 2];
+        for _ in 0..2 {
+            chain.buffer.fill(1.0);
+            chain.complete(frames, &ProcessContext::default());
+            out.fill(0.0);
+            chain.mix(&mut out, &mut [], frames);
+        }
+        out[0]
+    }
+
+    /// A fader move fades in the same time whatever the device's rate.
+    #[test]
+    fn a_passthrough_fader_fades_in_the_same_time_at_any_rate() {
+        let at_48k = after_2_ms(48_000);
+        assert!(at_48k > 0.1 && at_48k < 0.9, "{at_48k}");
+        for rate in [44_100, 96_000] {
+            let other = after_2_ms(rate);
+            assert!((other - at_48k).abs() < 1e-3, "{rate} Hz: {other} against {at_48k}");
+        }
     }
 
     #[test]
@@ -1809,7 +1838,7 @@ mod jump_tests {
     /// block ended; the notes it starts come in the next block. The releases must come first.
     #[test]
     fn a_release_before_a_block_comes_before_the_notes_the_block_starts() {
-        let mut chain = Chain::passthrough(TrackId(0), 0);
+        let mut chain = Chain::passthrough(TrackId(0), 0, 48_000);
         chain.instrument = true;
         chain.note_on(0, 0, 60, 1.0, 1_000_000);
         chain.pending.clear();

@@ -54,7 +54,7 @@ pub(crate) fn build(
     // when it has none (#395); a group's chain makes it a bus.
     for track in &project.tracks {
         if chains.iter().all(|c| c.track != track.id) && automation::mixer_automated(project, track.id) {
-            chains.push(Chain::passthrough(track.id, column_of(track.id)));
+            chains.push(Chain::passthrough(track.id, column_of(track.id), sample_rate));
         }
     }
 
@@ -69,7 +69,7 @@ pub(crate) fn build(
             && track.channel.is_some_and(|ch| !fed_channel(ch))
             && track_gains(project, track.id).is_some()
         {
-            chains.push(Chain::passthrough(track.id, column_of(track.id)));
+            chains.push(Chain::passthrough(track.id, column_of(track.id), sample_rate));
         }
     }
 
@@ -80,7 +80,7 @@ pub(crate) fn build(
         if chains.iter().all(|c| c.track != track.id)
             && planned.iter().any(|p| p.source == track.id || p.target == track.id)
         {
-            chains.push(Chain::passthrough(track.id, column_of(track.id)));
+            chains.push(Chain::passthrough(track.id, column_of(track.id), sample_rate));
         }
     }
 
@@ -91,7 +91,7 @@ pub(crate) fn build(
             && chains.iter().all(|c| c.track != track.id)
             && track_gains(project, track.id).is_some()
         {
-            chains.push(Chain::passthrough(track.id, column_of(track.id)));
+            chains.push(Chain::passthrough(track.id, column_of(track.id), sample_rate));
         }
     }
 
@@ -101,7 +101,7 @@ pub(crate) fn build(
     if let Some(source) = source
         && chains.iter().all(|c| c.track != source)
     {
-        chains.push(Chain::passthrough(source, column_of(source)));
+        chains.push(Chain::passthrough(source, column_of(source), sample_rate));
     }
 
     // A bus: a track with a chain that some other channel plays into.
@@ -134,7 +134,7 @@ pub(crate) fn build(
                 && !buses_after(track.id).is_empty()
                 && track_gains(project, track.id).is_some()
             {
-                chains.push(Chain::passthrough(track.id, column_of(track.id)));
+                chains.push(Chain::passthrough(track.id, column_of(track.id), sample_rate));
             }
         }
     }

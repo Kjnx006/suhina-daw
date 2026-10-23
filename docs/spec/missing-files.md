@@ -82,9 +82,10 @@ Every audio clip that names the missing file (by its relative or absolute path) 
 candidate: both its path and its absolute path become the candidate's absolute path, as for a
 sample added from the browser. Nothing else about the clips changes (start, length, warp markers,
 gain). Stems files are relinked the same way, each of their audio tracks with them. Saving the
-project keeps the new paths in the file. External paths are reported missing on
-reopen, so an external relink lasts only for the current session. Undo goes back
-to the old paths.
+project keeps the new paths in the file and trusts them on this machine, so the project opens
+with them again, a file on a network share or a device path included: the rule that leaves such
+a path unread is for files nobody chose ([Project file boundaries](#project-file-boundaries)).
+Undo goes back to the old paths.
 
 ## Commands
 
@@ -108,7 +109,6 @@ Over MCP, `folder` and every `to` path must be inside the server's read root ([`
 ## Not decided yet
 
 - Matching by content (length, sample rate) when names differ.
-- Collecting a project's files into its folder ("collect and save").
 - Missing plug-ins are reported by the plug-in loading dialog (ADR 0006), not here.
 
 ## Collect and save

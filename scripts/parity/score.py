@@ -200,7 +200,7 @@ CHAPTERS = [
     (24, "Using Plug-Ins", 12, 0.74, "partial",
      "CLAP and VST3 hosted out of process, sandboxed, VST3 bundles on Windows, macOS and Linux, "
      "editors (Windows/X11), scans that try failures again and settle files built for another "
-     "processor, a plug-in manager (plug-ins switched off, folders per format and switched off), latency "
+     "processor, a plug-in manager (plug-ins switched off, several picked with Ctrl, Cmd or Shift and turned off or on from the right-click menu, folders per format and switched off), latency "
      "compensation (followed when a plug-in changes its latency while it plays), saved state "
      "(a change in an editor counts as unsaved), VST2 read and matched to VST3, parameters set "
      "and automated from the engine and shown as a generated list in the device panel, the song's tempo, "

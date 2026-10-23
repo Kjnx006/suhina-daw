@@ -268,6 +268,12 @@ impl SoundMap {
         })
     }
 
+    /// Whether an update from [`SoundMap::update_in_background`] is still being worked out, so
+    /// another would be refused: a caller can skip gathering its files meanwhile.
+    pub fn updating(&self) -> bool {
+        self.diffing.is_some()
+    }
+
     /// Works out an update like [`SoundMap::update`] on a thread of its own, from the files
     /// `files` lists there, and takes it in at a later [`SoundMap::poll`]: the library's files
     /// listed, the caches read and compared off the caller's thread. Returns `false` while the
