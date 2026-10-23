@@ -3,7 +3,7 @@ description: The MCP server for agents: tools, file roots, errors and how to run
 read_when: MCP, agents, attach, mcp --attach, agents in the app, live agent edits, allow agent, audio output, MIDI input, arm, record, recording, count-in, audio device, buffer size, ASIO, project_open, command_run, file roots, rmcp, suhina-cli mcp, several projects, project id, plug-in commands, device commands, library commands, add samples, track.add, clip.addFiles, preview, preview.noteOn, preview.noteOff, note.split, mute a note, note.setMuted, note.humanize, note.fitToScale, note.invert, note.reverse, note.legato, note.stretch, note.randomizeVelocity, note.rampVelocity, MIDI tools
 type: system
 status: current
-last_verified: 2026-10-22
+last_verified: 2026-10-23
 covers:
   - crates/automation/src/server.rs
   - crates/automation/src/workspace.rs
@@ -365,6 +365,10 @@ suhina-cli mcp --read-root ./projects --write-root ./renders [--audio]
   `device.ungroup` takes a group of one branch apart, `device.addGroup {track, position?}` adds an
   empty one, `device.move {track, device, to}` moves a device along the chain, between branches or
   into and out of a group, and `device.duplicate` copies a device or a whole group next to itself.
+  `device.duplicateMany {track, devices}` and `device.paste {track, position?}` refuse the edit and
+  leave the project unchanged when the resulting chain would have a second instrument, a MIDI effect
+  after an instrument or an audio effect, an instrument or MIDI effect on a track that plays no
+  notes, or a MIDI effect in a group.
   `branch.add`, `branch.remove`, `branch.duplicate`, `branch.rename`, `branch.setVolume {db}`,
   `branch.setPan`, `branch.setMute` and `branch.setSolo` take the group's path as `device` and the
   `branch` index. Each is one undo step. A group whose branches start with an instrument is the

@@ -3,7 +3,7 @@ description: How played input reaches the engine (MIDI controllers first, audio 
 read_when: MIDI input, MIDI controller, keyboard, arm, armed track, track.setArm, midi.inputs, live notes, sustain pedal, input latency, monitoring, recording, low latency, midir
 type: decision
 status: current
-last_verified: 2026-10-16
+last_verified: 2026-10-21
 covers:
   - crates/engine/src/record.rs
   - crates/engine/src/live.rs
@@ -17,6 +17,16 @@ covers:
 ---
 
 # 0017: Inputs, arming and live latency
+
+MIDI monitoring amendment: MIDI input now has the same Auto / In / Off choice as audio input.
+Auto follows record arm, In monitors without requiring arm, and Off allows armed recording
+without live instrument sound. Clip playback is unaffected. `track.setMidiInput` persists and
+undoes this choice; files without `midi_input.monitor` retain Auto. The engine receives an
+atomic `SetMidiInput` with independent recording-arm and monitoring flags. It keeps bounded,
+preallocated recording and monitoring target lists, routes notes only to monitoring targets,
+and records only armed targets. Turning monitoring off releases held voices. The low-latency
+queue stays active for monitored inputs as well as armed tracks. The existing `SetArmed`
+command retains Auto behavior for callers that do not choose a monitor mode.
 
 - **Status:** accepted (MIDI input; the shallower queue while armed, #265; a MIDI input per track, #278; audio input and monitoring, #267; notes placed by the driver's timestamps, #269; MIDI and audio recording with a count-in, #266 and #268)
 - **Date:** 2026-10-14

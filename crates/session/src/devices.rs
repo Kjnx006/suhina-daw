@@ -658,6 +658,8 @@ pub(crate) fn copy(session: &mut Session, params: &Value) -> Result<Value, Comma
 /// `device.duplicateMany {track, devices}`: copies of several devices, in their order, right
 /// after the last of them, as one undo step; a running plug-in's copy starts with its state as it
 /// is now. The device clipboard stays as it was (#685). The devices must share a chain or branch.
+/// The chain's rules hold for the result (one instrument, MIDI effects first); a copy that would
+/// break them is refused (#803).
 pub(crate) fn duplicate_many(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let track = track_id(&session.project, params)?;
     let (heard, _) = session.heard();
@@ -668,8 +670,8 @@ pub(crate) fn duplicate_many(session: &mut Session, params: &Value) -> Result<Va
         .and_then(|t| t.channel)
         .and_then(|c| heard.channels.iter().find(|ch| ch.id == c))
         .map(|c| c.devices.clone());
-    let channel = channel_param(session, params)?;
-    let mut paths = device_list(&channel.devices, params)?;
+    let own = channel_read(session, params)?.devices.clone();
+    let mut paths = device_list(&own, params)?;
     paths.reverse();
     let copies: Vec<Device> = paths
         .iter()
@@ -677,14 +679,11 @@ pub(crate) fn duplicate_many(session: &mut Session, params: &Value) -> Result<Va
             heard_devices
                 .as_deref()
                 .and_then(|h| device_at(h, p))
-                .or_else(|| device_at(&channel.devices, p))
+                .or_else(|| device_at(&own, p))
                 .cloned()
                 .ok_or_else(|| CommandError::from("a device is missing"))
         })
         .collect::<Result<_, _>>()?;
-    if suhina_model::count_devices(&channel.devices) + suhina_model::count_devices(&copies) > MAX_DEVICES {
-        return Err(format!("a track holds at most {MAX_DEVICES} devices").into());
-    }
     let last = paths.last().ok_or("devices must name at least one device")?;
     let (&index, parent) = last.split_last().ok_or("a device path is empty")?;
     // The copies go in one place, so the picks must share it: a copy of a top-level device does
@@ -692,19 +691,21 @@ pub(crate) fn duplicate_many(session: &mut Session, params: &Value) -> Result<Va
     if paths.iter().any(|p| p.split_last().is_none_or(|(_, other)| other != parent)) {
         return Err("the devices must be in the same chain or branch".into());
     }
-    let list = crate::device_groups::container_mut(&mut channel.devices, parent).ok_or("the device is missing")?;
     let count = copies.len();
-    for (offset, copy) in copies.into_iter().enumerate() {
-        list.insert(index + 1 + offset, copy);
-    }
-    let made: Vec<Value> = (index + 1..index + 1 + count)
-        .map(|i| {
-            let mut path = parent.to_vec();
-            path.push(i);
-            path_value(&path)
-        })
-        .collect();
-    Ok(json!({ "devices": made }))
+    crate::device_groups::edit_chain(session, params, |devices| {
+        let list = crate::device_groups::container_mut(devices, parent).ok_or("the device is missing")?;
+        for (offset, copy) in copies.into_iter().enumerate() {
+            list.insert(index + 1 + offset, copy);
+        }
+        let made: Vec<Value> = (index + 1..index + 1 + count)
+            .map(|i| {
+                let mut path = parent.to_vec();
+                path.push(i);
+                path_value(&path)
+            })
+            .collect();
+        Ok(json!({ "devices": made }))
+    })
 }
 
 /// `device.moveToTrack {track, device, to_track, copy?}`: a device (a group with everything in
@@ -798,25 +799,23 @@ pub(crate) fn paste(session: &mut Session, params: &Value) -> Result<Value, Comm
         return Err("no devices have been copied".into());
     }
     let copied = session.device_clipboard.clone();
-    let channel = channel_param(session, params)?;
-    if suhina_model::count_devices(&channel.devices) + suhina_model::count_devices(&copied) > MAX_DEVICES {
-        return Err(format!("a track holds at most {MAX_DEVICES} devices").into());
-    }
-    let (parent, position) = crate::device_groups::position_path(&channel.devices, params, "position")?
-        .unwrap_or_else(|| (Vec::new(), channel.devices.len()));
-    let list = crate::device_groups::container_mut(&mut channel.devices, &parent).ok_or("the position is missing")?;
     let count = copied.len();
-    for (offset, device) in copied.into_iter().enumerate() {
-        list.insert(position + offset, device);
-    }
-    let pasted: Vec<Value> = (position..position + count)
-        .map(|i| {
-            let mut path = parent.clone();
-            path.push(i);
-            path_value(&path)
-        })
-        .collect();
-    Ok(json!({ "devices": pasted }))
+    crate::device_groups::edit_chain(session, params, |devices| {
+        let (parent, position) = crate::device_groups::position_path(devices, params, "position")?
+            .unwrap_or_else(|| (Vec::new(), devices.len()));
+        let list = crate::device_groups::container_mut(devices, &parent).ok_or("the position is missing")?;
+        for (offset, device) in copied.into_iter().enumerate() {
+            list.insert(position + offset, device);
+        }
+        let pasted: Vec<Value> = (position..position + count)
+            .map(|i| {
+                let mut path = parent.clone();
+                path.push(i);
+                path_value(&path)
+            })
+            .collect();
+        Ok(json!({ "devices": pasted }))
+    })
 }
 
 pub(crate) fn set_enabled(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
