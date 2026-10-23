@@ -164,12 +164,12 @@ def closing_line(lexed: Lexed, opening: int) -> int | None:
 
 def cfg_test_end(lines: list[str], i: int) -> int | None:
     """The index of the line where the `#[cfg(test)]` attribute starting on line `i` ends, which
-    is `i` unless its whitespace puts it over several lines; `None` when it is not that attribute."""
+    is `i` unless its whitespace puts it over several lines; a trailing `//` comment is ignored; `None` when it is not that attribute."""
     if not lines[i].lstrip().startswith("#[cfg("):
         return None
     joined = ""
     for end in range(i, len(lines)):
-        joined += lines[end].strip()
+        joined += lines[end].split("//", 1)[0].strip()
         if joined.endswith("]"):
             return end if "".join(joined.split()) == "#[cfg(test)]" else None
     return None

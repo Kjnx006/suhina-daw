@@ -38,6 +38,12 @@ class InlineTests(unittest.TestCase):
         self.assertEqual([(m.start, m.opening, m.name) for m in modules], [(0, 3, "tests")])
         self.assertEqual(inline_tests.test_modules("#[cfg(\n    not(test)\n)]\nmod tests {\n}\n"), [])
 
+    def test_a_trailing_comment_after_cfg_test_is_ignored(self):
+        text = "#[cfg(test)] // the tests\nmod tests {\n    fn t() {}\n}\n"
+        self.assertEqual([m.name for m in inline_tests.test_modules(text)], ["tests"])
+        text = "#[cfg(\n    test // only tests\n)]\nmod tests {\n}\n"
+        self.assertEqual([m.name for m in inline_tests.test_modules(text)], ["tests"])
+
     def test_a_public_module_stays_public(self):
         result = inline_tests.moved(source(200).replace("mod tests {", "pub(crate) mod tests {"), "foo_tests.rs")
         assert result is not None
