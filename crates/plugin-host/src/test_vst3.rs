@@ -17,6 +17,9 @@
 //! accepts a native window and, when it opens, moves the gain to [`EDITOR_GAIN`] through the
 //! host's component handler, as a user turning a knob would. Modelled on the `vst3` crate's gain
 //! example (MIT/Apache-2.0).
+//!
+//! `test:vst3-mix` is the same plug-in, except that its first output channel is the mean of the
+//! first two, so it shows whether its second input was filled.
 
 use std::ffi::{c_char, c_void};
 use std::sync::Arc;
@@ -56,9 +59,14 @@ fn copy_text(text: &str, field: &mut [c_char]) {
     }
 }
 
+/// Whether the processor has been asked for audio, for the state-read responder.
+static PROCESSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 struct Processor {
     gain: Arc<AtomicU32>,
     latency: AtomicU32,
+    /// Whether the first output channel is the mean of the first two (`test:vst3-mix`).
+    mix: bool,
 }
 
 impl Class for Processor {
@@ -137,10 +145,12 @@ impl IComponentTrait for Processor {
     unsafe fn getState(&self, state: *mut IBStream) -> tresult {
         // A test's controlled state-read responder: a host asked to delay its state reply does
         // so once per process, so a test can hold a reply out over a switch or a cancel
-        // deterministically, without short sleeps of its own.
+        // deterministically, without short sleeps of its own. The delay waits for the first read
+        // after audio has played: the read every start makes, before any audio, would take it.
         static ONCE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
         let delay = std::env::var("SUHINA_TEST_PLUGIN_SAVE_DELAY_MS").ok().and_then(|v| v.parse::<u64>().ok());
         if let Some(ms) = delay
+            && PROCESSED.load(Ordering::Acquire)
             && ONCE.compare_exchange(0, 1, Ordering::Relaxed, Ordering::Relaxed).is_ok()
         {
             std::thread::sleep(std::time::Duration::from_millis(ms));
@@ -194,6 +204,7 @@ impl IAudioProcessorTrait for Processor {
     }
 
     unsafe fn process(&self, data: *mut ProcessData) -> tresult {
+        PROCESSED.store(true, Ordering::Release);
         // SAFETY: the host passes its process data for the call.
         let Some(data) = (unsafe { data.as_ref() }) else { return kInvalidArgument };
         if data.numInputs < 1 || data.numOutputs < 1 {
@@ -242,10 +253,24 @@ impl IAudioProcessorTrait for Processor {
             for (o, i) in target.iter_mut().zip(source) {
                 *o = i * gain;
             }
-            if channel == 0 {
-                self.add_notes(data, target);
+        }
+        if output.numChannels < 1 {
+            return kResultOk;
+        }
+        // SAFETY: the bus has at least one channel pointer.
+        let first = unsafe { *targets };
+        // SAFETY: each channel pointer has `numSamples` samples.
+        let first = unsafe { std::slice::from_raw_parts_mut(first, frames) };
+        if self.mix && output.numChannels >= 2 {
+            // SAFETY: the bus has a second channel pointer.
+            let second = unsafe { *targets.wrapping_add(1) };
+            // SAFETY: as above, a channel that does not overlap the first.
+            let second = unsafe { std::slice::from_raw_parts(second, frames) };
+            for (a, b) in first.iter_mut().zip(second) {
+                *a = (*a + *b) / 2.0;
             }
         }
+        self.add_notes(data, first);
         kResultOk
     }
 
@@ -553,7 +578,10 @@ impl IPlugViewTrait for View {
     }
 }
 
-struct Factory;
+struct Factory {
+    /// Whether it makes `test:vst3-mix`'s processor.
+    mix: bool,
+}
 
 impl Class for Factory {
     type Interfaces = (IPluginFactory, IPluginFactory2);
@@ -594,6 +622,7 @@ impl IPluginFactoryTrait for Factory {
             PROCESSOR_CID => ComWrapper::new(Processor {
                 gain: Arc::new(AtomicU32::new(0.5f32.to_bits())),
                 latency: AtomicU32::new(LATENCY),
+                mix: self.mix,
             })
             .to_com_ptr::<FUnknown>(),
             CONTROLLER_CID => ComWrapper::new(Controller::default()).to_com_ptr::<FUnknown>(),
@@ -628,7 +657,7 @@ impl IPluginFactory2Trait for Factory {
     }
 }
 
-/// The factory, as a module's `GetPluginFactory` would give it.
-pub(crate) fn factory() -> Option<ComPtr<IPluginFactory>> {
-    ComWrapper::new(Factory).to_com_ptr::<IPluginFactory>()
+/// The factory, as a module's `GetPluginFactory` would give it; with `mix`, `test:vst3-mix`'s.
+pub(crate) fn factory(mix: bool) -> Option<ComPtr<IPluginFactory>> {
+    ComWrapper::new(Factory { mix }).to_com_ptr::<IPluginFactory>()
 }

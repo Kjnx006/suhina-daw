@@ -2781,6 +2781,24 @@ mod tests {
         assert_eq!(monitor.start_beat(), 2.0);
     }
 
+    /// A jump into a note while playing plays it, whether the marker moves with it
+    /// (`SetPosition`, a click on the ruler) or not (`Locate`).
+    #[test]
+    fn a_jump_into_a_sounding_note_plays_it_either_way() {
+        let beat = SR as usize / 2;
+        let project = notes_around_beat_two();
+        let jumped = |command: LaunchCommand| {
+            let mut renderer = Renderer::new(&project, SR).unwrap();
+            frames(&mut renderer, beat / 2);
+            renderer.handle(command);
+            // A quarter of a beat: the note from beat 2 to 2.5, nothing else.
+            frames(&mut renderer, beat / 4)
+        };
+        let set = jumped(LaunchCommand::SetPosition { beat: 2.25 });
+        assert!(set.iter().any(|s| s.abs() > 0.1), "the note from beat 2 sounds");
+        assert_eq!(max_diff(&set, &jumped(LaunchCommand::Locate { beat: 2.25 })), 0.0);
+    }
+
     #[test]
     fn stop_returns_to_the_marker_and_a_second_stop_to_the_start() {
         let project = notes_around_beat_two();

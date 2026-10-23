@@ -2055,7 +2055,22 @@ fn the_waveform_zoom_draws_every_audio_clip_larger_and_is_kept_as_a_setting() {
         harness.step();
     }
     harness.run_steps(2);
-    assert!(harness.state().arrangement().waveform_zoom > 12.0, "{}", harness.state().arrangement().waveform_zoom);
+    let zoom = harness.state().arrangement().waveform_zoom;
+    assert!(zoom > 12.0, "{zoom}");
+    // The wheel over the slider steps it, and the view behind it stays where it is.
+    let scroll = harness.state().arrangement().scroll;
+    harness.hover_at(slider.center());
+    harness.step();
+    harness.input_mut().events.push(egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Line,
+        delta: egui::vec2(-1.0, -1.0),
+        modifiers: Modifiers::NONE,
+        phase: egui::TouchPhase::Move,
+    });
+    // The wheel is smoothed over frames: long enough for all of it to land.
+    harness.run_steps(30);
+    assert!((harness.state().arrangement().waveform_zoom - zoom / 1.25).abs() < 1e-4);
+    assert_eq!(harness.state().arrangement().scroll, scroll, "the lanes did not scroll");
 }
 
 #[test]
@@ -5023,6 +5038,46 @@ fn the_export_dialog_writes_the_wav_the_demo_names() {
         "{:?}",
         harness.state().status()
     );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_file_named_mp3_shows_the_mp3_rate_and_exports_an_mp3() {
+    let mut harness = window(demo_app());
+    let dir = std::env::temp_dir().join(format!("suhina-export-mp3-dialog-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join("Demo mix.mp3");
+
+    harness.get_by_label("File").click();
+    harness.run();
+    harness.get_by_label("Export…").click();
+    harness.run();
+    // A wav name shows no mp3 rate.
+    assert!(harness.query_by_label_contains("MP3 rate").is_none());
+
+    // From the file name: an .mp3 name is an mp3, its rate row shows, and 48 000 stays.
+    harness.get_by_label("File to export to").click();
+    harness.key_press_modifiers(Modifiers::COMMAND, Key::A);
+    harness.get_by_label("File to export to").type_text(path.display().to_string().as_str());
+    harness.run();
+    assert!(harness.query_by_label("Sample rate 48000 Hz").is_some(), "48 000 is kept for mp3");
+    harness.get_by_label("MP3 rate 320 kbps").click();
+    harness.run();
+    harness.get_by_label("VBR V2").click();
+    harness.run();
+    assert!(harness.query_by_label("MP3 rate VBR V2").is_some(), "the rate row took the choice");
+
+    harness.get_by_label("Export the mix to the file").click();
+    waits_for_export(&mut harness);
+    assert!(
+        matches!(harness.state().status(), Status::Done(text) if text.contains("Exported")),
+        "{:?}",
+        harness.state().status()
+    );
+    // An mp3: the demo was never saved, so no ID3 header; the stream starts at a frame's sync.
+    let bytes = std::fs::read(&path).unwrap();
+    assert_eq!(bytes[0], 0xFF);
+    assert_eq!(bytes[1] & 0xE0, 0xE0);
     let _ = std::fs::remove_dir_all(&dir);
 }
 

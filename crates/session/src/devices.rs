@@ -657,7 +657,7 @@ pub(crate) fn copy(session: &mut Session, params: &Value) -> Result<Value, Comma
 
 /// `device.duplicateMany {track, devices}`: copies of several devices, in their order, right
 /// after the last of them, as one undo step; a running plug-in's copy starts with its state as it
-/// is now. The device clipboard stays as it was (#685).
+/// is now. The device clipboard stays as it was (#685). The devices must share a chain or branch.
 pub(crate) fn duplicate_many(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let track = track_id(&session.project, params)?;
     let (heard, _) = session.heard();
@@ -687,6 +687,11 @@ pub(crate) fn duplicate_many(session: &mut Session, params: &Value) -> Result<Va
     }
     let last = paths.last().ok_or("devices must name at least one device")?;
     let (&index, parent) = last.split_last().ok_or("a device path is empty")?;
+    // The copies go in one place, so the picks must share it: a copy of a top-level device does
+    // not belong inside a group's branch.
+    if paths.iter().any(|p| p.split_last().is_none_or(|(_, other)| other != parent)) {
+        return Err("the devices must be in the same chain or branch".into());
+    }
     let list = crate::device_groups::container_mut(&mut channel.devices, parent).ok_or("the device is missing")?;
     let count = copies.len();
     for (offset, copy) in copies.into_iter().enumerate() {

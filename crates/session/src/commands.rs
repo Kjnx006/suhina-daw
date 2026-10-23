@@ -696,7 +696,7 @@ static COMMANDS: &[CommandSpec] = &[
     },
     CommandSpec {
         id: "clip.shiftFades",
-        label: "Lengthen or shorten the fade-in or fade-out of several arrangement clips by the same beats, each from its own, kept from 0 to what the clip's other fade leaves; as one undo step",
+        label: "Lengthen or shorten the fade-in or fade-out of several arrangement clips by the same beats, each from its own, kept from 0 to what the clip's other fade leaves; clips with no audio are left as they are; as one undo step",
         params: &[
             CLIPS,
             param("edge", ParamType::Text, "in or out"),
@@ -1616,7 +1616,7 @@ static COMMANDS: &[CommandSpec] = &[
     },
     CommandSpec {
         id: "project.export",
-        label: "Render the mix, or the named node of the track tree, to an audio file: wav (32-bit float or 16/24-bit PCM), flac or ogg, with sample rate, depth, range, tail, normalise and dither",
+        label: "Render the mix, or the named node of the track tree, to an audio file: wav (32-bit float or 16/24-bit PCM), flac, ogg or mp3, with sample rate, depth, mp3 rate, range, tail, normalise and dither",
         params: &[
             optional(
                 "path",
@@ -1624,9 +1624,14 @@ static COMMANDS: &[CommandSpec] = &[
                 "the file to write (output is an alias); its extension decides the format when format is left out",
             ),
             optional("output", ParamType::Text, "the file to write; an alias of path"),
-            optional("format", ParamType::Text, "wav (default), flac or ogg"),
-            optional("sample_rate", ParamType::Integer, "hertz; 48000 by default"),
-            optional("bit_depth", ParamType::Text, "32f (the default for wav), 24 or 16"),
+            optional("format", ParamType::Text, "wav (default), flac, ogg or mp3"),
+            optional("sample_rate", ParamType::Integer, "hertz; 48000 by default; with mp3, 32, 44.1 or 48 kHz"),
+            optional("bit_depth", ParamType::Text, "32f (the default for wav), 24 or 16; an error with ogg or mp3"),
+            optional(
+                "mp3_rate",
+                ParamType::Text,
+                "the mp3's rate: 320 (default), 256, 192 or 128 kbps, or the variable qualities v0 and v2",
+            ),
             optional("overwrite", ParamType::Bool, "true replaces an existing file; it is never replaced without this"),
             optional(
                 "range",
@@ -1856,7 +1861,7 @@ static COMMANDS: &[CommandSpec] = &[
     },
     CommandSpec {
         id: "device.duplicateMany",
-        label: "Copy several devices of a track (groups with everything in them) right after the last of them, in their order, as one undo step; the device clipboard stays as it was",
+        label: "Copy several devices of a track (groups with everything in them), all from one chain or branch, right after the last of them, in their order, as one undo step; the device clipboard stays as it was",
         params: &[TRACK, DEVICES],
         kind: CommandKind::Edit,
         run: devices::duplicate_many,
@@ -3697,7 +3702,8 @@ fn rename_clip(session: &mut Session, params: &Value) -> Result<Value, CommandEr
     Ok(json!({ "name": name }))
 }
 
-/// `clip.shiftFades {clips, edge, beats}` (#715).
+/// `clip.shiftFades {clips, edge, beats}` (#715). Only an audio clip has fades, as in
+/// `clip.setFades`: a clip with no audio lane is left as it is and not counted in `clips`.
 fn shift_fades(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let fade_in = match params.get("edge").and_then(Value::as_str) {
         Some("in") => true,
@@ -3709,6 +3715,13 @@ fn shift_fades(session: &mut Session, params: &Value) -> Result<Value, CommandEr
     let chosen = clip_list(p, params)?;
     let mut changed = 0;
     for (track, index) in chosen {
+        let lane = p.arrangement.lanes.iter().find(|l| l.track == Some(track));
+        let content = lane.and_then(|l| l.clips.get(index)).map(|c| c.content).ok_or("the clip is missing")?;
+        // Only an audio clip has fades (`clip.setFades`): a mixed selection leaves the others.
+        let audio = p.content(content).is_some_and(|c| c.lanes.iter().any(|l| matches!(l.data, LaneData::Audio(_))));
+        if !audio {
+            continue;
+        }
         let clip = p
             .arrangement
             .lanes
