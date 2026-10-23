@@ -94,6 +94,7 @@ impl ProjectBuilder {
         let index = match lanes.iter().position(|l| l.track == Some(TrackId(track))) {
             Some(index) => index,
             None => {
+                // The field, not Project::track: the lanes are borrowed already.
                 let name = self.project.tracks.iter().find(|t| t.id == TrackId(track)).map(|t| t.name.clone());
                 lanes.push(ArrangementLane {
                     id: Default::default(),
@@ -180,11 +181,11 @@ impl ProjectBuilder {
     }
 
     fn track_mut(&mut self, id: u32) -> &mut Track {
-        self.project.tracks.iter_mut().find(|t| t.id == TrackId(id)).unwrap_or_else(|| panic!("no track {id}"))
+        self.project.track_mut(TrackId(id)).unwrap_or_else(|| panic!("no track {id}"))
     }
 
     fn channel_mut(&mut self, id: u32) -> &mut Channel {
-        self.project.channels.iter_mut().find(|c| c.id == ChannelId(id)).unwrap_or_else(|| panic!("no channel {id}"))
+        self.project.channel_mut(ChannelId(id)).unwrap_or_else(|| panic!("no channel {id}"))
     }
 }
 

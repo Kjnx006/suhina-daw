@@ -781,7 +781,7 @@ impl App {
             return;
         }
         let p = session.project();
-        let takes_input = p.tracks.iter().find(|t| t.id == track).is_some_and(|t| {
+        let takes_input = p.track(track).is_some_and(|t| {
             let role = p.channels.iter().find(|c| Some(c.id) == t.channel).map(|c| c.role);
             (t.content.notes || t.content.audio)
                 && matches!(role, None | Some(suhina_engine::model::ChannelRole::Regular))

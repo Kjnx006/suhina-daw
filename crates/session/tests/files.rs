@@ -510,7 +510,7 @@ fn a_preset_adds_the_fm_synth_with_its_voice() {
     let mut session = Session::new(blank_project());
     let out = run(&mut session, "device.add", json!({ "track": 1, "preset": text(&bank), "voice": 32 })).unwrap();
     assert_eq!(out["preset"], "TUBULAR");
-    let channel = session.project().channels.iter().find(|c| c.id == ChannelId(1)).unwrap();
+    let channel = session.project().channel(ChannelId(1)).unwrap();
     let device = &channel.devices[0];
     assert_eq!(device.kind, DeviceKind::Builtin("fm-synth".into()));
     assert!(!device.params.is_empty());

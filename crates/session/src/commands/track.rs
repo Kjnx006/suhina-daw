@@ -738,7 +738,7 @@ fn set_midi_input(session: &mut Session, params: &Value) -> Result<Value, Comman
             _ => return Err("monitor must be auto, in or off".into()),
         }),
     };
-    let track = session.project.tracks.iter_mut().find(|t| t.id == id).ok_or("the track is missing")?;
+    let track = session.project.track_mut(id).ok_or("the track is missing")?;
     if let Some(port) = port {
         track.midi_input.port = port;
     }

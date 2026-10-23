@@ -37,7 +37,7 @@ fn project_built() -> Project {
 }
 
 fn sends(session: &Session, channel: u32) -> Vec<Send> {
-    session.project().channels.iter().find(|c| c.id == ChannelId(channel)).map(|c| c.sends.clone()).unwrap_or_default()
+    session.project().channel(ChannelId(channel)).map(|c| c.sends.clone()).unwrap_or_default()
 }
 
 #[test]

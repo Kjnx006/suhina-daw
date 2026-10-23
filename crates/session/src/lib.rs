@@ -456,7 +456,7 @@ impl Session {
         if let Some(player) = self.sync.player.as_mut() {
             for track in targets {
                 let is_armed = armed.contains(&track);
-                let monitoring = self.project.tracks.iter().find(|t| t.id == track).is_some_and(|t| {
+                let monitoring = self.project.track(track).is_some_and(|t| {
                     if !t.content.notes {
                         return is_armed;
                     }

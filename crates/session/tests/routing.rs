@@ -107,7 +107,7 @@ fn project_built() -> Project {
 }
 
 fn output(session: &Session, channel: u32) -> Option<ChannelId> {
-    session.project().channels.iter().find(|c| c.id == ChannelId(channel)).and_then(|c| c.output)
+    session.project().channel(ChannelId(channel)).and_then(|c| c.output)
 }
 
 /// The loudest sample of the left and of the right channel (both the same here: nothing is panned).

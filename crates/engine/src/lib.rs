@@ -1450,7 +1450,7 @@ impl Graph {
 /// The channel `track`'s sounds play through, or the id the validation keeps out of reach: a
 /// track without a channel has none.
 fn node_channel(project: &Project, track: TrackId) -> ChannelId {
-    project.tracks.iter().find(|t| t.id == track).and_then(|t| t.channel).unwrap_or(ChannelId(u32::MAX))
+    project.track(track).and_then(|t| t.channel).unwrap_or(ChannelId(u32::MAX))
 }
 
 /// The project for a source render: the channels above the source — its groups and the master
@@ -1458,22 +1458,14 @@ fn node_channel(project: &Project, track: TrackId) -> ChannelId {
 /// and every channel under it keep their volume, pan and mute. Allocates.
 fn source_rest(project: &Project, source: TrackId) -> Project {
     let mut rest = project.clone();
-    let Some(own) = project.tracks.iter().find(|t| t.id == source).and_then(|t| t.channel) else {
+    let Some(own) = project.track(source).and_then(|t| t.channel) else {
         return rest;
     };
-    // Bounded, so a routing cycle in a malformed project cannot loop forever.
-    let mut visited = Vec::new();
-    let mut next = project.channels.iter().find(|c| c.id == own).and_then(|c| c.output);
-    while let Some(id) = next.take() {
-        if visited.len() > 64 || visited.contains(&id) {
-            break;
-        }
-        visited.push(id);
-        if let Some(channel) = rest.channels.iter_mut().find(|c| c.id == id) {
+    for id in project.output_chain(own) {
+        if let Some(channel) = rest.channel_mut(id) {
             channel.volume = 1.0;
             channel.mute = false;
         }
-        next = project.channels.iter().find(|c| c.id == id).and_then(|c| c.output);
     }
     // A channel with no output plays into the master without naming it: the master is above
     // every node too, so its fader and mute are not in the render either. The source's own
@@ -1618,8 +1610,8 @@ pub(crate) fn note_velocity(velocity: f32) -> f32 {
 }
 
 pub(crate) fn track_gains(project: &Project, track: TrackId) -> Option<(f32, f32)> {
-    let channel_id = project.tracks.iter().find(|t| t.id == track)?.channel?;
-    let channel = project.channels.iter().find(|c| c.id == channel_id)?;
+    let channel_id = project.track(track)?.channel?;
+    let channel = project.channel(channel_id)?;
     let pan = if channel.pan.is_finite() { channel.pan.clamp(-1.0, 1.0) } else { 0.0 };
     let gain = |c: &suhina_model::Channel| if c.volume.is_finite() { c.volume.max(0.0) } else { 0.0 };
 
@@ -1633,7 +1625,7 @@ pub(crate) fn track_gains(project: &Project, track: TrackId) -> Option<(f32, f32
         }
         visited.push(c.id);
         volume *= gain(c);
-        next = c.output.and_then(|id| project.channels.iter().find(|o| o.id == id));
+        next = c.output.and_then(|id| project.channel(id));
     }
     if !heard_with_solo(project, channel, &visited) {
         return None;
@@ -1663,7 +1655,7 @@ fn heard_with_solo(project: &Project, channel: &suhina_model::Channel, chain: &[
         for _ in 0..64 {
             match next {
                 Some(id) if id == channel.id => return true,
-                Some(id) => next = project.channels.iter().find(|o| o.id == id).and_then(|o| o.output),
+                Some(id) => next = project.channel(id).and_then(|o| o.output),
                 None => return false,
             }
         }

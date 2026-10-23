@@ -561,7 +561,7 @@ pub(super) fn chain(
     nam: crate::detail::nam_panel::Lists,
 ) -> Chain {
     let track_name = project.track(id).map(|t| t.name.clone()).unwrap_or_default();
-    let channel = project.tracks.iter().find(|t| t.id == id).and_then(|t| t.channel).and_then(|c| project.channel(c));
+    let channel = project.track(id).and_then(|t| t.channel).and_then(|c| project.channel(c));
     let devices = channel
         .map(|c| c.devices.iter().enumerate().map(|(index, d)| device_box(d, &[index], id, plugins)).collect())
         .unwrap_or_default();
