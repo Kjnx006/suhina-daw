@@ -174,7 +174,8 @@ column has **stop all clips** for the whole set.
 and selecting a slot, empty or not, selects its track too, so the detail area shows that track and
 auto-arm (Settings › MIDI) arms it (#834). A right-click selects it and opens its menu: **Copy** copies its clip (`clip.copy {track,
 scene}`), **Paste** puts the copied clip in it (`clip.paste {track, scene}`), greyed out while
-nothing has been copied. Ctrl+C and Ctrl+V do the same on the selected slot
+nothing has been copied, and **Delete** takes its clip off, MIDI or audio (`clip.delete {track,
+scene}`, one undo step), greyed out on an empty slot (#842). Ctrl+C and Ctrl+V do the same on the selected slot
 ([shortcuts](../shortcuts.md)); Ctrl+X and Ctrl+D act on arrangement clips only and say so in the
 Session view. **Suhina:** the Delete key (or Backspace) takes a selected slot's clip off its
 slot (`clip.delete` with the slot's track and scene); one undo puts it back, and the detail area
