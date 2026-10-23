@@ -397,6 +397,7 @@ that no longer exists. [`docs/README.md`](docs/README.md) says what each kind of
 | A crate's role, a dependency between crates, threads, how commands or data flow | [`docs/architecture.md`](docs/architecture.md), and the crate map above |
 | A decision recorded in an ADR | that ADR (status, consequences), or a new ADR that supersedes it |
 | What is read from a format, or behaviour described in a spec | the spec in `docs/spec/` |
+| What a `.suhina` or `.sd` file holds | its `VERSION`, a file for the new version and a row in the spec's *Versions* ([ADR 0010](docs/decisions/0010-project-files.md) › Amendment: format versions) |
 | MCP tools, or how agents use commands | [`docs/mcp.md`](docs/mcp.md) (the command list, [`docs/commands.md`](docs/commands.md), is generated) |
 | What works for users | [`ROADMAP.md`](ROADMAP.md) › What works now, and [`README.md`](README.md) if it shows it |
 | What the parity measurement says (a milestone that lands, a feature that appears or is dropped) | the coverage of the chapters it changes in `scripts/parity/score.py`; the marked parts of [`docs/research/parity-live-12.md`](docs/research/parity-live-12.md) are regenerated on `main`, and its prose is edited in that file like any other document |

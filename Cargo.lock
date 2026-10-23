@@ -4915,6 +4915,7 @@ dependencies = [
  "base64",
  "serde_json",
  "suhina-model",
+ "suhina-test-support",
 ]
 
 [[package]]

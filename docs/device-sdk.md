@@ -99,7 +99,8 @@ Version 4 also preserves visual connection authoring through `graph.editor`:
 routes referencing existing `Connection` endpoints. Optional anchors are node-local pixel
 offsets; bend points are graph coordinates. See the [format contract](spec/sd-device-format.md#visual-connection-layout).
 This stores a future editor's layout; the current app still shows the read-only node list.
-File versions 1 through 3 remain readable, and serialization writes version 4. Older device files
+File versions 1 through 4 remain readable, and serialization writes version 5
+([format contract](spec/sd-device-format.md#versions)). Older device files
 without `device.version` load as revision 1.
 
 ```sh
@@ -184,7 +185,7 @@ this never removes their processing. The examples expose only their main process
    parameter for each user control. Prefer an existing example with similar signal flow.
    Every node must reach the output, including the audio input. For an unconnected optional
    input the catalog default applies; a required input must have exactly one connection.
-3. Save with `write_file` or author equivalent version 4 JSON. Call `validate` or run the
+3. Save with `write_file` or author equivalent version 5 JSON. Call `validate` or run the
    validation example before adding the effect. Errors identify missing ids/ports, undelayed
    cycles and memory requests; fix those directly. A minimal catalog example describes
    `NodeKind`; wrap it with `id` when placing it in the JSON nodes array.
