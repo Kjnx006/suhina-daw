@@ -307,7 +307,7 @@ pub(super) fn clip_edit_row(
         ClipEdit::LoopStart => Action::new("clip.setLoop", on_clip(at, json!({ "start": value }))),
         ClipEdit::LoopEnd => Action::new("clip.setLoop", on_clip(at, json!({ "end": value }))),
         ClipEdit::Gain => {
-            let db = if value <= -70.0 { json!("-inf") } else { json!(value) };
+            let db = commands::exact_db_param(value, -70.0);
             Action::new("clip.setGain", on_clip(at, json!({ "db": db })))
         }
         _ => Action::new("clip.setAudio", on_clip(at, json!({ "transpose": value }))),

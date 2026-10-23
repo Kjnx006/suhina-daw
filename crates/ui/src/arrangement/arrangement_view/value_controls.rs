@@ -44,12 +44,12 @@ pub(super) fn send_knob(
     match widgets::drag_value(ui, &response, &mut preview, level, 0.25, 1.0, VOLUME_RANGE, VOLUME_RANGE.0) {
         Drag::Moving(v) => {
             state.send_drag = Some((track, send.target, v));
-            actions.push(crate::session::mixer_strip::set_send(track, send.target, v, continued));
+            actions.push(commands::set_send(track, send.target, v, continued));
         }
         Drag::Done(v) => {
             state.send_drag = None;
             committed = Some(v);
-            actions.push(crate::session::mixer_strip::set_send(track, send.target, v, continued));
+            actions.push(commands::set_send(track, send.target, v, continued));
         }
         Drag::None => {}
     }
@@ -132,10 +132,7 @@ pub(super) fn value_control(
         let continued = preview.is_some();
         let one = tracks.len() == 1;
         let set = |v: f64| match control {
-            Control::Volume => {
-                let db = if v <= VOLUME_RANGE.0 { json!("-inf") } else { json!((v * 10.0).round() / 10.0) };
-                Action::new("track.setVolume", json!({ "tracks": [track.0], "db": db, "continue": continued }))
-            }
+            Control::Volume => commands::set_volume(&[track.0], v, Some(continued)),
             Control::Pan => Action::new(
                 "track.setPan",
                 json!({ "tracks": [track.0], "pan": (v * 100.0).round() / 100.0, "continue": continued }),
@@ -226,10 +223,7 @@ pub(super) fn value_action(control: Control, tracks: &[TrackId], from: f64, to: 
             let db = if to <= VOLUME_RANGE.0 { -200.0 } else { (delta * 10.0).round() / 10.0 };
             Action::new("track.adjustVolume", json!({ "tracks": ids, "db": db }))
         }
-        Control::Volume => {
-            let db = if to <= VOLUME_RANGE.0 { json!("-inf") } else { json!((to * 10.0).round() / 10.0) };
-            Action::new("track.setVolume", json!({ "tracks": ids, "db": db }))
-        }
+        Control::Volume => commands::set_volume(&ids, to, None),
         Control::Pan if !one && delta.is_finite() => {
             Action::new("track.adjustPan", json!({ "tracks": ids, "pan": (delta * 100.0).round() / 100.0 }))
         }

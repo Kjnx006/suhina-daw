@@ -465,7 +465,7 @@ pub(super) fn clip_box<'a>(
                 Drag::Done(v) => {
                     state.gain_drag = None;
                     committed = Some(v);
-                    let db = if v <= CLIP_GAIN_RANGE.0 { json!("-inf") } else { json!((v * 10.0).round() / 10.0) };
+                    let db = commands::db_param(v, CLIP_GAIN_RANGE.0);
                     actions.push(Action::new("clip.setGain", json!({ "clip": clip.id.0, "db": db })));
                 }
                 Drag::None => {}

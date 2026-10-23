@@ -308,7 +308,7 @@ pub(super) fn group_panel(
         if let Some(db) = set {
             actions.push(Action::new(
                 "branch.setVolume",
-                json!({ "track": track.0, "device": at, "branch": index, "db": if db <= -70.0 { json!("-inf") } else { json!(db) } }),
+                json!({ "track": track.0, "device": at, "branch": index, "db": commands::exact_db_param(db, -70.0) }),
             ));
         }
         let pan_id = Id::new(("branch-pan", track.0, &device.at, index));

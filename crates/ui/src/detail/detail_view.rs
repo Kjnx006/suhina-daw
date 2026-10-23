@@ -17,6 +17,7 @@ use suhina_device_sdk::{ControlShape, LabelPosition, ParameterControl};
 use suhina_engine::model::{ClipId, DeviceKind, LaneData, Note, Project, StretchMode, TrackId};
 use suhina_session::{Placement, PluginReport, PluginStatus};
 
+use crate::interaction::commands;
 use crate::interaction::grid::gain_to_db;
 use crate::interaction::menus;
 use crate::kit::motion;
