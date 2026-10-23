@@ -1155,7 +1155,7 @@ pub(super) fn clip_name_bar(rect: Rect) -> Option<Rect> {
 }
 
 /// An ARA plug-in loading or analysing a clip's audio, over the clip's waveform: the body dimmed,
-/// "<plug-in> loading" or "<plug-in> analysing N %" in the middle of what is in view, and a
+/// `"<plug-in> loading"` or `"<plug-in> analysing N %"` in the middle of what is in view, and a
 /// thin bar along the bottom that fills with the analysis.
 pub(super) fn paint_ara_activity(
     painter: &egui::Painter,

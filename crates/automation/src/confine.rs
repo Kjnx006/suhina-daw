@@ -5,7 +5,7 @@
 //! here before it runs, so a file whose path an agent can name may only be one the
 //! [`Workspace`] lets that agent at ([`docs/spec/browser.md`](../docs/spec/browser.md) ›
 //! Commands): files read are inside a read root and made real, files written inside the write
-//! root. Every caller of [`Session::execute`] under this crate's servers runs [`confine`] on
+//! root. Every caller of [`Session::execute`](suhina_session::Session::execute) under this crate's servers runs [`confine`] on
 //! the params first: the MCP tools alone once, and a launch script's steps when its caller has
 //! a workspace to confine with.
 
@@ -81,7 +81,7 @@ fn confine_item(workspace: &Workspace, params: &mut Value, name: &str) -> Result
 /// in both aliases, so the command sees the one that was checked.
 ///
 /// The alias is resolved as `project.export` itself resolves it in
-/// [`suhina_session::export::export_from`]: the first of `path` and `output` that is a non-null
+/// [`suhina_session::export_from`]: the first of `path` and `output` that is a non-null
 /// string decides, and nothing is trimmed — the checks see exactly what the command will use,
 /// so no shape of input can have confinement resolve a different file than the command writes.
 /// A value the command refuses on its own (a non-null non-text `path`, or nothing at all) is

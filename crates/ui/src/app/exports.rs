@@ -96,7 +96,7 @@ impl App {
         self.status = Status::Hint(format!("the export of {name} was cancelled"));
     }
 
-    /// Spawns the export's worker with already gathered data ([`ExportData`]), so the render,
+    /// Spawns the export's worker with already gathered data ([`ExportData`](suhina_session::ExportData)), so the render,
     /// the encoding and every plug-in's part run off the window's thread. The dialogs stay up
     /// showing Exporting…; [`App::poll_export`] takes the result in. The feedback names the
     /// project the export belongs to, whatever tab shows after.

@@ -18,7 +18,7 @@ use std::fmt;
 
 use crate::{Channel, ChannelId, Clip, Project, Track, TrackId};
 
-/// Identifies a [`Clip`](crate::Clip), on the arrangement or in a launcher slot. Stays the same
+/// Identifies a [`Clip`], on the arrangement or in a launcher slot. Stays the same
 /// when the clip is moved, trimmed or edited; a copy gets a new one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
 pub struct ClipId(pub u32);

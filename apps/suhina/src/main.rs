@@ -623,7 +623,7 @@ impl Window {
     }
 }
 
-/// "<what> <file>", and the file shown in the file manager.
+/// `"<what> <file>"`, and the file shown in the file manager.
 /// Shows the system's file or folder dialog `request` asks for; `None` when it was cancelled.
 /// It waits on the main thread, as macOS requires, while the window stays behind it.
 fn pick(request: &suhina_ui::interaction::pick::PickRequest) -> Option<PathBuf> {

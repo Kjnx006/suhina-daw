@@ -596,9 +596,9 @@ impl Renderer {
     }
 
     /// Takes the worker that renders stretched clips ahead, to run it on its own thread
-    /// ([`StretchWorker::spawn`]) so that the audio thread only copies their frames. Without
-    /// this the renderer stretches them itself as it goes, as offline rendering does. `None` once
-    /// taken.
+    /// ([`StretchThread::spawn`](crate::ahead::StretchThread::spawn)) so that the audio thread
+    /// only copies their frames. Without this the renderer stretches them itself as it goes, as
+    /// offline rendering does. `None` once taken.
     pub fn take_stretch_worker(&mut self) -> Option<StretchWorker> {
         self.graph.ahead.take_worker()
     }

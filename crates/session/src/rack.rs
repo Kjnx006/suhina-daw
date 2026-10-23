@@ -506,7 +506,7 @@ pub struct Rack {
     /// from then on as plug-ins that edit clips.
     ara_found: std::collections::HashSet<u64>,
     /// The key of the ARA documents this rack's plug-ins share in their host processes: one a
-    /// plug-in per project, each track a region sequence of it ([`AraDocument::document`]).
+    /// plug-in per project, each track a region sequence of it ([`suhina_plugins::protocol::AraDocument::document`]).
     ara_document: String,
     /// The plug-ins (by spec) found that way: the next device of one starts with its clips at
     /// once, rather than loading twice. Taken by [`Rack::take_ara_learned`] for the catalog.
@@ -1707,7 +1707,7 @@ impl Rack {
     /// owner window (the desktop app's) it opens on a thread of its own and `None` comes back
     /// at once: the host making a window that the app's window owns waits for the app's window
     /// thread, which must not be waiting for the host meanwhile. Embedded (the setting), it
-    /// opens hidden inside that window until [`Rack::place_editor`] puts it somewhere.
+    /// opens hidden inside that window until [`Rack::place_editors`] puts it somewhere.
     pub fn open_editor(&mut self, key: u64) -> Result<Option<(u32, u32)>, CommandError> {
         if self.lent_out(key, true) {
             return Ok(None);
