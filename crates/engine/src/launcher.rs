@@ -1107,7 +1107,13 @@ fn plan_clip(
                             voice
                         })
                     })
-                    .flatten();
+                    .flatten()
+                    // Built and moved to the clip's start here, off the audio thread: its first
+                    // render or restart there would build the stretcher and allocate.
+                    .map(|mut voice| {
+                        voice.restart();
+                        voice
+                    });
                 let region_gain = if region.gain.is_finite() { region.gain.max(0.0) as f32 } else { 0.0 };
                 let fingerprint = {
                     use std::hash::{Hash, Hasher};
@@ -2674,6 +2680,18 @@ mod tests {
         assert!((again - 440.0).abs() < 8.0, "{again} Hz");
         // Between the stop and the relaunch: silence once the fade is over.
         assert!(out[2 * (11 * SR as usize / 10)..2 * (14 * SR as usize / 10)].iter().all(|s| *s == 0.0));
+    }
+
+    /// A stretcher builds its buffers when first played or moved, which the audio thread must
+    /// not be the one to do: a launcher plan comes with its voices built.
+    #[test]
+    fn a_launched_clips_stretch_voice_is_built_before_the_audio_thread_gets_it() {
+        let (p, audio) = stretched_sine();
+        let renderer = Renderer::with_audio(&p, &audio, SR).unwrap();
+        let plan = renderer.graph.launcher.columns[0].slots[0].clip.as_ref().unwrap();
+        let voices: Vec<_> = plan.audio.iter().filter_map(|a| a.stretch.as_ref()).collect();
+        assert!(!voices.is_empty());
+        assert!(voices.iter().all(|v| v.is_prepared()));
     }
 
     #[test]

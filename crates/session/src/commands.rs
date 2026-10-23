@@ -696,7 +696,7 @@ static COMMANDS: &[CommandSpec] = &[
     },
     CommandSpec {
         id: "clip.shiftFades",
-        label: "Lengthen or shorten the fade-in or fade-out of several arrangement clips by the same beats, each from its own, kept from 0 to what the clip's other fade leaves; as one undo step",
+        label: "Lengthen or shorten the fade-in or fade-out of several arrangement clips by the same beats, each from its own, kept from 0 to what the clip's other fade leaves; clips with no audio are left as they are; as one undo step",
         params: &[
             CLIPS,
             param("edge", ParamType::Text, "in or out"),
@@ -1856,7 +1856,7 @@ static COMMANDS: &[CommandSpec] = &[
     },
     CommandSpec {
         id: "device.duplicateMany",
-        label: "Copy several devices of a track (groups with everything in them) right after the last of them, in their order, as one undo step; the device clipboard stays as it was",
+        label: "Copy several devices of a track (groups with everything in them), all from one chain or branch, right after the last of them, in their order, as one undo step; the device clipboard stays as it was",
         params: &[TRACK, DEVICES],
         kind: CommandKind::Edit,
         run: devices::duplicate_many,
@@ -3703,7 +3703,8 @@ fn rename_clip(session: &mut Session, params: &Value) -> Result<Value, CommandEr
     Ok(json!({ "name": name }))
 }
 
-/// `clip.shiftFades {clips, edge, beats}` (#715).
+/// `clip.shiftFades {clips, edge, beats}` (#715). Only an audio clip has fades, as in
+/// `clip.setFades`: a clip with no audio lane is left as it is and not counted in `clips`.
 fn shift_fades(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let fade_in = match params.get("edge").and_then(Value::as_str) {
         Some("in") => true,
@@ -3715,6 +3716,13 @@ fn shift_fades(session: &mut Session, params: &Value) -> Result<Value, CommandEr
     let chosen = clip_list(p, params)?;
     let mut changed = 0;
     for (track, index) in chosen {
+        let lane = p.arrangement.lanes.iter().find(|l| l.track == Some(track));
+        let content = lane.and_then(|l| l.clips.get(index)).map(|c| c.content).ok_or("the clip is missing")?;
+        // Only an audio clip has fades (`clip.setFades`): a mixed selection leaves the others.
+        let audio = p.content(content).is_some_and(|c| c.lanes.iter().any(|l| matches!(l.data, LaneData::Audio(_))));
+        if !audio {
+            continue;
+        }
         let clip = p
             .arrangement
             .lanes

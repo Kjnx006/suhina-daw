@@ -257,6 +257,28 @@ fn unanalysed_files_are_pending_and_an_empty_scope_is_empty() {
     assert!(laid.similar(Path::new("nothing"), 5).is_empty());
 }
 
+#[test]
+fn an_update_worked_out_on_a_thread_is_taken_in_once_and_not_before_it_is_ready() {
+    let diff = || Diff { loaded: Vec::new(), work: Vec::new(), gone: Vec::new(), folders: HashSet::new() };
+    let mut map = SoundMap::new(None, 1);
+    let (sender, receiver) = std::sync::mpsc::channel();
+    map.diffing = Some(receiver);
+    // Not sent yet: it is waited for.
+    assert!(!map.take_diff(false));
+    assert!(map.diffing.is_some());
+    // Sent, and the thread gone: the one poll takes it in, whole.
+    sender.send(diff()).unwrap();
+    drop(sender);
+    assert!(map.take_diff(false));
+    assert!(map.diffing.is_none());
+    // A thread that ended without an update is let go of.
+    let (sender, receiver) = std::sync::mpsc::channel::<Diff>();
+    map.diffing = Some(receiver);
+    drop(sender);
+    assert!(!map.take_diff(false));
+    assert!(map.diffing.is_none());
+}
+
 /// How long large scopes take to lay out and snap (run with `--ignored --nocapture` in release).
 #[test]
 #[ignore]

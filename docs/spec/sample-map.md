@@ -83,7 +83,8 @@ Both play a sample as soon as the pointer is over it.
   Show similar, tags, pins, double-click adds to the selected track, and a drag from the map to
   a track, a slot or a device chain in the main window drops there (the map's window has the
   pointer while the button is down; the main window shows the drop label and takes the drop).
-  The keymap's keys work in that window too. **Dock**, Ctrl+Alt+M, closing the window, the
+  The keymap's keys work in that window too, except while a dialog in the main window asks
+  something (as they do nothing in the main window then). **Dock**, Ctrl+Alt+M, closing the window, the
   browser's **Sample map** button or the large view put the map back. Whether the window is open, and where
   it is and how big (`map_window`, `map_window_rect` in `settings.txt`: left, top, width and
   height in points on the whole desktop, so a second screen counts), are kept for the next

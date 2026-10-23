@@ -1812,7 +1812,12 @@ impl App {
                 None => self.export_dialog = Some(state),
             }
         }
-        let other_dialog = self.unsaved_prompt.is_some() || self.save_prompt.is_some() || self.project_dialog.is_some();
+        // A recovery offer, and the agent prompt after it, wait for the dialogs that ask about
+        // a project, the question about a clip's plug-in edits among them.
+        let other_dialog = self.unsaved_prompt.is_some()
+            || self.save_prompt.is_some()
+            || self.project_dialog.is_some()
+            || self.ara_prompt.is_some();
         if !other_dialog && let Some(offer) = self.recovery.first().cloned() {
             let written = suhina_session::backup::date_time(offer.written);
             let written = written.get(..16).unwrap_or(&written);
@@ -2513,8 +2518,12 @@ impl App {
         let dropped = self.dropped_files(ui);
         keys_for_shortcuts(ui.ctx());
         self.launch_keys(ui, &mut actions);
-        for id in std::mem::take(&mut self.queued) {
-            self.do_action(&id, &mut actions);
+        // A menu bar item chosen while a dialog asks something is passed over, as its key is.
+        let queued = std::mem::take(&mut self.queued);
+        if !self.dialog_holds_actions() {
+            for id in queued {
+                self.do_action(&id, &mut actions);
+            }
         }
         self.shortcuts(ui, &mut actions);
         self.apply_zoom(ui.ctx());
@@ -2989,6 +2998,9 @@ impl App {
         suhina_plugins::trace::timed("drop poll", || self.poll_drop(ui.ctx()));
         self.frame_trace.mark("drags");
 
+        // Actions collected above wait for a dialog that asks something, as the keys and the menu
+        // bar's queue do: they are dropped while one is open, and once an action opens one.
+        let actions_held = self.dialog_holds_actions();
         self.plugin_dialog(ui, window);
         self.project_dialogs(ui, window);
         if self.settings_open {
@@ -3001,6 +3013,9 @@ impl App {
         let actions: Vec<Action> = actions.into_iter().map(|action| self.remove_every_pick(action)).collect();
         let ran = actions.len();
         for action in &actions {
+            if actions_held || self.dialog_holds_actions() {
+                break;
+            }
             // Closing a project with unsaved changes asks first (Save, Don't save, Cancel).
             let closing = (action.id == "projects.close")
                 .then(|| action.params["project"].as_u64().and_then(|n| u32::try_from(n).ok()).map(ProjectId))
@@ -4694,8 +4709,9 @@ impl App {
         }
     }
 
-    /// A dialog or prompt that holds the keyboard: the keymap's actions wait until it is closed.
-    fn key_dialog_open(&self) -> bool {
+    /// Whether a dialog is open that the keymap's actions wait for: their keys, in either
+    /// window, and the menu bar's items do nothing meanwhile.
+    fn dialog_holds_actions(&self) -> bool {
         self.project_dialog.is_some()
             || self.save_prompt.is_some()
             || self.export_dialog.is_some()
@@ -4712,9 +4728,8 @@ impl App {
     fn shortcuts(&mut self, ui: &Ui, actions: &mut Vec<Action>) {
         // A prompt waiting on a stored edit (the ARA one) included: a key that changed the
         // project meanwhile would leave that edit naming what is gone.
-        let dialog = self.key_dialog_open();
         if ui.ctx().egui_wants_keyboard_input()
-            || dialog
+            || self.dialog_holds_actions()
             || (self.settings_open && self.page.capture.is_some())
             || widgets::value_active(ui.ctx())
         {
@@ -5724,7 +5739,7 @@ impl App {
             return;
         }
         // The map window's keys wait behind the same dialogs as the main window's.
-        if !self.key_dialog_open() {
+        if !self.dialog_holds_actions() {
             for action in &frame.keys {
                 self.do_action(action, actions);
             }
@@ -7009,6 +7024,46 @@ mod tests {
         harness.step();
         assert_eq!(harness.state().view.drop, None);
         assert_eq!(harness.state().session().map(|s| s.project().clone()), before);
+    }
+
+    #[test]
+    fn a_menu_bar_item_chosen_while_the_question_about_a_clips_edits_is_open_does_nothing() {
+        let mut app = App::new();
+        app.set_session(suhina_session::Session::new(crate::demo::demo_project()), &[]);
+        app.shown = View::Session;
+        app.ara_prompt = Some((Action::new("clip.moveMany", serde_json::json!({})), "Plug-in".into()));
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(Vec2::new(1280.0, 800.0))
+            .build_ui_state(|ui, app: &mut App| app.ui(ui), app);
+        harness.run();
+        harness.state_mut().queue_action("view.toggle");
+        harness.run();
+        assert_eq!(harness.state().shown, View::Session);
+        assert!(harness.state().ara_prompt.is_some(), "the question is still asked");
+        // Answered, the menu bar works again; the item chosen meanwhile is not run late.
+        harness.state_mut().ara_prompt = None;
+        harness.run();
+        assert_eq!(harness.state().shown, View::Session);
+        harness.state_mut().queue_action("view.toggle");
+        harness.run();
+        assert_eq!(harness.state().shown, View::Arrangement);
+    }
+
+    #[test]
+    fn an_agent_asking_to_connect_waits_for_the_question_about_a_clips_edits() {
+        use egui_kittest::kittest::Queryable;
+        let mut app = App::new();
+        app.set_session(suhina_session::Session::new(crate::demo::demo_project()), &[]);
+        app.ara_prompt = Some((Action::new("clip.moveMany", serde_json::json!({})), "Plug-in".into()));
+        app.ask_agent(1, "Helper".into());
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(Vec2::new(1280.0, 800.0))
+            .build_ui_state(|ui, app: &mut App| app.ui(ui), app);
+        harness.run();
+        assert!(harness.query_by_label("Allow Helper").is_none(), "one dialog at a time");
+        harness.state_mut().ara_prompt = None;
+        harness.run();
+        assert!(harness.query_by_label("Allow Helper").is_some());
     }
 
     #[test]

@@ -301,7 +301,8 @@ pub fn value_active(ctx: &egui::Context) -> bool {
 }
 
 /// The keys an active value control takes this frame: arrow steps (up is +1), and Enter with
-/// the number typed into it.
+/// the number typed into it. Ctrl (Cmd) with a key leaves it to the window's shortcuts, as
+/// [`value_active`] says.
 fn value_keys(ui: &Ui, response: &Response) -> (i32, bool, Option<String>) {
     let ctx = ui.ctx();
     let key = egui::Id::new(ACTIVE_VALUE);
@@ -330,25 +331,25 @@ fn value_keys(ui: &Ui, response: &Response) -> (i32, bool, Option<String>) {
     let (mut steps, mut fine, mut enter, mut escape) = (0i32, false, false, false);
     ctx.input_mut(|i| {
         i.events.retain(|event| match event {
-            egui::Event::Key { key: egui::Key::ArrowUp, pressed: true, modifiers, .. } => {
+            egui::Event::Key { key: egui::Key::ArrowUp, pressed: true, modifiers, .. } if !modifiers.command => {
                 steps += 1;
                 fine |= modifiers.shift;
                 false
             }
-            egui::Event::Key { key: egui::Key::ArrowDown, pressed: true, modifiers, .. } => {
+            egui::Event::Key { key: egui::Key::ArrowDown, pressed: true, modifiers, .. } if !modifiers.command => {
                 steps -= 1;
                 fine |= modifiers.shift;
                 false
             }
-            egui::Event::Key { key: egui::Key::Enter, pressed: true, .. } => {
+            egui::Event::Key { key: egui::Key::Enter, pressed: true, modifiers, .. } if !modifiers.command => {
                 enter = true;
                 false
             }
-            egui::Event::Key { key: egui::Key::Escape, pressed: true, .. } => {
+            egui::Event::Key { key: egui::Key::Escape, pressed: true, modifiers, .. } if !modifiers.command => {
                 escape = true;
                 false
             }
-            egui::Event::Key { key: egui::Key::Backspace, pressed: true, .. } => {
+            egui::Event::Key { key: egui::Key::Backspace, pressed: true, modifiers, .. } if !modifiers.command => {
                 typed.pop();
                 false
             }
