@@ -155,6 +155,37 @@ workspace forbids.
      parameter to the next. Nothing allocates on the audio thread: each slot has room for 512
      events a block. Values go to the processor only, so a VST3 plug-in's editor does not move
      with its automation yet.
+   - **Where the shared memory lives, and who frees it.** The engine's side makes each region
+     (a link's, or an ARA audio source's, ADR 0028) and the host opens it by an address; the
+     operating system frees it when both have let go of it, however they end, so a crash or a
+     kill leaves nothing (`crates/ipc/src/shm.rs`, #805):
+     - *Windows:* a mapping backed by the page file, named `Local\suhina-ipc-<pid>-<n>-<nanos>`
+       (`suhina-ara-…` for a source) in the session's namespace, like the doorbells. The address
+       is the name; the host opens it with `OpenFileMappingW`. Nothing is written to `%TEMP%`.
+     - *Linux:* a `memfd` (`memfd_create`, closed on exec). The address is
+       `/proc/<engine pid>/fd/<n>#<token>`, which the host opens as a path while the engine holds
+       it; the token is part of the memfd's name, and the host checks that the path is exactly
+       the memfd `/memfd:suhina-<kind>-<token>`, so a descriptor number the engine closed and
+       reused for another region never opens as the old one. Nothing is written to `/dev/shm`.
+     - *macOS (and other Unix systems):* a file in the temporary folder,
+       `suhina-ipc-<pid>@<start>-<n>`, where `<start>` is the process's start time. A link's file
+       loses its name as soon as the host has answered the load that named it (the host never
+       opens a link twice); a source's keeps it until the engine drops the source, because a
+       restarted host opens the same sources again. The file of a process that crashed before
+       then is removed by the first region the next Suhina process makes (`crates/ipc/src/sweep.rs`):
+       a pid and a start time name one process for good, so a file goes when no process has that
+       pid with that start time, with no lock files, and a live process's files are never taken
+       for a gone one's.
+
+     The same sweep removes files that earlier versions left on every system
+     (`suhina-ipc-<pid>-<n>-<nanos>` in `/dev/shm` or the temporary folder, and the
+     `suhina-ipc-<pid>.lock` files of a first fix's test builds) once no process has their pid. It never errors and never runs on the audio thread; a file it cannot remove is
+     left for the next start. *Limits:* on Windows a region counts against the commit limit (RAM
+     and page file) while it lives, as a source of several hours does; on macOS an ARA source's file
+     stays in the temporary folder for as long as the engine holds the source, by design, so a
+     restarted host can open it again, and a crash between making a link and the host's answer,
+     or while a source lives, leaves a file until the next Suhina process starts; an earlier version's file whose pid another process has taken stays
+     until that process ends.
    - **Messages** over a local socket or pipe, with a versioned protocol: load and unload,
      state save and load, latency changes, editor open and close, ping. *Built:* protocol
      version 12 (`ara_playback` comes unasked when an ARA plug-in asks the transport to play,
