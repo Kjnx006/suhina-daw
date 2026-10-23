@@ -5,6 +5,8 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+# The tests are one binary, tests/main.rs (it says why).
+autotests = false
 
 [dependencies]
 suhina-engine.workspace = true
@@ -31,6 +33,15 @@ egui_kittest = { version = "0.36", features = ["wgpu", "snapshot"] }  # MIT OR A
 hound.workspace = true
 suhina-output.workspace = true  # tests that preview through a real audio device
 suhina-library.workspace = true
+
+[[test]]
+name = "main"
+path = "tests/main.rs"
+
+# The trace file is one per process.
+[[test]]
+name = "trace_actions"
+path = "tests/trace_actions.rs"
 
 [lints]
 workspace = true
