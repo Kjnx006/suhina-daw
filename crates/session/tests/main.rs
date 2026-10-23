@@ -51,8 +51,8 @@ mod trusted_audio;
 #[test]
 fn every_test_file_is_a_module() {
     let folder = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests");
-    let listed = include_str!("main.rs");
-    let own_binaries = include_str!("../Cargo.toml");
+    let listed = include_str!("main.rs").replace('\r', "");
+    let own_binaries = include_str!("../Cargo.toml").replace('\r', "");
     let mut missing = Vec::new();
     for entry in std::fs::read_dir(&folder).unwrap() {
         let path = entry.unwrap().path();
