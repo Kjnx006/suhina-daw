@@ -240,6 +240,8 @@ pub(crate) struct Live {
     consumer: Option<Consumer<(LiveSource, LiveEvent, u64)>>,
     armed: [(TrackId, LiveFilter); MAX_ARMED],
     armed_count: usize,
+    monitored: [(TrackId, LiveFilter); MAX_ARMED],
+    monitored_count: usize,
     keys: [Keys; MAX_SOURCES],
     keys_count: usize,
     /// Stamped notes whose frame is in a later block, in the order they came.
@@ -263,6 +265,8 @@ impl Live {
             consumer: None,
             armed: [(TrackId(0), LiveFilter::default()); MAX_ARMED],
             armed_count: 0,
+            monitored: [(TrackId(0), LiveFilter::default()); MAX_ARMED],
+            monitored_count: 0,
             keys: [Keys::EMPTY; MAX_SOURCES],
             keys_count: 0,
             waiting: [Waiting { at: 0, source: LiveSource::default(), event: LiveEvent::AllNotesOff }; MAX_WAITING],
@@ -326,9 +330,9 @@ impl Live {
         self.armed().iter().any(|(t, _)| *t == track)
     }
 
-    /// Whether any track is armed: the output then keeps a shallower queue (ADR 0017).
+    /// Whether any track is armed or monitors MIDI: keep the shallower live queue (ADR 0017).
     pub(crate) fn any_armed(&self) -> bool {
-        self.armed_count > 0
+        self.armed_count > 0 || self.monitored_count > 0
     }
 
     /// Arms `track` to hear what `input` takes, or disarms it. Arming an armed track changes
@@ -343,32 +347,58 @@ impl Live {
         input: LiveFilter,
         frame: usize,
     ) {
-        let index = self.armed().iter().position(|(t, _)| *t == track);
-        let before = index.and_then(|i| self.armed.get(i)).map(|(_, f)| *f);
-        match (armed, index) {
+        self.set_input(chains, track, armed, armed, input, frame);
+    }
+
+    fn update_targets(
+        targets: &mut [(TrackId, LiveFilter)],
+        count: &mut usize,
+        track: TrackId,
+        enabled: bool,
+        input: LiveFilter,
+    ) -> Option<LiveFilter> {
+        let index = targets.get(..*count).unwrap_or_default().iter().position(|(t, _)| *t == track);
+        let before = index.and_then(|i| targets.get(i)).map(|(_, f)| *f);
+        match (enabled, index) {
             (true, None) => {
-                if let Some(slot) = self.armed.get_mut(self.armed_count) {
+                if let Some(slot) = targets.get_mut(*count) {
                     *slot = (track, input);
-                    self.armed_count += 1;
+                    *count += 1;
                 }
             }
             (true, Some(index)) => {
-                if let Some(slot) = self.armed.get_mut(index) {
+                if let Some(slot) = targets.get_mut(index) {
                     slot.1 = input;
                 }
             }
             (false, Some(index)) => {
-                let last = self.armed_count - 1;
-                self.armed.swap(index, last);
-                self.armed_count = last;
+                let last = count.saturating_sub(1);
+                targets.swap(index, last);
+                *count = last;
             }
             (false, None) => {}
         }
+        before
+    }
+
+    /// Recording and monitoring are independent; both target lists are bounded and preallocated.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn set_input(
+        &mut self,
+        chains: &mut [Chain],
+        track: TrackId,
+        armed: bool,
+        monitoring: bool,
+        input: LiveFilter,
+        frame: usize,
+    ) {
+        Self::update_targets(&mut self.armed, &mut self.armed_count, track, armed, input);
+        let before = Self::update_targets(&mut self.monitored, &mut self.monitored_count, track, monitoring, input);
         // Let go of what the track heard and no longer does.
         let Some(before) = before else { return };
         let keys = self.keys.get(..self.keys_count).unwrap_or_default();
         for chain in chains.iter_mut().filter(|c| c.instrument && c.track == track) {
-            for source in keys.iter().filter(|k| before.takes(k.source) && !(armed && input.takes(k.source))) {
+            for source in keys.iter().filter(|k| before.takes(k.source) && !(monitoring && input.takes(k.source))) {
                 for key in 0..=127u8 {
                     if source.sounding(key) {
                         chain.release_key(frame, key);
@@ -468,12 +498,14 @@ impl Live {
         #[cfg(test)]
         self.played.push((position, event));
         let Some(slot) = self.keys_of(source) else { return };
-        let Self { armed, armed_count, keys, .. } = self;
+        let Self { armed, armed_count, monitored, monitored_count, keys, .. } = self;
         let armed = armed.get(..*armed_count).unwrap_or_default();
+        let monitored = monitored.get(..*monitored_count).unwrap_or_default();
         let Some(keys) = keys.get_mut(slot) else { return };
         let hearing = || armed.iter().filter(|(_, f)| f.takes(source)).map(|(t, _)| *t);
-        let targets =
-            chains.iter_mut().filter(|c| c.instrument && armed.iter().any(|(t, f)| *t == c.track && f.takes(source)));
+        let targets = chains
+            .iter_mut()
+            .filter(|c| c.instrument && monitored.iter().any(|(t, f)| *t == c.track && f.takes(source)));
         match event {
             LiveEvent::NoteOn { key, velocity } => {
                 let Some(held) = keys.held.get_mut(usize::from(key)) else { return };
