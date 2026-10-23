@@ -151,7 +151,7 @@ crates/ui/src/
                  the Settings window (settings_view, settings_rows, themes)
   interaction/   what views share: drop (dragging between views), pick, menus, nesting, grid
                  (the tracks and slots as the views see them), colour_picker, empty_space, status
-  kit/           what every view draws with: theme, widgets, meter, motion, logo, waveform
+  kit/           what every view draws with: theme, widgets, meter, motion, logo, waveform, scroll
   demo.rs        the demo project the app opens with `--demo` and the tests draw
 ```
 

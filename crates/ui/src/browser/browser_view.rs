@@ -925,15 +925,9 @@ fn results_view(
             state.start_drag(items);
         }
     }
-    if rows.len() as f32 * ROW > area.height() {
-        // A thin bar shows where the list is.
-        let share = area.height() / content;
-        let bar = Rect::from_min_size(
-            Pos2::new(area.right() - 3.0, area.top() + state.scroll * share),
-            Vec2::new(2.0, (area.height() * share).max(12.0)),
-        );
-        painter.rect_filled(bar, 0.0, theme::border_strong());
-    }
+    // The scroll bar every scroll area has, dragged and clicked like a device panel's; after
+    // the rows, so it takes the pointer over them (#867).
+    crate::kit::scroll::vertical_bar(ui, area, "browser-results-scroll", content, &mut state.scroll);
 }
 
 fn click_row(state: &mut BrowserState, rows: &[Row], index: usize, modifiers: Modifiers) {

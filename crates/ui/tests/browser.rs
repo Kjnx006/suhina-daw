@@ -300,6 +300,45 @@ fn a_click_on_a_folders_chevron_opens_it_and_on_its_title_only_selects_it() {
     let _ = std::fs::remove_dir_all(&folder);
 }
 
+/// The list's scroll bar is a scroll area's, so it is dragged like a device panel's (#867).
+#[test]
+fn the_lists_scroll_bar_can_be_dragged() {
+    let (settings, folder) = (temp("scroll-bar-settings"), temp("scroll-bar"));
+    for i in 0..80 {
+        wav(&folder.join(format!("Hit {i:02}.wav")), 0.01);
+    }
+    let mut harness = window(&settings, &folder);
+    let name = row(&folder.file_name().unwrap().to_string_lossy());
+    let at = chevron_of(&harness, &name);
+    click_at(&mut harness, at);
+    assert!(harness.query_by_label(&row("Hit 00.wav")).is_some(), "the folder is open");
+    let list = harness.get_by_label(&row("Hit 00.wav")).rect();
+    let bar = harness
+        .get_all_by_role(egui::accesskit::Role::ScrollBar)
+        .map(|node| node.rect())
+        .find(|rect| rect.right() <= list.right() + 1.0 && rect.left() >= list.right() - 20.0)
+        .expect("the list has a scroll bar on its right edge");
+    assert_eq!(harness.state().browser.scroll, 0.0);
+    let picked: Vec<String> = harness.state().browser.selected().iter().map(|s| s.key.clone()).collect();
+    let from = Pos2::new(bar.center().x, bar.top() + 4.0);
+    harness.hover_at(from);
+    harness.step();
+    harness.drag_at(from);
+    harness.step();
+    for y in [10.0, 30.0, 60.0, 100.0] {
+        harness.hover_at(from + egui::vec2(0.0, y));
+        harness.step();
+    }
+    harness.drop_at(from + egui::vec2(0.0, 100.0));
+    harness.run();
+    assert!(harness.state().browser.scroll > 50.0, "the list follows the bar: {}", harness.state().browser.scroll);
+    assert!(harness.query_by_label(&row("Hit 00.wav")).is_none(), "the first row has scrolled out of view");
+    let after: Vec<String> = harness.state().browser.selected().iter().map(|s| s.key.clone()).collect();
+    assert_eq!(after, picked, "the rows under the bar took nothing");
+    let _ = std::fs::remove_dir_all(&settings);
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
 #[test]
 fn a_double_click_on_a_folders_chevron_opens_it_and_stays_open() {
     let (settings, folder) = (temp("chevron-settings"), temp("chevron"));
