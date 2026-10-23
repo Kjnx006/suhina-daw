@@ -99,6 +99,7 @@ after every merge; do not edit by hand. Find a document by what you are about to
 | [Updates](spec/updates.md) | spec | draft | update, updates, new version available, check for updates, download update, nightly update, auto update, test build, gh, github cli, developer mode | Checking for a newer build of Suhina and installing it from inside the app, the nightly channel and, in developer mode, test builds of pull requests through the GitHub CLI |
 | [Waveforms](spec/waveforms.md) | spec | current | waveform, peaks, RMS, waveform drawing, zoom, samples, stereo lanes, dB scale, clip waveform, preview waveform, sample map tooltip, frame budget | How waveforms are computed and drawn in clips, the browser's preview and the sample map's tooltips: peak levels with RMS, lanes per channel, the shape, samples close up, the dB scale, the frame budget |
 | [Window zoom](spec/window-zoom.md) | spec | current | zoom, UI zoom, window zoom, interface size, scale, Ctrl+Plus, Ctrl+Minus, Cmd+Plus, bigger text, high-DPI, zoom display | Zooming the whole window (every panel, text and control larger or smaller), its keys, limits and how it is remembered |
+| [How documents are written](README.md) | howto | current | writing or editing a document, ADR, amendment, spec, decision status, built field, superseding an ADR, where text goes, docs check, Built so far, version history | What each kind of document under docs/ holds and does not hold, the rules for amending an ADR, the status fields, and the checks that enforce them |
 | [The claim bot](claim-bot.md) | howto | current | claim, /claim, /claim @user, claim for someone else, on behalf, /unclaim, /hold, /ready, claim bot, project board, PROJECT_TOKEN, status automation, good first issue, lapsed claim, duplicate pull request, feature not agreed, project sync, board out of date, cards missing from the board, Touches, overlapping work, overlap, blocked by, blocked, dependency, Depends on, stacked pull requests, merge order, trusted contributor, TRUSTED_CONTRIBUTORS, maintainer, who may claim, claim limit, too many claims | How the claim bot moves an issue's card on the project board, holds work, refuses blocked work, lists overlapping work, and how the Depends on check orders pull requests |
 | [Reviewing a pull request](code-review.md) | howto | current | code review, reviewing a pull request, review feedback, contributor changes, security review, performance review, approval readiness, Codex review | How to review pull requests for requirements, correctness, performance, security, and regression risks |
 | [Debugging the running app](debugging.md) | howto | current | debugging, bug hunting, trace, SUHINA_TRACE, --trace, diagnostic log, live debugging, UI lag, slow frame, frame time, stutter, plug-in host log, ARA, Melodyne, playhead jumps, flicker, timing, latency, screen recording, video frames, contact sheet, tester, hang, freeze, working a bug through | How to find out what the running app does around a bug: the trace log (suhina --trace), adding trace points, reading the log, reading a screen recording frame by frame, and working a bug through with a tester |
@@ -438,6 +439,7 @@ Change this code, and check these documents.
 | `scripts/discord_post.py` | [Releasing](releasing.md) |
 | `scripts/discord_test_build.py` | [Releasing](releasing.md) |
 | `scripts/discord_test_build_backfill.py` | [Releasing](releasing.md) |
+| `scripts/docs.py` | [How documents are written](README.md) |
 | `scripts/parity/**` | [parity-live-12](research/parity-live-12.md) |
 | `scripts/project_sync.py` | [The claim bot](claim-bot.md) |
 | `scripts/release_notes.py` | [Releasing](releasing.md) |
@@ -445,6 +447,7 @@ Change this code, and check these documents.
 | `scripts/shortcuts_guide.py` | [Website shortcut export](spec/shortcuts-guide-export.md) |
 | `scripts/stems-fixture.py` | [Stems files](spec/stems-format.md) |
 | `scripts/test-signal.py` | [Making the `.als` test corpus](spec/als-corpus.md) |
+| `scripts/test_docs_structure.py` | [How documents are written](README.md) |
 | `scripts/test_pr_workflows.py` | [The claim bot](claim-bot.md) |
 | `scripts/test_project_sync.py` | [The claim bot](claim-bot.md) |
 | `scripts/test_settings_guide.py` | [Settings guide export](spec/settings-guide-export.md) |
