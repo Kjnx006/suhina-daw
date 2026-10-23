@@ -718,7 +718,7 @@ fn a_device_dragged_onto_a_track_header_joins_its_chain_and_becomes_recent() {
         app.session().map_or(0, |s| {
             let p = s.project();
             let channel = p.tracks.iter().find(|t| t.name == "Bass").and_then(|t| t.channel).unwrap_or(ChannelId(0));
-            p.channels.iter().find(|c| c.id == channel).map_or(0, |c| c.devices.len())
+            p.channel(channel).map_or(0, |c| c.devices.len())
         })
     };
     assert!(until(&mut harness, |app| bass_devices(app) == 1));
@@ -1054,7 +1054,7 @@ fn a_plugin_drags_to_a_track_from_every_view() {
         app.session().map_or(0, |s| {
             let p = s.project();
             let channel = p.tracks.iter().find(|t| t.name == "Bass").and_then(|t| t.channel).unwrap_or(ChannelId(0));
-            p.channels.iter().find(|c| c.id == channel).map_or(0, |c| c.devices.len())
+            p.channel(channel).map_or(0, |c| c.devices.len())
         })
     };
     let to = harness.get_by_label("Track Bass").rect().center();

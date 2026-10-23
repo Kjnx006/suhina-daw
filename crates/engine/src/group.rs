@@ -369,10 +369,9 @@ fn heard_gains(branch: &suhina_model::Branch, any_solo: bool) -> (f32, f32) {
 /// centred at unity.
 fn branch_gains(volume: f64, pan: f64) -> (f32, f32) {
     let volume = if volume.is_finite() { volume.max(0.0) } else { 0.0 };
-    let pan = if pan.is_finite() { pan.clamp(-1.0, 1.0) } else { 0.0 };
-    let angle = (pan + 1.0) * std::f64::consts::FRAC_PI_4;
+    let (left, right) = suhina_dsp::pan::gains(pan);
     let scale = volume * std::f64::consts::SQRT_2;
-    ((angle.cos() * scale) as f32, (angle.sin() * scale) as f32)
+    ((left * scale) as f32, (right * scale) as f32)
 }
 
 pub(crate) fn is_instrument(slot: &Slot) -> bool {

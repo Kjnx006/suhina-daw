@@ -204,7 +204,7 @@ fn check_group(session: &Session, group: &DeviceGroup) -> Result<(), CommandErro
 /// Whether the track the parameters name plays notes.
 fn plays_notes(session: &Session, params: &Value) -> Result<bool, CommandError> {
     let track = track_id(&session.project, params)?;
-    Ok(session.project.tracks.iter().find(|t| t.id == track).is_some_and(|t| t.content.notes))
+    Ok(session.project.track(track).is_some_and(|t| t.content.notes))
 }
 
 /// Applies `edit` to a copy of the track's devices, checks the chain's rules on the result and
@@ -458,7 +458,7 @@ pub(crate) fn duplicate(session: &mut Session, params: &Value) -> Result<Value, 
         .iter()
         .find(|t| t.id == track)
         .and_then(|t| t.channel)
-        .and_then(|c| heard.channels.iter().find(|ch| ch.id == c))
+        .and_then(|c| heard.channel(c))
         .map(|c| c.devices.clone());
     edit_chain(session, params, |devices| {
         let path = device_path(devices, params, "device")?;

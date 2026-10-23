@@ -444,7 +444,7 @@ pub(crate) fn add(session: &mut Session, params: &Value) -> Result<Value, Comman
     let midi_effect = info.role == Role::MidiEffect;
     if instrument || midi_effect {
         let track = track_id(&session.project, params)?;
-        if session.project.tracks.iter().find(|t| t.id == track).is_some_and(|t| !t.content.notes) {
+        if session.project.track(track).is_some_and(|t| !t.content.notes) {
             let what = if instrument { "an instrument" } else { "a MIDI effect" };
             return Err(format!("{what} goes on a MIDI track").into());
         }
@@ -502,7 +502,7 @@ pub(crate) fn add_sd(session: &mut Session, params: &Value) -> Result<Value, Com
     }
     if graph.role != suhina_device_sdk::DeviceRole::Effect {
         let track = track_id(&session.project, params)?;
-        if session.project.tracks.iter().find(|t| t.id == track).is_some_and(|t| !t.content.notes) {
+        if session.project.track(track).is_some_and(|t| !t.content.notes) {
             return Err("a MIDI effect goes on a MIDI track".into());
         }
     }
@@ -645,7 +645,7 @@ pub(crate) fn copy(session: &mut Session, params: &Value) -> Result<Value, Comma
         .iter()
         .find(|t| t.id == track)
         .and_then(|t| t.channel)
-        .and_then(|c| heard.channels.iter().find(|ch| ch.id == c))
+        .and_then(|c| heard.channel(c))
         .ok_or("the track has no mixer channel")?;
     let mut paths = device_list(&channel.devices, params)?;
     paths.reverse();
@@ -668,7 +668,7 @@ pub(crate) fn duplicate_many(session: &mut Session, params: &Value) -> Result<Va
         .iter()
         .find(|t| t.id == track)
         .and_then(|t| t.channel)
-        .and_then(|c| heard.channels.iter().find(|ch| ch.id == c))
+        .and_then(|c| heard.channel(c))
         .map(|c| c.devices.clone());
     let own = channel_read(session, params)?.devices.clone();
     let mut paths = device_list(&own, params)?;
@@ -724,13 +724,12 @@ pub(crate) fn move_to_track(session: &mut Session, params: &Value) -> Result<Val
         Some(v) => v.as_bool().ok_or("copy must be true or false")?,
     };
     let channel_of = |p: &suhina_model::Project, track| {
-        p.tracks.iter().find(|t| t.id == track).and_then(|t| t.channel).ok_or("the track has no mixer channel")
+        p.track(track).and_then(|t| t.channel).ok_or("the track has no mixer channel")
     };
     let (source, target) = (channel_of(&session.project, from)?, channel_of(&session.project, to)?);
     let (heard, _) = session.heard();
-    let heard_devices = heard.channels.iter().find(|c| c.id == source).map(|c| c.devices.clone());
-    let devices =
-        &session.project.channels.iter().find(|c| c.id == source).ok_or("the track's channel is missing")?.devices;
+    let heard_devices = heard.channel(source).map(|c| c.devices.clone());
+    let devices = &session.project.channel(source).ok_or("the track's channel is missing")?.devices;
     let path = device_path(devices, params, "device")?;
     let device = heard_devices
         .as_deref()
@@ -752,14 +751,13 @@ pub(crate) fn move_to_track(session: &mut Session, params: &Value) -> Result<Val
         };
     let midi_effect = !instrument
         && (grouped == crate::device_groups::Kind::MidiEffect || chain_role(&device) == Some(Role::MidiEffect));
-    let plays_notes = session.project.tracks.iter().find(|t| t.id == to).is_some_and(|t| t.content.notes);
+    let plays_notes = session.project.track(to).is_some_and(|t| t.content.notes);
     if (instrument || midi_effect) && !plays_notes {
         let what = if instrument { "an instrument" } else { "a MIDI effect" };
         return Err(format!("{what} goes on a MIDI track").into());
     }
     let replaced = if instrument { instrument_in(session, &json!({ "track": to.0 }))? } else { None };
-    let chain =
-        &session.project.channels.iter().find(|c| c.id == target).ok_or("the track's channel is missing")?.devices;
+    let chain = &session.project.channel(target).ok_or("the track's channel is missing")?.devices;
     let leaving = replaced
         .as_ref()
         .and_then(|(at, _)| chain.get(*at))
@@ -847,8 +845,7 @@ pub(crate) fn set_file(session: &mut Session, params: &Value) -> Result<Value, C
             .find(|t| t.id == track)
             .and_then(|t| t.channel)
             .ok_or("the track has no mixer channel")?;
-        let channel =
-            session.project.channels.iter().find(|c| c.id == channel).ok_or("the track's channel is missing")?;
+        let channel = session.project.channel(channel).ok_or("the track's channel is missing")?;
         let path = device_path(&channel.devices, params, "device")?;
         match device_at(&channel.devices, &path) {
             Some(device) => match &device.kind {
@@ -1165,7 +1162,7 @@ pub(crate) fn add_plugin(session: &mut Session, params: &Value) -> Result<Value,
     }
     if instrument {
         let track = track_id(&session.project, params)?;
-        if session.project.tracks.iter().find(|t| t.id == track).is_some_and(|t| !t.content.notes) {
+        if session.project.track(track).is_some_and(|t| !t.content.notes) {
             return Err("an instrument goes on a MIDI track".into());
         }
     }

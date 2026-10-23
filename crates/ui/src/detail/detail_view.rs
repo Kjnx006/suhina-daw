@@ -459,7 +459,7 @@ impl Detail {
             .iter()
             .find(|t| t.id == chain.track)
             .and_then(|t| t.channel)
-            .and_then(|c| project.channels.iter().find(|ch| ch.id == c))
+            .and_then(|c| project.channel(c))
         else {
             return;
         };
@@ -534,8 +534,7 @@ pub fn build_with(
     nam: crate::detail::nam_panel::Lists,
 ) -> Detail {
     let bar = bar_beats(project);
-    let track_name =
-        |id: TrackId| project.tracks.iter().find(|t| t.id == id).map(|t| t.name.clone()).unwrap_or_default();
+    let track_name = |id: TrackId| project.track(id).map(|t| t.name.clone()).unwrap_or_default();
     let found = clip.and_then(|clip| match clip {
         ClipRef::Arrangement(id, clip) => project
             .arrangement
@@ -606,13 +605,8 @@ fn chain(
     plugins: &mut dyn FnMut(TrackId, &[usize]) -> Option<PluginReport>,
     nam: crate::detail::nam_panel::Lists,
 ) -> Chain {
-    let track_name = project.tracks.iter().find(|t| t.id == id).map(|t| t.name.clone()).unwrap_or_default();
-    let channel = project
-        .tracks
-        .iter()
-        .find(|t| t.id == id)
-        .and_then(|t| t.channel)
-        .and_then(|c| project.channels.iter().find(|ch| ch.id == c));
+    let track_name = project.track(id).map(|t| t.name.clone()).unwrap_or_default();
+    let channel = project.tracks.iter().find(|t| t.id == id).and_then(|t| t.channel).and_then(|c| project.channel(c));
     let devices = channel
         .map(|c| c.devices.iter().enumerate().map(|(index, d)| device_box(d, &[index], id, plugins)).collect())
         .unwrap_or_default();

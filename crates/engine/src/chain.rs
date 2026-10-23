@@ -217,8 +217,8 @@ impl Chain {
         plugins: &mut Plugins,
         assets: &crate::DeviceAssets,
     ) -> Option<Self> {
-        let channel = project.tracks.iter().find(|t| t.id == track)?.channel?;
-        let channel = project.channels.iter().find(|c| c.id == channel)?;
+        let channel = project.track(track)?.channel?;
+        let channel = project.channel(channel)?;
         let keys = plugin_devices(project);
         let frames_per_beat = 60.0 / project.transport.tempo_bpm * f64::from(sample_rate);
         let mut slots: Vec<Slot> = Vec::new();
@@ -1531,9 +1531,8 @@ impl Default for LiveVolume {
 /// The equal-power factors of pan `pan` (-1 to 1) on centred gains: 1 and 1 centred, √2 and 0 at
 /// the left end.
 pub(crate) fn pan_factors(pan: f64) -> (f32, f32) {
-    let pan = if pan.is_finite() { pan.clamp(-1.0, 1.0) } else { 0.0 };
-    let angle = (pan + 1.0) * std::f64::consts::FRAC_PI_4;
-    ((angle.cos() * std::f64::consts::SQRT_2) as f32, (angle.sin() * std::f64::consts::SQRT_2) as f32)
+    let (left, right) = suhina_dsp::pan::gains(pan);
+    ((left * std::f64::consts::SQRT_2) as f32, (right * std::f64::consts::SQRT_2) as f32)
 }
 
 impl LiveVolume {

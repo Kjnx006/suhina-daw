@@ -828,7 +828,7 @@ fn devices_are_copied_pasted_and_removed_together_in_one_step_each() {
     let names = |s: &Session| {
         let p = s.project();
         let channel = p.tracks.iter().find(|t| t.name == "Keys").and_then(|t| t.channel).unwrap();
-        p.channels.iter().find(|c| c.id == channel).unwrap().devices.iter().map(|d| d.name.clone()).collect::<Vec<_>>()
+        p.channel(channel).unwrap().devices.iter().map(|d| d.name.clone()).collect::<Vec<_>>()
     };
     let before = names(&session);
     assert_eq!(before.len(), 3);
@@ -861,7 +861,7 @@ fn picked_devices_are_duplicated_after_the_last_in_one_step_and_the_clipboard_st
     let names = |s: &Session| {
         let p = s.project();
         let channel = p.tracks.iter().find(|t| t.name == "Keys").and_then(|t| t.channel).unwrap();
-        p.channels.iter().find(|c| c.id == channel).unwrap().devices.iter().map(|d| d.name.clone()).collect::<Vec<_>>()
+        p.channel(channel).unwrap().devices.iter().map(|d| d.name.clone()).collect::<Vec<_>>()
     };
     let before = names(&session);
     run(&mut session, "device.copy", json!({ "track": "Keys", "devices": [2] })).unwrap();
@@ -991,7 +991,7 @@ fn a_device_moves_or_copies_to_another_track_in_one_step() {
     let chain = |s: &Session, name: &str| {
         let p = s.project();
         let channel = p.tracks.iter().find(|t| t.name == name).and_then(|t| t.channel).unwrap();
-        p.channels.iter().find(|c| c.id == channel).unwrap().devices.iter().map(|d| d.name.clone()).collect::<Vec<_>>()
+        p.channel(channel).unwrap().devices.iter().map(|d| d.name.clone()).collect::<Vec<_>>()
     };
     run(&mut session, "track.add", json!({ "kind": "audio", "name": "Bus" })).unwrap();
     let other = "Bus".to_string();
@@ -1023,7 +1023,7 @@ fn an_instrument_group_moved_to_another_track_takes_its_instrument_s_place() {
     let chain = |s: &Session, name: &str| {
         let p = s.project();
         let channel = p.tracks.iter().find(|t| t.name == name).and_then(|t| t.channel).unwrap();
-        p.channels.iter().find(|c| c.id == channel).unwrap().devices.iter().map(|d| d.name.clone()).collect::<Vec<_>>()
+        p.channel(channel).unwrap().devices.iter().map(|d| d.name.clone()).collect::<Vec<_>>()
     };
     let lead = chain(&session, "Lead");
     // A group whose branches start with an instrument is an instrument: it goes where Lead's

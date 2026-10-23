@@ -1184,13 +1184,13 @@ impl Project {
     /// left out), so it always ends.
     pub fn ancestors(&self, track: TrackId) -> Vec<TrackId> {
         let mut out = Vec::new();
-        let mut next = self.tracks.iter().find(|t| t.id == track).and_then(|t| t.parent);
+        let mut next = self.track(track).and_then(|t| t.parent);
         while let Some(id) = next {
             if id == track || out.contains(&id) || out.len() > self.tracks.len() {
                 break;
             }
             out.push(id);
-            next = self.tracks.iter().find(|t| t.id == id).and_then(|t| t.parent);
+            next = self.track(id).and_then(|t| t.parent);
         }
         out
     }
@@ -1199,13 +1199,13 @@ impl Project {
     /// back to a track already passed, a cycle a valid project never has.
     pub fn group_depth(&self, track: TrackId) -> Option<usize> {
         let mut seen = vec![track];
-        let mut next = self.tracks.iter().find(|t| t.id == track).and_then(|t| t.parent);
+        let mut next = self.track(track).and_then(|t| t.parent);
         while let Some(id) = next {
             if seen.contains(&id) {
                 return None;
             }
             seen.push(id);
-            next = self.tracks.iter().find(|t| t.id == id).and_then(|t| t.parent);
+            next = self.track(id).and_then(|t| t.parent);
         }
         Some(seen.len() - 1)
     }

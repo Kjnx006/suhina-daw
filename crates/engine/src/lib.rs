@@ -1735,10 +1735,10 @@ pub(crate) fn track_gains(project: &Project, track: TrackId) -> Option<(f32, f32
         }
         volume *= gain(master);
     }
-    let angle = (pan + 1.0) * std::f64::consts::FRAC_PI_4;
+    let (left, right) = suhina_dsp::pan::gains(pan);
     // Scaled so a centred note has unity gain on each side, and quieter overall to leave headroom.
     let scale = volume * std::f64::consts::SQRT_2 * 0.25;
-    Some(((angle.cos() * scale) as f32, (angle.sin() * scale) as f32))
+    Some(((left * scale) as f32, (right * scale) as f32))
 }
 
 /// Whether a track whose output passes through `chain` is heard while channels are soloed.
