@@ -143,7 +143,7 @@ documented behaviour that exists today.
 | 14 | Using Grooves | 6 | 0 % | absent | No groove pool, extraction or commit. |
 | 15 | Using Tuning Systems | 9 | 0 % | absent | No .scl/.ascl tuning systems. |
 | 16 | Launching Clips | 12 | 77 % | partial | Launch quantisation (none, 8 bars..1/32, triplets), scenes (with their tempo and time signature), stop, loop, back to arrangement (the arrangement's dimmed lanes and the ruler's button), warped launched clips, follow actions (A/B by chance, linked or timed, jump to a slot; by command and in the detail area), samples looping in slots with or without a known tempo, a slot clip's loop switched on or off (clip.setLoop), launch modes (trigger, gate, toggle, repeat) with press and release, legato, per-clip launch quantisation, slots and scenes launched from computer keys. Missing velocity amount, clip offset/nudge, launching from live MIDI notes, follow-action multiplier and scene follow actions. |
-| 17 | Routing and I/O | 22 | 35 % | partial | Track output to main or a group (track.setOutput); MIDI controllers play the armed tracks, each track choosing its MIDI port and channel (track.setMidiInput); an audio input device with a channel or pair per track and monitoring Auto / In / Off (track.setAudioInput). No MIDI out, external instrument, resampling, sidechain, multi-timbral. |
+| 17 | Routing and I/O | 22 | 38 % | partial | Track output to main or a group (track.setOutput); MIDI controllers play the armed tracks, each track choosing its MIDI port and channel (track.setMidiInput), with the mod wheel, pitch bend and aftertouch reaching the instrument alongside notes (#812); an audio input device with a channel or pair per track and monitoring Auto / In / Off (track.setAudioInput). No MIDI out, external instrument, resampling, sidechain, multi-timbral. |
 | 18 | Mixing | 18 | 59 % | partial | Faders (vertical in the Session view's channel strips), pan, mute, solo (exclusive/Ctrl), groups as buses nested up to 16 deep (solo and mute through the levels), master, latency compensation, sends pre or post fader into return tracks that run their device chains (track.setSend, track.setSendMode, return.add/remove/rename, send knobs in the Session mixer), level meters (peak, RMS, clip) per track, group, return and main, also over MCP, and a cue output on a second pair of the device (previews, per-track cue, cue volume); return tracks imported and drawn. Missing crossfader, track delay, send fields in the Arrangement headers. |
 | 19 | Recording New Clips | 13 | 45 % | partial | Independent record arm and Auto / In / Off input monitoring (MIDI controllers, audio inputs); MIDI and audio recording into an empty slot from the next launch boundary (ended on the next one, then played looped) or into the arrangement, several armed tracks at once, a count-in of 1, 2 or 4 bars, takes lined up with what was heard, audio written to WAV files off the audio thread, one undo step per take. Missing overdub, punch in/out, recording automation, capture MIDI, session record button. |
 | 20 | Bounce to Audio | 6 | 15 % | partial | Whole-project offline render to 32-bit float WAV (CLI/MCP), from an open project with its running plug-ins' state as heard; no per-track or group bounce, no paste. |
@@ -180,7 +180,7 @@ documented behaviour that exists today.
 | Views and editing (ch 6-10, 16) | 140 | 46 % |
 | Browser, files, project (ch 4, 5) | 103 | 45 % |
 | Devices (ch 23-25, 29-31) | 338 | 21 % |
-| Mixing, routing, I/O (ch 17, 18, 38) | 47 | 45 % |
+| Mixing, routing, I/O (ch 17, 18, 38) | 47 | 46 % |
 | Automation, envelopes (ch 26, 27) | 35 | 30 % |
 | Generative/transform (ch 11-15) | 67 | 7 % |
 | Recording, bounce, comp (ch 19-22) | 33 | 20 % |
@@ -358,7 +358,7 @@ or does something Live does not:
 | MIDI tools, MPE, grooves, tuning | 67 (ch 11-15) | 7 % | transformation and generative tools, MPE editing, groove pool, tuning systems |
 | Automation and clip envelopes | 35 (ch 26, 27) | 30 % | drawing and recording automation lanes, send and tempo automation, clip envelopes |
 | Recording, bounce, comping | 33 (ch 19-22) | 20 % | overdub, punch in and out, take lanes, comping, per-track bounce |
-| Mixing, routing, I/O | 47 (ch 17, 18, 38) | 45 % | crossfader, inputs and monitoring, resampling |
+| Mixing, routing, I/O | 47 (ch 17, 18, 38) | 46 % | crossfader, inputs and monitoring, resampling |
 | Outside a DAW's own scope | 175 (ch 28, 32-37, 41) | 2 % | video, Max for Live, Push 1 and 2, Link, accessibility - ADR 0016 leaves most of this out |
 <!-- parity:end -->
 

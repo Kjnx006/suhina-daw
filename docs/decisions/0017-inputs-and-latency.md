@@ -3,7 +3,7 @@ description: How played input reaches the engine (MIDI controllers first, audio 
 read_when: MIDI input, MIDI controller, keyboard, arm, armed track, track.setArm, midi.inputs, live notes, sustain pedal, input latency, monitoring, recording, low latency, midir
 type: decision
 status: current
-last_verified: 2026-10-21
+last_verified: 2026-10-23
 covers:
   - crates/engine/src/record.rs
   - crates/engine/src/live.rs
