@@ -180,14 +180,14 @@ fn set_metronome(session: &mut Session, params: &Value) -> Result<Value, Command
     if let Some(sound) = sound {
         send(session, LaunchCommand::SetMetronomeSound(sound))?;
     }
-    session.metronome.0 = on;
+    session.live.metronome.0 = on;
     if let Some(gain) = gain {
-        session.metronome.1 = to_db(gain).unwrap_or(f64::NEG_INFINITY);
+        session.live.metronome.1 = to_db(gain).unwrap_or(f64::NEG_INFINITY);
     }
     if let Some(sound) = sound {
-        session.metronome.2 = sound;
+        session.live.metronome.2 = sound;
     }
-    let (_, db, sound) = session.metronome;
+    let (_, db, sound) = session.live.metronome;
     Ok(json!({ "metronome": on, "db": if db.is_finite() { json!(db) } else { json!("-inf") }, "sound": sound.name() }))
 }
 

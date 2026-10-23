@@ -408,11 +408,11 @@ impl Session {
         ExportData {
             project: self.project_as_heard(),
             warnings: self.plugins.take_export_notices(),
-            audio: self.audio.clone(),
+            audio: self.audio.pool.clone(),
             assets: self.device_assets().clone(),
             plugins: self.plugins.env_handle(),
             folder: self.audio_folder().map(Path::to_path_buf),
-            trusted: self.trusted.clone(),
+            trusted: self.audio.trusted.clone(),
             title: self.export_title(),
         }
     }
@@ -446,11 +446,11 @@ impl Session {
         ExportData {
             project: self.with_states(&states),
             warnings: self.plugins.take_export_notices(),
-            audio: self.audio.clone(),
+            audio: self.audio.pool.clone(),
             assets: self.device_assets().clone(),
             plugins: self.plugins.env_handle(),
             folder: self.audio_folder().map(Path::to_path_buf),
-            trusted: self.trusted.clone(),
+            trusted: self.audio.trusted.clone(),
             title: self.export_title(),
         }
     }

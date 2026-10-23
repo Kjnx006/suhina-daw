@@ -536,7 +536,7 @@ impl Projects {
     pub fn backup_due(&self, id: ProjectId) -> bool {
         self.get(id).is_some_and(|s| {
             s.has_unsaved_changes()
-                && (s.changes != s.backup.backed_at || s.plugins.edits.revision() != s.backup.plugin_revision)
+                && (s.history.changes != s.backup.backed_at || s.plugins.edits.revision() != s.backup.plugin_revision)
         })
     }
 
@@ -554,7 +554,7 @@ impl Projects {
         let session = self.get_mut(id).ok_or("no such project")?;
         let file = session.source().map(Path::to_path_buf);
         let snapshot = session.snapshot(&folder);
-        session.backup.backed_at = session.changes;
+        session.backup.backed_at = session.history.changes;
         session.backup.plugin_revision = session.plugins.edits.revision();
         session.backup.since = Instant::now();
         self.backups.send(Message::Write(Box::new(Job { run, project: id.0, file, name, folder, snapshot, clean_up })));

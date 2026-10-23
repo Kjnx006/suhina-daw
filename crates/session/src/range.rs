@@ -268,8 +268,8 @@ pub(crate) fn copy_range(session: &mut Session, params: &Value) -> Result<Value,
         return Err("nothing plays in the selection".into());
     }
     let count = parts.len();
-    session.clipboard_tracks = parts.iter().map(|(track, _, _)| *track).collect();
-    session.clipboard = parts.into_iter().map(|(_, clip, content)| (clip, content)).collect();
+    session.clipboards.tracks = parts.iter().map(|(track, _, _)| *track).collect();
+    session.clipboards.clips = parts.into_iter().map(|(_, clip, content)| (clip, content)).collect();
     Ok(json!({ "copied": count, "start": start, "end": end }))
 }
 
@@ -296,15 +296,16 @@ pub(crate) fn duplicate_range(session: &mut Session, params: &Value) -> Result<V
 /// `clip.paste {start, stack?}` with no track, after a copy that knows its tracks: each copied
 /// clip goes back to the track it came from, the earliest at `start`.
 pub(crate) fn paste_to_sources(session: &mut Session, start: f64, stack: bool) -> Result<Value, CommandError> {
-    if session.clipboard_tracks.len() != session.clipboard.len() || session.clipboard.is_empty() {
+    if session.clipboards.tracks.len() != session.clipboards.clips.len() || session.clipboards.clips.is_empty() {
         return Err("give a track: the copied clips do not know their tracks".into());
     }
-    let earliest = session.clipboard.iter().map(|(clip, _)| clip.start).fold(f64::INFINITY, f64::min);
+    let earliest = session.clipboards.clips.iter().map(|(clip, _)| clip.start).fold(f64::INFINITY, f64::min);
     let offset = if earliest.is_finite() { start - earliest } else { 0.0 };
     let parts: Vec<(TrackId, Clip, ClipContent)> = session
-        .clipboard_tracks
+        .clipboards
+        .tracks
         .iter()
-        .zip(session.clipboard.iter())
+        .zip(session.clipboards.clips.iter())
         .map(|(track, (clip, content))| (*track, clip.clone(), content.clone()))
         .collect();
     let placed = place(&mut session.project, parts, offset, stack)?;

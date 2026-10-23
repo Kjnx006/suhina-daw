@@ -309,9 +309,9 @@ fn set_volume(session: &mut Session, params: &Value) -> Result<Value, CommandErr
     // turned off changes more than the volume). Tracks not heard (muted, outside a solo) play
     // nothing it changes.
     if !off && channels.iter().all(|(track, _)| !suhina_engine::track_heard(&session.project, *track)) {
-        session.unheard_edit = true;
+        session.sync.unheard = true;
     } else if !off {
-        session.mixer_edits = channels
+        session.sync.mixer_edits = channels
             .iter()
             .map(|(track, _)| crate::ParamEdit {
                 track: *track,
@@ -357,9 +357,9 @@ fn set_pan(session: &mut Session, params: &Value) -> Result<Value, CommandError>
     }
     // A pan knob's turn, nothing else: a playing engine takes it as a message where it can.
     if !off && channels.iter().all(|(track, _)| !suhina_engine::track_heard(&session.project, *track)) {
-        session.unheard_edit = true;
+        session.sync.unheard = true;
     } else if !off {
-        session.mixer_edits = channels
+        session.sync.mixer_edits = channels
             .iter()
             .map(|(track, _)| crate::ParamEdit {
                 track: *track,
@@ -387,7 +387,7 @@ fn adjust_pan(session: &mut Session, params: &Value) -> Result<Value, CommandErr
         pans.push(channel.pan);
     }
     if !off {
-        session.mixer_edits = channels
+        session.sync.mixer_edits = channels
             .iter()
             .zip(&pans)
             .map(|((track, _), pan)| crate::ParamEdit {

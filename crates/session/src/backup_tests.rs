@@ -52,7 +52,7 @@ fn plug_in_changes_make_a_backup_due_without_project_commands_and_again_after_a_
     read(&mut projects, 2);
     read(&mut projects, 2);
     assert!(projects.backup_due(id), "a later plug-in change needs another backup");
-    assert_eq!(projects.get(id).unwrap().changes, 0, "no project command helped");
+    assert_eq!(projects.get(id).unwrap().history.changes, 0, "no project command helped");
 }
 
 #[test]

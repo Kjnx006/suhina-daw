@@ -811,8 +811,8 @@ fn copy_clips(session: &mut Session, params: &Value) -> Result<Value, CommandErr
         _ => return Err("give either clips (arrangement clips) or track and scene (a clip slot)".into()),
     }
     let names: Vec<String> = copied.iter().map(|(_, content)| content.name.clone()).collect();
-    session.clipboard = copied;
-    session.clipboard_tracks = from;
+    session.clipboards.clips = copied;
+    session.clipboards.tracks = from;
     Ok(json!({ "copied": names }))
 }
 
@@ -830,7 +830,7 @@ enum PasteAt {
 }
 
 fn paste_clip(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
-    if session.clipboard.is_empty() {
+    if session.clipboards.clips.is_empty() {
         return Err("nothing has been copied".into());
     }
     let at = match (params.get("start"), params.get("scene")) {
@@ -863,7 +863,7 @@ fn paste_clip(session: &mut Session, params: &Value) -> Result<Value, CommandErr
     {
         let p = &session.project;
         let target = p.track(track).ok_or("the track is missing")?;
-        for (_, content) in &session.clipboard {
+        for (_, content) in &session.clipboards.clips {
             let notes = content.lanes.iter().any(|l| matches!(l.data, LaneData::Notes(_)));
             let audio = content.lanes.iter().any(|l| matches!(l.data, LaneData::Audio(_)));
             if (notes && !target.content.notes) || (audio && !target.content.audio) {
@@ -878,7 +878,8 @@ fn paste_clip(session: &mut Session, params: &Value) -> Result<Value, CommandErr
     };
     if let (PasteAt::Slot(scene), Some(column)) = (at, column) {
         let [(clip, content)] = session
-            .clipboard
+            .clipboards
+            .clips
             .clone()
             .try_into()
             .map_err(|copied: Vec<_>| format!("a clip slot holds one clip, and {} are copied", copied.len()))?;
@@ -902,9 +903,9 @@ fn paste_clip(session: &mut Session, params: &Value) -> Result<Value, CommandErr
         PasteAt::Slot(_) => 0.0,
     };
     // The earliest copied clip lands on `start`; the others keep their places relative to it.
-    let earliest = session.clipboard.iter().map(|(clip, _)| clip.start).fold(f64::INFINITY, f64::min);
+    let earliest = session.clipboards.clips.iter().map(|(clip, _)| clip.start).fold(f64::INFINITY, f64::min);
     let offset = if earliest.is_finite() { start - earliest } else { 0.0 };
-    let copied = session.clipboard.clone();
+    let copied = session.clipboards.clips.clone();
     let p = &mut session.project;
     let lane = match p.arrangement.lanes.iter().position(|l| l.track == Some(track)) {
         Some(lane) => lane,

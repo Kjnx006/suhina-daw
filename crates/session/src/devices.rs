@@ -651,7 +651,7 @@ pub(crate) fn copy(session: &mut Session, params: &Value) -> Result<Value, Comma
     paths.reverse();
     let copied: Vec<Device> = paths.iter().filter_map(|p| device_at(&channel.devices, p).cloned()).collect();
     let names: Vec<String> = copied.iter().map(|d| d.name.clone()).collect();
-    session.device_clipboard = copied;
+    session.clipboards.devices = copied;
     Ok(json!({ "copied": names }))
 }
 
@@ -793,10 +793,10 @@ pub(crate) fn move_to_track(session: &mut Session, params: &Value) -> Result<Val
 /// `device.paste {track, position?}`: puts the copied devices into a track's chain at
 /// `position` (the end when left out), in the order they were copied, as one undo step.
 pub(crate) fn paste(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
-    if session.device_clipboard.is_empty() {
+    if session.clipboards.devices.is_empty() {
         return Err("no devices have been copied".into());
     }
-    let copied = session.device_clipboard.clone();
+    let copied = session.clipboards.devices.clone();
     let count = copied.len();
     crate::device_groups::edit_chain(session, params, |devices| {
         let (parent, position) = crate::device_groups::position_path(devices, params, "position")?
@@ -981,7 +981,7 @@ pub(crate) fn set_param(session: &mut Session, params: &Value) -> Result<Value, 
     // A playing engine takes this as messages, without a new graph; one that turned a lane
     // off needs the new graph, which holds the values too, and so does a device inside a group.
     if !off && path.len() == 1 {
-        session.param_edits = messages;
+        session.sync.param_edits = messages;
     }
     Ok(with_override(json!({ "device": path_value(&path), "param": param, "value": value }), off))
 }
@@ -1011,7 +1011,7 @@ fn set_plugin_param(
     // A plug-in's parameter goes to the engine by its id.
     let param = usize::try_from(id).map_err(|_| "the parameter id is too large")?;
     if !off && let [index] = path {
-        session.param_edits = vec![ParamEdit { track, device: *index, param, value }];
+        session.sync.param_edits = vec![ParamEdit { track, device: *index, param, value }];
     }
     Ok(with_override(json!({ "device": path_value(path), "param": id, "value": value }), off))
 }
