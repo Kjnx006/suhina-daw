@@ -329,14 +329,15 @@ impl StretchVoice {
         self.stretch = Some(stretch);
     }
 
-    /// Whether the stretcher and its buffers are built.
+    /// Whether the stretcher and the buffers are built.
     #[cfg(test)]
     pub(crate) fn is_prepared(&self) -> bool {
         self.stretch.is_some()
     }
 
-    /// Rewinds the voice to the clip's first frame, for a transport restart or a relaunch.
-    /// Never allocates once [`StretchVoice::prepare`] has run.
+    /// Rewinds the voice to the clip's first frame, for a transport restart or a relaunch. The
+    /// first call builds the stretcher and allocates ([`StretchVoice::prepare`]): the launcher
+    /// makes it when it plans a clip, off the audio thread, so later calls never allocate.
     pub(crate) fn restart(&mut self) {
         self.seek(0);
     }

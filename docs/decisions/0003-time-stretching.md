@@ -3,7 +3,7 @@ description: Real-time time-stretching of warped audio, stretch modes and backen
 read_when: warp, time-stretch, stretch mode, Signalsmith, keylock, timestretch, Rubber Band, audio crackles, CPU load, stretch quality
 type: decision
 status: current
-last_verified: 2026-10-19
+last_verified: 2026-10-21
 covers:
   - crates/engine/src/stretch.rs
   - crates/stretch/src/lib.rs
@@ -171,6 +171,11 @@ is what gives the real margin:
 - Every clip placement owns a stretcher and a ring, so memory grows with the number of warped
   placements; pooling voices and rings across clips that do not overlap is a later
   optimisation.
+- A launcher clip's stretcher is built when the graph is built, for every enabled warped slot,
+  playing or not (about 4 ms each in a release build), so that a launch never allocates on the
+  audio thread. A project with hundreds of such slots makes each graph rebuild correspondingly
+  slower. Preparing them on a worker and handing them to the audio thread when ready (a launch
+  before that stays silent until the voice arrives) would remove the cost; it is not built.
 - Our own algorithm choice, not Live's: modes with the same name in another DAW will not sound
   identical. The modes describe intent, not a copy.
 - Comparing backends will be a mode switch on the same clip once Rubber Band is in.

@@ -67,6 +67,13 @@ pub fn sample_rates(ranges: &[(u32, u32)]) -> Vec<u32> {
 /// for the period itself, which interfaces such as Apollo refuse past 2048 frames.
 pub const WASAPI_MOST_FRAMES: u32 = 2048;
 
+/// The period exclusive WASAPI asks the device for, from the buffer size chosen: within what the
+/// engine renders in and [`WASAPI_MOST_FRAMES`], so a size saved before the cap comes down to it.
+/// The engine renders in the same number of frames, so the block and the period stay equal.
+pub fn exclusive_buffer(chosen: Option<u32>) -> Option<u32> {
+    chosen.map(|frames| frames.clamp(MIN_BUFFER_FRAMES, MAX_BUFFER_FRAMES.min(WASAPI_MOST_FRAMES)))
+}
+
 /// The buffer sizes offered on `host`: on WASAPI the engine's block, up to
 /// [`WASAPI_MOST_FRAMES`] (Windows decides the device's own buffer); elsewhere the sizes the
 /// driver allows.
@@ -286,6 +293,16 @@ mod tests {
         assert_eq!(fit_buffer(10, &allowed), 64);
         assert_eq!(fit_buffer(10, &[]), MIN_BUFFER_FRAMES);
         assert_eq!(fit_buffer(100_000, &[]), MAX_BUFFER_FRAMES);
+    }
+
+    #[test]
+    fn exclusive_wasapi_caps_the_period_and_the_engine_block_follows_it() {
+        assert_eq!(exclusive_buffer(None), None);
+        assert_eq!(exclusive_buffer(Some(256)), Some(256));
+        assert_eq!(exclusive_buffer(Some(4096)), Some(WASAPI_MOST_FRAMES), "a size saved before the cap comes down");
+        assert_eq!(exclusive_buffer(Some(16)), Some(MIN_BUFFER_FRAMES));
+        // The engine renders in the capped period, not in the size that was saved.
+        assert_eq!(crate::block_for(exclusive_buffer(Some(4096)), None), WASAPI_MOST_FRAMES as usize);
     }
 
     #[test]
