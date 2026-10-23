@@ -788,6 +788,12 @@ struct Owner {
     thread: Option<std::thread::JoinHandle<()>>,
 }
 
+impl suhina_session::OutputHandle for Owner {
+    fn close(self: Box<Self>) -> Option<(u32, Plugins)> {
+        Owner::close(*self)
+    }
+}
+
 impl Owner {
     /// Closes the stream and returns its sample rate and plug-ins, when they come back in
     /// time.
@@ -865,8 +871,7 @@ pub fn open_chosen(
 ) -> Result<Opened, String> {
     let carried = previous.and_then(|player| {
         let (controller, keep) = player.into_parts();
-        let owner = keep.and_then(|k| k.downcast::<Owner>().ok());
-        let back = owner.and_then(|o| o.close());
+        let back = keep.and_then(|owner| owner.close());
         drop(controller);
         back
     });
