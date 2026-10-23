@@ -252,10 +252,13 @@ def check_links(files: list[str]) -> int:
     #anchor at a heading in it."""
     tracked = set(files)
     folders = {parent.as_posix() for f in files for parent in Path(f).parents}
+    # The generated files are rewritten on main after the merge, so a link they still hold to a
+    # document a pull request deletes is mended there; the pull request may not edit them.
+    generated = {path.relative_to(ROOT).as_posix() for path, _ in GENERATED}
     cache: dict[Path, set[str]] = {}
     errors = 0
     for rel in files:
-        if not rel.endswith(".md") or rel.startswith("third_party/"):
+        if not rel.endswith(".md") or rel.startswith("third_party/") or rel in generated:
             continue
         source = ROOT / rel
         if not source.exists():
