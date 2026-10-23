@@ -913,6 +913,8 @@ pub struct Rack {
     /// Deadline and read rounds left for a nonblocking quit check.
     edit_check: Option<(Instant, u8)>,
     saved: Instant,
+    /// How often running plug-ins' states are read: [`SAVE_EVERY`], shorter in tests.
+    save_every: Duration,
     /// The window editors open over (owned by it), when the session runs in one.
     owner: Option<u64>,
     /// Editors open embedded in that window's device panel rather than in windows of their own.
@@ -971,6 +973,7 @@ impl Default for Rack {
             checked: Instant::now(),
             edit_check: None,
             saved: Instant::now(),
+            save_every: SAVE_EVERY,
             owner: None,
             embed: false,
             edits: PluginEdits::default(),
@@ -1974,7 +1977,7 @@ impl Rack {
             return;
         }
         self.checked = Instant::now();
-        let save = self.saved.elapsed() >= SAVE_EVERY;
+        let save = self.saved.elapsed() >= self.save_every;
         if save {
             self.saved = Instant::now();
         }
@@ -2045,6 +2048,12 @@ impl Rack {
             let _gone = sender.send(Started { key, generation, result, first_state: None });
         });
         spawned.map(|_| ()).map_err(|e| CommandError(format!("could not restart the plug-in: {e}")))
+    }
+
+    /// How often each running plug-in's state is read from now on (every [`SAVE_EVERY`] unless
+    /// set), so a test of those reads need not wait half a minute.
+    pub fn set_save_every(&mut self, every: Duration) {
+        self.save_every = every;
     }
 
     /// The window editors open over from now on: a Win32 `HWND` or an X11 window id.
