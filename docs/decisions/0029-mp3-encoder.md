@@ -3,7 +3,7 @@ description: Why the MP3 export encodes with LAME 3.100 vendored as C source in 
 read_when: MP3, mp3 export, LAME, libmp3lame, encoder crate, why C, vendored encoder, fft.c, Hartley, joint stereo, unsafe crate, lossy export
 type: decision
 status: current
-last_verified: 2026-10-20
+last_verified: 2026-10-23
 covers:
   - third_party/lame
   - crates/mp3
