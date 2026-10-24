@@ -3,7 +3,7 @@ description: Several projects open at once like tabs, one active; where commands
 read_when: tabs, several projects, open projects, switch project, Ctrl+Tab, project.list, project.switch, Projects, ProjectId
 type: decision
 status: current
-last_verified: 2026-10-13
+last_verified: 2026-10-24
 covers:
   - crates/session/src/projects.rs
   - crates/automation/src/server.rs

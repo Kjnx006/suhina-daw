@@ -3,7 +3,7 @@ description: Where the description of the VST2 interface comes from — our own 
 read_when: VST2, VST 2, AEffect, ABI, opcode, dispatcher, audioMaster, clean-room, reverse engineering, vst2sdk, VeSTige, FST, yabridge, plug-in interface description, VST trademark
 type: decision
 status: draft
-last_verified: 2026-10-15
+last_verified: 2026-10-24
 ---
 
 # 0022: VST2: where the interface description comes from

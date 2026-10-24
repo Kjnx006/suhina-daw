@@ -3,7 +3,7 @@ description: How the crates, threads and commands fit together, from a file to t
 read_when: adding a crate or feature, where does code go, threads, audio thread, data flow, layers, player, controller
 type: system
 status: current
-last_verified: 2026-10-23
+last_verified: 2026-10-24
 covers:
   - crates/session/src/record_writer.rs
   - Cargo.toml

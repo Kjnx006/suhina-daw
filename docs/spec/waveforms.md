@@ -3,7 +3,7 @@ description: How waveforms are computed and drawn in clips, the browser's previe
 read_when: waveform, peaks, RMS, waveform drawing, zoom, samples, stereo lanes, dB scale, clip waveform, preview waveform, sample map tooltip, frame budget
 type: spec
 status: current
-last_verified: 2026-10-13
+last_verified: 2026-10-24
 covers:
   - crates/ui/src/kit/waveform.rs
   - crates/ui/src/kit/waveform/tests.rs

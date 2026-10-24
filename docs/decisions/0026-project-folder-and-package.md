@@ -3,7 +3,7 @@ description: A project becomes a folder holding a document, a manifest of each a
 read_when: project folder, manifest, asset hash, BLAKE3, collect, packaged project, zip, sharing a project, analysis sidecar, asd, hand-set kind, .locr, old extension, git and audio, git-lfs, project package
 type: decision
 status: draft
-last_verified: 2026-10-15
+last_verified: 2026-10-24
 covers:
   - crates/project-file/src/lib.rs
   - crates/session/src/lib.rs
